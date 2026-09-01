@@ -32,7 +32,7 @@
         }
     </style>
 </head>
-<body class="antialiased min-h-screen flex flex-col">
+<body class="antialiased min-h-screen flex flex-col justify-between">
 
     <?php
     // --- Mock Data Layer ---
@@ -166,8 +166,9 @@
         </div>
     </header>
 
+    <!-- WRAPPER UTAMA: HANYA MEMBUNGKUS SIDEBAR DAN MAIN CONTENT -->
     <div class="flex flex-1">
-        <!-- SIDEBAR NAVIGASI (DISAMAKAN DENGAN HALAMAN STOK & PRODUK) -->
+        <!-- SIDEBAR NAVIGASI -->
         <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0">
             <div class="p-4 space-y-6">
                 <!-- Navigation Menu -->
@@ -296,7 +297,7 @@
             <!-- MAIN CONTENT BODY (TWO COLUMNS) -->
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 
-                <!-- Left Side: Sales Revenue Trend Chart (2 Columns) -->
+                <!-- Left Side: Sales Revenue Trend Chart -->
                 <div class="lg:col-span-2 bg-white p-6 rounded-2xl border border-stone-200/80 shadow-sm flex flex-col">
                     <div class="flex items-center justify-between mb-6">
                         <div>
@@ -317,7 +318,7 @@
                     </div>
                 </div>
 
-                <!-- Right Side: Recent Transactions Table (1 Column) -->
+                <!-- Right Side: Recent Transactions Table -->
                 <div class="bg-white p-6 rounded-2xl border border-stone-200/80 shadow-sm flex flex-col justify-between">
                     <div>
                         <div class="flex items-center justify-between mb-4">
@@ -367,6 +368,72 @@
 
         </main>
     </div>
+    <!-- KONTEN WRAPPER DISINI DIREMBOK/DITUTUP TOTAL SEBELUM FOOTER DITULIS -->
+
+    <!-- GLOBAL WEB FOOTER (PULAU TERPISAH DI PALING BAWAH HALAMAN) -->
+    <footer class="w-full bg-white border-t border-stone-200/80 mt-12 z-20">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-8 pb-8 border-b border-stone-100">
+                <!-- Branding & Info -->
+                <div class="space-y-3 md:col-span-1">
+                    <a href="#" class="flex items-center gap-2.5">
+                        <div class="w-8 h-8 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
+                            <i data-lucide="sprout" class="w-4 h-4"></i>
+                        </div>
+                        <span class="text-lg font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Shop</span></span>
+                    </a>
+                    <p class="text-xs text-stone-500 leading-relaxed">
+                        Sistem manajemen kasir dan inventaris tanaman hias terpadu. Membantu mengelola toko Anda dengan efisien.
+                    </p>
+                </div>
+
+                <!-- Navigasi Utama -->
+                <div>
+                    <h4 class="text-xs font-bold text-stone-800 uppercase tracking-wider mb-3">Navigasi Utama</h4>
+                    <ul class="space-y-2 text-xs text-stone-600">
+                        <li><a href="dashboard.php" class="hover:text-[#2E7D32] transition-colors">Dashboard</a></li>
+                        <li><a href="pos.php" class="hover:text-[#2E7D32] transition-colors">Penjualan (POS)</a></li>
+                        <li><a href="stok.php" class="hover:text-[#2E7D32] transition-colors">Stok & Produk</a></li>
+                        <li><a href="restock.php" class="hover:text-[#2E7D32] transition-colors">Pembelian (Restock)</a></li>
+                    </ul>
+                </div>
+
+                <!-- Manajemen -->
+                <div>
+                    <h4 class="text-xs font-bold text-stone-800 uppercase tracking-wider mb-3">Manajemen</h4>
+                    <ul class="space-y-2 text-xs text-stone-600">
+                        <li><a href="pelanggan.php" class="hover:text-[#2E7D32] transition-colors">Data Pelanggan</a></li>
+                        <li><a href="laporan.php" class="hover:text-[#2E7D32] transition-colors">Laporan Keuangan</a></li>
+                        <li><a href="pengaturan.php" class="hover:text-[#2E7D32] transition-colors">Pengaturan Toko</a></li>
+                        <li><a href="bantuan.php" class="hover:text-[#2E7D32] transition-colors">Pusat Bantuan</a></li>
+                    </ul>
+                </div>
+
+                <!-- Status Sistem -->
+                <div>
+                    <h4 class="text-xs font-bold text-stone-800 uppercase tracking-wider mb-3">Status Sistem</h4>
+                    <div class="space-y-2.5 text-xs text-stone-600">
+                        <div class="flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                            <span>Server Status: <strong class="text-stone-800 font-semibold">Online</strong></span>
+                        </div>
+                        <p class="text-stone-400">Versi POS: 1.0.4</p>
+                        <p class="text-stone-400">Cabang: Bandung Central</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom Copyright Bar -->
+            <div class="pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-stone-400">
+                <p>&copy; <?= date('Y'); ?> PlantShop Indonesia. All rights reserved.</p>
+                <div class="flex items-center gap-4">
+                    <a href="bantuan.php" class="hover:text-stone-600 transition-colors">Syarat & Ketentuan</a>
+                    <span>&bull;</span>
+                    <a href="bantuan.php" class="hover:text-stone-600 transition-colors">Kebijakan Privasi</a>
+                </div>
+            </div>
+        </div>
+    </footer>
 
     <!-- Initialization & Script -->
     <script>
