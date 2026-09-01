@@ -156,10 +156,10 @@
                         <a href="pengaturan.php" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
                             <i data-lucide="settings" class="w-4 h-4 text-stone-500"></i> Pengaturan Toko
                         </a>
-                        <hr class="border-stone-100 my-1">
-                        <a href="logout.php" onclick="event.preventDefault(); alert('Logout Berhasil');" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 rounded-xl transition-colors">
-                            <i data-lucide="log-out" class="w-4 h-4 text-rose-500"></i> Keluar
-                        </a>
+                       <hr class="border-stone-100 my-1">
+<a href="../Auth/logout.php" onclick="return confirm('Apakah Anda yakin ingin keluar?');" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 rounded-xl transition-colors">
+    <i data-lucide="log-out" class="w-4 h-4 text-rose-500"></i> Keluar
+</a>
                     </div>
                 </div>
             </div>
