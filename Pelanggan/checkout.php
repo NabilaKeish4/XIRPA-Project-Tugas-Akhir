@@ -56,13 +56,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
             $cek_pelanggan = mysqli_query($conn, "SELECT id FROM pelanggan WHERE no_hp = '$no_hp' LIMIT 1");
             if ($cek_pelanggan && mysqli_num_rows($cek_pelanggan) > 0) {
                 $row_p = mysqli_fetch_assoc($cek_pelanggan);
-                $id_pelanggan = $row_p['id'];
+                $id_pelanggan = (int)$row_p['id'];
                 // Update alamat terbaru
-                mysqli_query($conn, "UPDATE pelanggan SET alamat = '$alamat_lengkap', email = '$email' WHERE id = $id_pelanggan");
+                mysqli_query($conn, "UPDATE pelanggan SET nama_pelanggan = '$nama_penerima', alamat = '$alamat_lengkap', email = '$email' WHERE id = $id_pelanggan");
             } else {
                 $ins_p = mysqli_query($conn, "INSERT INTO pelanggan (nama_pelanggan, no_hp, email, alamat) VALUES ('$nama_penerima', '$no_hp', '$email', '$alamat_lengkap')");
-                $id_pelanggan = mysqli_insert_id($conn);
+                $id_pelanggan = (int)mysqli_insert_id($conn);
             }
+
+            // Simpan ID pelanggan ke Session jika belum ada
+            $_SESSION['user_id'] = $id_pelanggan;
+            $_SESSION['user_nama'] = $nama_penerima;
 
             // 2. Buat Nomor Faktur Unik (INV-YYYYMMDD-XXXX)
             $kode_faktur = "INV-" . date('Ymd') . "-" . strtoupper(substr(uniqid(), -4));
@@ -73,31 +77,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
             $query_penjualan = "INSERT INTO penjualan 
                 (no_faktur, pelanggan_id, tanggal, total_harga, pajak, biaya_pengiriman, metode_pembayaran, ekspedisi, status_pembayaran, catatan) 
                 VALUES 
-                ('$kode_faktur', '$id_pelanggan', '$tgl_transaksi', '$grand_total', '$pajak', '$ongkir_default', '$metode_bayar', '$kurir', '$status_pesanan', '$catatan')";
+                ('$kode_faktur', $id_pelanggan, '$tgl_transaksi', '$grand_total', '$pajak', '$ongkir_default', '$metode_bayar', '$kurir', '$status_pesanan', '$catatan')";
             
             if (!mysqli_query($conn, $query_penjualan)) {
                 throw new Exception("Gagal menyimpan data transaksi penjualan.");
             }
 
-            $penjualan_id = mysqli_insert_id($conn);
+            $penjualan_id = (int)mysqli_insert_id($conn);
 
             // 4. Insert Detail Penjualan & Potong Stok Produk
             foreach ($_SESSION['keranjang'] as $prod_id => $item) {
-                $qty = $item['jumlah'];
-                $harga_satuan = $item['harga'];
+                $prod_id = (int)$prod_id;
+                $qty = (int)$item['jumlah'];
+                $harga_satuan = (float)$item['harga'];
                 $subtotal_item = $qty * $harga_satuan;
 
                 // Cek stok terkini
                 $res_stok = mysqli_query($conn, "SELECT stok FROM produk WHERE id = $prod_id FOR UPDATE");
                 $prod_data = mysqli_fetch_assoc($res_stok);
 
-                if ($prod_data['stok'] < $qty) {
-                    throw new Exception("Stok untuk produk " . $item['nama_produk'] . " tidak mencukupi!");
+                if (!$prod_data || $prod_data['stok'] < $qty) {
+                    throw new Exception("Stok untuk produk " . htmlspecialchars($item['nama_produk']) . " tidak mencukupi!");
                 }
 
                 // Insert Detail
                 $query_detail = "INSERT INTO detail_penjualan (penjualan_id, produk_id, jumlah, harga_satuan, subtotal) 
-                                VALUES ('$penjualan_id', '$prod_id', '$qty', '$harga_satuan', '$subtotal_item')";
+                                VALUES ($penjualan_id, $prod_id, $qty, '$harga_satuan', '$subtotal_item')";
                 if (!mysqli_query($conn, $query_detail)) {
                     throw new Exception("Gagal menyimpan rincian item transaksi.");
                 }
@@ -116,7 +121,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
             $_SESSION['last_invoice'] = $kode_faktur;
             $_SESSION['keranjang'] = [];
 
-            header("Location: riwayat.php?success=1&invoice=" . $kode_faktur);
+            header("Location: riwayat.php?success=1&invoice=" . urlencode($kode_faktur));
             exit();
 
         } catch (Exception $e) {
@@ -193,7 +198,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
         <?php if (!empty($error_msg)): ?>
             <div class="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center gap-2 shadow-xs">
                 <i data-lucide="alert-circle" class="w-4 h-4 text-rose-600"></i>
-                <span><?= $error_msg ?></span>
+                <span><?= htmlspecialchars($error_msg) ?></span>
             </div>
         <?php endif; ?>
 
@@ -232,7 +237,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
                     <!-- 2. Ekspedisi & Kurir -->
                     <div class="bg-white p-6 rounded-2xl border border-stone-200/80 shadow-xs space-y-4">
                         <h2 class="font-bold text-stone-800 text-base border-b border-stone-100 pb-3 flex items-center gap-2">
-                            <i data-lucide="truck" class="w-5 h-5 text-[#2E7D32]"></i> Opsi Opsi Layanan Kurir
+                            <i data-lucide="truck" class="w-5 h-5 text-[#2E7D32]"></i> Opsi Layanan Kurir
                         </h2>
 
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">

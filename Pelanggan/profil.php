@@ -16,17 +16,16 @@ if (!$conn) {
 $success_msg = "";
 $error_msg = "";
 
-// Ambil ID user dari session (Default ID 1 untuk simulasi jika belum ada sistem auth ketat)
-$user_id = isset($_SESSION['user_id']) ? $_SESSION['user_id'] : 1;
+$user_id = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : 1;
 
 // Fetch Data User / Pelanggan
 $query_user = mysqli_query($conn, "SELECT * FROM pelanggan WHERE id = $user_id LIMIT 1");
 $user = mysqli_fetch_assoc($query_user);
 
-// If database table pelanggan is empty, setup mock array
+// Jika ID pengguna belum ditemukan di DB, buat array sementara
 if (!$user) {
     $user = [
-        'id' => 1,
+        'id' => $user_id,
         'nama_pelanggan' => isset($_SESSION['user_nama']) ? $_SESSION['user_nama'] : 'Nabila Keisha',
         'email' => 'nabila@example.com',
         'no_hp' => '081234567890',
@@ -44,12 +43,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
     if (empty($nama) || empty($no_hp)) {
         $error_msg = "Nama lengkap dan Nomor WhatsApp wajib diisi!";
     } else {
-        $update_q = "UPDATE pelanggan SET 
-                        nama_pelanggan = '$nama', 
-                        email = '$email', 
-                        no_hp = '$no_hp', 
-                        alamat = '$alamat' 
-                    WHERE id = $user_id";
+        $cek_exist = mysqli_query($conn, "SELECT id FROM pelanggan WHERE id = $user_id LIMIT 1");
+        if (mysqli_num_rows($cek_exist) > 0) {
+            $update_q = "UPDATE pelanggan SET 
+                            nama_pelanggan = '$nama', 
+                            email = '$email', 
+                            no_hp = '$no_hp', 
+                            alamat = '$alamat' 
+                        WHERE id = $user_id";
+        } else {
+            $update_q = "INSERT INTO pelanggan (id, nama_pelanggan, email, no_hp, alamat) 
+                         VALUES ($user_id, '$nama', '$email', '$no_hp', '$alamat')";
+        }
 
         if (mysqli_query($conn, $update_q)) {
             $_SESSION['user_nama'] = $nama;
@@ -125,7 +130,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
             <div class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs flex items-center justify-between shadow-xs">
                 <div class="flex items-center gap-2">
                     <i data-lucide="check-circle" class="w-4 h-4 text-[#2E7D32]"></i>
-                    <span><?= $success_msg ?></span>
+                    <span><?= htmlspecialchars($success_msg) ?></span>
                 </div>
                 <button onclick="this.parentElement.remove()" class="text-stone-400 hover:text-stone-600"><i data-lucide="x" class="w-4 h-4"></i></button>
             </div>
@@ -135,7 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_profile'])) {
             <div class="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center justify-between shadow-xs">
                 <div class="flex items-center gap-2">
                     <i data-lucide="alert-circle" class="w-4 h-4 text-rose-600"></i>
-                    <span><?= $error_msg ?></span>
+                    <span><?= htmlspecialchars($error_msg) ?></span>
                 </div>
                 <button onclick="this.parentElement.remove()" class="text-stone-400 hover:text-stone-600"><i data-lucide="x" class="w-4 h-4"></i></button>
             </div>

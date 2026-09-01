@@ -13,15 +13,18 @@ if (!$conn) {
     die("Koneksi gagal: " . mysqli_connect_error());
 }
 
-
-$user_id = isset($_SESSION['user_id']) ? $_SESSION['user_id'] : 1;
+$user_id = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : 0;
 $search_invoice = isset($_GET['search']) ? mysqli_real_escape_string($conn, trim($_GET['search'])) : '';
 
-// Query data penjualan/pesanan
+// Query data penjualan/pesanan hanya untuk pelanggan aktif
 $query_str = "SELECT p.*, pl.nama_pelanggan, pl.no_hp 
               FROM penjualan p 
               LEFT JOIN pelanggan pl ON p.pelanggan_id = pl.id 
               WHERE 1=1";
+
+if ($user_id > 0) {
+    $query_str .= " AND p.pelanggan_id = $user_id";
+}
 
 if (!empty($search_invoice)) {
     $query_str .= " AND p.no_faktur LIKE '%$search_invoice%'";
@@ -127,7 +130,7 @@ $result_penjualan = mysqli_query($conn, $query_str);
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-stone-100 text-xs">
-                        <?php if (mysqli_num_rows($result_penjualan) > 0): ?>
+                        <?php if ($result_penjualan && mysqli_num_rows($result_penjualan) > 0): ?>
                             <?php while ($row = mysqli_fetch_assoc($result_penjualan)): ?>
                                 <tr class="hover:bg-stone-50/60 transition-colors">
                                     <td class="py-4 px-6 space-y-1">
@@ -139,7 +142,7 @@ $result_penjualan = mysqli_query($conn, $query_str);
                                         <p class="text-[11px] text-stone-400"><?= htmlspecialchars($row['no_hp'] ?: '-') ?></p>
                                     </td>
                                     <td class="py-4 px-6 space-y-0.5">
-                                        <p class="font-semibold text-stone-700 uppercase"><?= str_replace('_', ' ', $row['metode_pembayaran']) ?></p>
+                                        <p class="font-semibold text-stone-700 uppercase"><?= str_replace('_', ' ', htmlspecialchars($row['metode_pembayaran'])) ?></p>
                                         <p class="text-[11px] text-stone-400"><?= htmlspecialchars($row['ekspedisi'] ?: 'Regular') ?></p>
                                     </td>
                                     <td class="py-4 px-6">
@@ -159,11 +162,11 @@ $result_penjualan = mysqli_query($conn, $query_str);
                                         ?>
                                         <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-bold border <?= $badge_cls ?>">
                                             <span class="w-1.5 h-1.5 rounded-full bg-current"></span>
-                                            <?= ucfirst($row['status_pembayaran']) ?>
+                                            <?= htmlspecialchars(ucfirst($row['status_pembayaran'])) ?>
                                         </span>
                                     </td>
                                     <td class="py-4 px-6 text-center">
-                                        <a href="riwayat.php?detail_id=<?= $row['id'] ?>" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-stone-100 hover:bg-[#2E7D32] hover:text-white rounded-lg font-semibold text-stone-600 transition-colors">
+                                        <a href="riwayat.php?detail_id=<?= (int)$row['id'] ?>" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-stone-100 hover:bg-[#2E7D32] hover:text-white rounded-lg font-semibold text-stone-600 transition-colors">
                                             <i data-lucide="eye" class="w-3.5 h-3.5"></i> Detail
                                         </a>
                                     </td>
