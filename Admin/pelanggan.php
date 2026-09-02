@@ -327,6 +327,26 @@ $res_pelanggan   = mysqli_query($conn, $query_pelanggan);
         </div>
     </div>
 
+    <!-- FOOTER -->
+    <footer class="mt-auto bg-white border-t border-stone-200/80 py-6 text-center text-xs text-stone-500">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div class="flex items-center gap-2">
+                <div class="w-5 h-5 rounded-md bg-[#2E7D32] flex items-center justify-center text-white">
+                    <i data-lucide="sprout" class="w-3 h-3"></i>
+                </div>
+                <span class="font-bold text-stone-700">PlantShop System</span>
+                <span>&copy; <?= date('Y') ?>. Hak Cipta Dilindungi.</span>
+            </div>
+            <div class="flex items-center gap-6">
+                <a href="bantuan.php" class="hover:text-stone-800 transition-colors">Bantuan</a>
+                <a href="#" class="hover:text-stone-800 transition-colors">Privasi & Ketentuan</a>
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold bg-emerald-50 text-[#2E7D32] border border-emerald-100">
+                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> v2.4 Active
+                </span>
+            </div>
+        </div>
+    </footer>
+
     <!-- SCRIPT INTERAKSI -->
     <script>
         lucide.createIcons();

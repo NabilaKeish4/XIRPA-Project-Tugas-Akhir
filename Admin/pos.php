@@ -57,7 +57,7 @@
         }
     </style>
 </head>
-<body class="antialiased h-screen flex flex-col overflow-hidden">
+<body class="antialiased min-h-screen flex flex-col justify-between">
 
     <?php
     $categories = [
@@ -78,149 +78,264 @@
     ];
     ?>
 
-    <!-- Top Compact Header -->
-    <header class="bg-white border-b border-stone-200 px-6 py-3 flex items-center justify-between shrink-0">
-        <div class="flex items-center gap-4">
-            <a href="dashboard.php" class="p-2 rounded-xl text-stone-500 hover:bg-stone-100 transition-colors" title="Kembali ke Dashboard">
-                <i data-lucide="arrow-left" class="w-5 h-5"></i>
-            </a>
-            <div class="flex items-center gap-2.5">
-                <div class="bg-brand-primary p-2 rounded-xl text-white shadow-sm shadow-emerald-900/20">
-                    <i data-lucide="shopping-bag" class="w-5 h-5"></i>
-                </div>
-                <div>
-                    <h1 class="text-base font-bold text-stone-800 leading-tight">Kasir (POS)</h1>
-                    <p class="text-xs text-stone-400">Kasir: Nabila | Sesi #042</p>
-                </div>
-            </div>
-        </div>
-
-        <div class="flex items-center gap-3">
-            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-brand-primary border border-emerald-200">
-                <span class="w-2 h-2 rounded-full bg-brand-primary animate-pulse"></span>
-                Sistem Terhubung
-            </span>
-            <div class="h-6 w-[1px] bg-stone-200"></div>
-            <button onclick="clearCart()" class="flex items-center gap-2 bg-stone-100 hover:bg-stone-200/80 px-3 py-1.5 rounded-xl text-xs font-semibold text-stone-700 transition-colors">
-                <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
-                <span>Reset Sesi</span>
-            </button>
-        </div>
-    </header>
-
-    <!-- Main POS Layout -->
-    <div class="flex flex-1 overflow-hidden">
-
-        <!-- Left Column: Product Catalog -->
-        <section class="w-full lg:w-[60%] flex flex-col border-r border-stone-200 bg-brand-bg">
-            <!-- Search & Filter Controls -->
-            <div class="p-6 bg-white border-b border-stone-200/80 space-y-4 shrink-0 shadow-sm">
-                <div class="relative w-full">
-                    <i data-lucide="search" class="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
-                    <input type="text" id="searchInput" oninput="filterProducts()" placeholder="Cari nama tanaman atau kategori..." class="w-full pl-11 pr-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary transition-all">
-                </div>
-
-                <div class="flex items-center gap-2 overflow-x-auto pb-1 custom-scrollbar">
-                    <?php foreach ($categories as $index => $cat): ?>
-                        <button onclick="setCategory('<?= $cat['id'] ?>', this)" class="category-btn px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all duration-150 <?= $index === 0 ? 'bg-brand-primary text-white shadow-sm' : 'bg-stone-100 text-stone-600 hover:bg-stone-200/70' ?>">
-                            <?= $cat['name'] ?>
-                        </button>
-                    <?php endforeach; ?>
-                </div>
-            </div>
-
-            <!-- Product Grid Area -->
-            <div class="flex-1 overflow-y-auto p-6 custom-scrollbar">
-                <div id="productGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                    <!-- Products rendered via JS -->
-                </div>
-            </div>
-        </section>
-
-        <!-- Right Column: Cart / Checkout Panel -->
-        <section class="hidden lg:flex w-[40%] flex-col bg-white border-l border-stone-200 shadow-xl z-10">
-            <div class="p-4 border-b border-stone-200/80 bg-stone-50/60 flex items-center justify-between shrink-0">
-                <div class="flex items-center gap-3">
-                    <div class="p-2 bg-stone-200/70 text-stone-600 rounded-xl">
-                        <i data-lucide="user" class="w-4 h-4"></i>
+    <!-- KONTEN WRAPPER POS -->
+    <div class="flex-1 flex flex-col">
+        <!-- Top Compact Header -->
+        <header class="bg-white border-b border-stone-200 px-6 py-3 flex items-center justify-between shrink-0">
+            <div class="flex items-center gap-4">
+                <a href="dashboard.php" class="p-2 rounded-xl text-stone-500 hover:bg-stone-100 transition-colors" title="Kembali ke Dashboard">
+                    <i data-lucide="arrow-left" class="w-5 h-5"></i>
+                </a>
+                <div class="flex items-center gap-2.5">
+                    <div class="bg-brand-primary p-2 rounded-xl text-white shadow-sm shadow-emerald-900/20">
+                        <i data-lucide="shopping-bag" class="w-5 h-5"></i>
                     </div>
                     <div>
-                        <p class="text-xs text-stone-400 font-medium">Pelanggan</p>
-                        <p class="text-sm font-semibold text-stone-800">Pelanggan Umum (Walk-in)</p>
+                        <h1 class="text-base font-bold text-stone-800 leading-tight">Kasir (POS)</h1>
+                        <p class="text-xs text-stone-400">Kasir: Nabila | Sesi #042</p>
                     </div>
                 </div>
-                <a href="pelanggan.php" class="text-xs font-semibold text-brand-primary hover:underline flex items-center gap-1">
-                    <span>Kelola</span>
-                    <i data-lucide="chevron-right" class="w-3 h-3"></i>
-                </a>
             </div>
 
-            <!-- Cart Header -->
-            <div class="px-6 py-3 border-b border-stone-100 flex items-center justify-between shrink-0">
-                <div class="flex items-center gap-2">
-                    <h2 class="text-sm font-bold text-stone-800 uppercase tracking-wider">Keranjang Belanja</h2>
-                    <span id="cartCountBadge" class="bg-brand-primary-light text-brand-primary text-xs font-bold px-2 py-0.5 rounded-full">
-                        0 Item
-                    </span>
-                </div>
-                <button onclick="clearCart()" class="text-xs text-stone-400 hover:text-brand-danger flex items-center gap-1 transition-colors">
-                    <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
-                    <span>Kosongkan</span>
+            <div class="flex items-center gap-3">
+                <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-emerald-50 text-brand-primary border border-emerald-200">
+                    <span class="w-2 h-2 rounded-full bg-brand-primary animate-pulse"></span>
+                    Sistem Terhubung
+                </span>
+                <div class="h-6 w-[1px] bg-stone-200"></div>
+                <button onclick="clearCart()" class="flex items-center gap-2 bg-stone-100 hover:bg-stone-200/80 px-3 py-1.5 rounded-xl text-xs font-semibold text-stone-700 transition-colors">
+                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                    <span>Reset Sesi</span>
                 </button>
             </div>
+        </header>
 
-            <!-- Cart Items List -->
-            <div id="cartList" class="flex-1 overflow-y-auto px-6 divide-y divide-stone-100 custom-scrollbar">
-                <!-- Cart items rendered via JS -->
-            </div>
+        <!-- Main POS Layout -->
+        <div class="flex flex-1 min-h-[calc(100vh-180px)]">
 
-            <!-- Payment & Summary Footer -->
-            <div class="p-6 bg-stone-50/80 border-t border-stone-200 space-y-4 shrink-0">
-                <div class="space-y-1.5 text-xs">
-                    <div class="flex justify-between text-stone-500">
-                        <span>Subtotal</span>
-                        <span id="subtotalText" class="font-medium text-stone-700">Rp 0</span>
+            <!-- Left Column: Product Catalog -->
+            <section class="w-full lg:w-[60%] flex flex-col border-r border-stone-200 bg-brand-bg">
+                <!-- Search & Filter Controls -->
+                <div class="p-6 bg-white border-b border-stone-200/80 space-y-4 shrink-0 shadow-sm">
+                    <div class="relative w-full">
+                        <i data-lucide="search" class="w-5 h-5 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
+                        <input type="text" id="searchInput" oninput="filterProducts()" placeholder="Cari nama tanaman atau kategori..." class="w-full pl-11 pr-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary transition-all">
                     </div>
-                    <div class="flex justify-between text-stone-500">
-                        <span>PPN (11%)</span>
-                        <span id="taxText" class="font-medium text-stone-700">Rp 0</span>
+
+                    <div class="flex items-center gap-2 overflow-x-auto pb-1 custom-scrollbar">
+                        <?php foreach ($categories as $index => $cat): ?>
+                            <button onclick="setCategory('<?= $cat['id'] ?>', this)" class="category-btn px-4 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition-all duration-150 <?= $index === 0 ? 'bg-brand-primary text-white shadow-sm' : 'bg-stone-100 text-stone-600 hover:bg-stone-200/70' ?>">
+                                <?= $cat['name'] ?>
+                            </button>
+                        <?php endforeach; ?>
                     </div>
-                    <div class="pt-2 border-t border-stone-200 flex justify-between items-baseline">
-                        <span class="text-sm font-bold text-stone-800">Total Pembayaran</span>
-                        <span id="totalText" class="text-lg font-extrabold text-brand-primary">
-                            Rp 0
+                </div>
+
+                <!-- Product Grid Area -->
+                <div class="flex-1 overflow-y-auto p-6 custom-scrollbar max-h-[600px]">
+                    <div id="productGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                        <!-- Products rendered via JS -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- Right Column: Cart / Checkout Panel -->
+            <section class="hidden lg:flex w-[40%] flex-col bg-white border-l border-stone-200 shadow-xl z-10">
+                <div class="p-4 border-b border-stone-200/80 bg-stone-50/60 flex items-center justify-between shrink-0">
+                    <div class="flex items-center gap-3">
+                        <div class="p-2 bg-stone-200/70 text-stone-600 rounded-xl">
+                            <i data-lucide="user" class="w-4 h-4"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs text-stone-400 font-medium">Pelanggan</p>
+                            <p class="text-sm font-semibold text-stone-800">Pelanggan Umum (Walk-in)</p>
+                        </div>
+                    </div>
+                    <a href="pelanggan.php" class="text-xs font-semibold text-brand-primary hover:underline flex items-center gap-1">
+                        <span>Kelola</span>
+                        <i data-lucide="chevron-right" class="w-3 h-3"></i>
+                    </a>
+                </div>
+
+                <!-- Cart Header -->
+                <div class="px-6 py-3 border-b border-stone-100 flex items-center justify-between shrink-0">
+                    <div class="flex items-center gap-2">
+                        <h2 class="text-sm font-bold text-stone-800 uppercase tracking-wider">Keranjang Belanja</h2>
+                        <span id="cartCountBadge" class="bg-brand-primary-light text-brand-primary text-xs font-bold px-2 py-0.5 rounded-full">
+                            0 Item
                         </span>
                     </div>
+                    <button onclick="clearCart()" class="text-xs text-stone-400 hover:text-brand-danger flex items-center gap-1 transition-colors">
+                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                        <span>Kosongkan</span>
+                    </button>
                 </div>
 
-                <div>
-                    <label class="block text-[11px] font-semibold text-stone-400 uppercase tracking-wider mb-2">Metode Pembayaran</label>
-                    <div class="grid grid-cols-3 gap-2">
-                        <button type="button" onclick="selectPayment(this)" class="pay-method flex flex-col items-center justify-center p-2.5 rounded-xl border-2 border-brand-primary bg-brand-primary-light/40 text-brand-primary font-bold text-xs transition-all shadow-sm">
-                            <i data-lucide="banknote" class="w-4 h-4 mb-1"></i>
-                            <span>Tunai</span>
-                        </button>
-                        <button type="button" onclick="selectPayment(this)" class="pay-method flex flex-col items-center justify-center p-2.5 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 text-stone-600 font-semibold text-xs transition-all">
-                            <i data-lucide="qr-code" class="w-4 h-4 mb-1"></i>
-                            <span>QRIS</span>
-                        </button>
-                        <button type="button" onclick="selectPayment(this)" class="pay-method flex flex-col items-center justify-center p-2.5 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 text-stone-600 font-semibold text-xs transition-all">
-                            <i data-lucide="credit-card" class="w-4 h-4 mb-1"></i>
-                            <span>Debit</span>
-                        </button>
+                <!-- Cart Items List -->
+                <div id="cartList" class="flex-1 overflow-y-auto px-6 divide-y divide-stone-100 custom-scrollbar max-h-[350px]">
+                    <!-- Cart items rendered via JS -->
+                </div>
+
+                <!-- Payment & Summary Footer -->
+                <div class="p-6 bg-stone-50/80 border-t border-stone-200 space-y-4 shrink-0">
+                    <div class="space-y-1.5 text-xs">
+                        <div class="flex justify-between text-stone-500">
+                            <span>Subtotal</span>
+                            <span id="subtotalText" class="font-medium text-stone-700">Rp 0</span>
+                        </div>
+                        <div class="flex justify-between text-stone-500">
+                            <span>PPN (11%)</span>
+                            <span id="taxText" class="font-medium text-stone-700">Rp 0</span>
+                        </div>
+                        <div class="pt-2 border-t border-stone-200 flex justify-between items-baseline">
+                            <span class="text-sm font-bold text-stone-800">Total Pembayaran</span>
+                            <span id="totalText" class="text-lg font-extrabold text-brand-primary">
+                                Rp 0
+                            </span>
+                        </div>
                     </div>
+
+                    <div>
+                        <label class="block text-[11px] font-semibold text-stone-400 uppercase tracking-wider mb-2">Metode Pembayaran</label>
+                        <div class="grid grid-cols-3 gap-2">
+                            <button type="button" onclick="selectPayment(this)" class="pay-method flex flex-col items-center justify-center p-2.5 rounded-xl border-2 border-brand-primary bg-brand-primary-light/40 text-brand-primary font-bold text-xs transition-all shadow-sm">
+                                <i data-lucide="banknote" class="w-4 h-4 mb-1"></i>
+                                <span>Tunai</span>
+                            </button>
+                            <button type="button" onclick="selectPayment(this)" class="pay-method flex flex-col items-center justify-center p-2.5 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 text-stone-600 font-semibold text-xs transition-all">
+                                <i data-lucide="qr-code" class="w-4 h-4 mb-1"></i>
+                                <span>QRIS</span>
+                            </button>
+                            <button type="button" onclick="selectPayment(this)" class="pay-method flex flex-col items-center justify-center p-2.5 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 text-stone-600 font-semibold text-xs transition-all">
+                                <i data-lucide="credit-card" class="w-4 h-4 mb-1"></i>
+                                <span>Debit</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <button onclick="processCheckout()" class="w-full py-3.5 bg-brand-primary hover:bg-brand-primary-hover active:scale-[0.99] text-white rounded-xl font-bold text-sm shadow-md shadow-emerald-900/20 flex items-center justify-center gap-2 transition-all">
+                        <i data-lucide="check-circle-2" class="w-5 h-5"></i>
+                        <span id="payBtnText">Proses Bayar (Rp 0)</span>
+                    </button>
                 </div>
-
-                <button onclick="processCheckout()" class="w-full py-3.5 bg-brand-primary hover:bg-brand-primary-hover active:scale-[0.99] text-white rounded-xl font-bold text-sm shadow-md shadow-emerald-900/20 flex items-center justify-center gap-2 transition-all">
-                    <i data-lucide="check-circle-2" class="w-5 h-5"></i>
-                    <span id="payBtnText">Proses Bayar (Rp 0)</span>
-                </button>
-            </div>
-        </section>
-
+            </section>
+        </div>
     </div>
 
+    <!-- GLOBAL WEB FOOTER (PULAU TERPISAH DI PALING BAWAH HALAMAN) -->
+    <footer class="w-full bg-white border-t border-stone-200/80 mt-12 z-20 shrink-0">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-8 pb-8 border-b border-stone-100">
+                <!-- Branding & Info -->
+                <div class="space-y-3 md:col-span-1">
+                    <a href="#" class="flex items-center gap-2.5">
+                        <div class="w-8 h-8 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
+                            <i data-lucide="sprout" class="w-4 h-4"></i>
+                        </div>
+                        <span class="text-lg font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Shop</span></span>
+                    </a>
+                    <p class="text-xs text-stone-500 leading-relaxed">
+                        Sistem manajemen kasir dan inventaris tanaman hias terpadu. Membantu mengelola toko Anda dengan efisien.
+                    </p>
+                </div>
+
+                <!-- Navigasi Utama -->
+                <div>
+                    <h4 class="text-xs font-bold text-stone-800 uppercase tracking-wider mb-3">Navigasi Utama</h4>
+                    <ul class="space-y-2 text-xs text-stone-600">
+                        <li><a href="dashboard.php" class="hover:text-[#2E7D32] transition-colors">Dashboard</a></li>
+                        <li><a href="pos.php" class="hover:text-[#2E7D32] transition-colors">Penjualan (POS)</a></li>
+                        <li><a href="stok.php" class="hover:text-[#2E7D32] transition-colors">Stok & Produk</a></li>
+                        <li><a href="restock.php" class="hover:text-[#2E7D32] transition-colors">Pembelian (Restock)</a></li>
+                    </ul>
+                </div>
+
+                <!-- Manajemen -->
+                <div>
+                    <h4 class="text-xs font-bold text-stone-800 uppercase tracking-wider mb-3">Manajemen</h4>
+                    <ul class="space-y-2 text-xs text-stone-600">
+                        <li><a href="pelanggan.php" class="hover:text-[#2E7D32] transition-colors">Data Pelanggan</a></li>
+                        <li><a href="laporan.php" class="hover:text-[#2E7D32] transition-colors">Laporan Keuangan</a></li>
+                        <li><a href="pengaturan.php" class="hover:text-[#2E7D32] transition-colors">Pengaturan Toko</a></li>
+                        <li><a href="bantuan.php" class="hover:text-[#2E7D32] transition-colors">Pusat Bantuan</a></li>
+                    </ul>
+                </div>
+
+                <!-- Status Sistem -->
+                <div>
+                    <h4 class="text-xs font-bold text-stone-800 uppercase tracking-wider mb-3">Status Sistem</h4>
+                    <div class="space-y-2.5 text-xs text-stone-600">
+                        <div class="flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                            <span>Server Status: <strong class="text-stone-800 font-semibold">Online</strong></span>
+                        </div>
+                        <p class="text-stone-400">Versi POS: 1.0.4</p>
+                        <p class="text-stone-400">Cabang: Bandung Central</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Bottom Copyright Bar -->
+            <div class="pt-6 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-stone-400">
+                <p>&copy; <?= date('Y'); ?> PlantShop Indonesia. All rights reserved.</p>
+                <div class="flex items-center gap-4">
+                    <a href="bantuan.php" class="hover:text-stone-600 transition-colors">Syarat & Ketentuan</a>
+                    <span>&bull;</span>
+                    <a href="bantuan.php" class="hover:text-stone-600 transition-colors">Kebijakan Privasi</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Initialization & Script -->
     <script>
+        // Render Lucide Icons
+        lucide.createIcons();
+
+        // Mobile Sidebar Toggle
+        function toggleMobileSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            sidebar?.classList.toggle('hidden');
+            sidebar?.classList.toggle('fixed');
+            sidebar?.classList.toggle('inset-y-0');
+            sidebar?.classList.toggle('left-0');
+            sidebar?.classList.toggle('z-40');
+        }
+
+        // Toggle Dropdowns
+        function toggleNotifications() {
+            const notif = document.getElementById('notificationDropdown');
+            const profile = document.getElementById('profileDropdown');
+            profile?.classList.add('hidden');
+            notif?.classList.toggle('hidden');
+        }
+
+        function toggleProfileMenu() {
+            const profile = document.getElementById('profileDropdown');
+            const notif = document.getElementById('notificationDropdown');
+            notif?.classList.add('hidden');
+            profile?.classList.toggle('hidden');
+        }
+
+        // Global Search Dummy Function
+        function syncGlobalSearch(val) {
+            console.log("Mencari:", val);
+        }
+
+        // Close dropdowns when clicking outside
+        document.addEventListener('click', (e) => {
+            const notifDropdown = document.getElementById('notificationDropdown');
+            const profileDropdown = document.getElementById('profileDropdown');
+            
+            if (!e.target.closest('#notificationDropdown') && !e.target.closest('button[onclick="toggleNotifications()"]')) {
+                notifDropdown?.classList.add('hidden');
+            }
+            if (!e.target.closest('#profileDropdown') && !e.target.closest('button[onclick="toggleProfileMenu()"]')) {
+                profileDropdown?.classList.add('hidden');
+            }
+        });
+
+        // POS Data Logic
         const productsData = <?= json_encode($products) ?>;
         let cart = [
             { id: 1, name: 'Monstera Deliciosa', price: 125000, qty: 1, image: 'https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=200' },
