@@ -64,10 +64,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
         <!-- Banner Content -->
         <div class="max-w-lg z-10 space-y-6">
-            <div class="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 text-xs font-semibold backdrop-blur-md">
-                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                Sistem Kasir & Control Stok 2026
-            </div>
+            
             <h1 class="text-5xl font-extrabold text-white leading-[1.15] tracking-tight">
                 Kelola Tanaman & Transaksi Toko Lebih Mudah.
             </h1>

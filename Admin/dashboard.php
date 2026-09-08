@@ -1,3 +1,58 @@
+<?php
+// MENGHUBUNGKAN KE DATABASE
+require_once __DIR__ . '/../Config/database.php';
+
+// --- Data Dummy / Query Data ---
+$metrics = [
+    [
+        'title' => 'Penjualan Hari Ini',
+        'value' => 'Rp 2.450.000',
+        'icon' => 'wallet',
+        'type' => 'success',
+        'badge' => '+12.5% dari kemarin',
+        'sub' => null,
+        'link' => 'laporan.php'
+    ],
+    [
+        'title' => 'Transaksi Hari Ini',
+        'value' => '18 Transaksi',
+        'icon' => 'shopping-cart',
+        'type' => 'success',
+        'badge' => '+4 transaksi',
+        'sub' => null,
+        'link' => 'transaksi.php'
+    ],
+    [
+        'title' => 'Pembelian Supplier',
+        'value' => 'Rp 850.000',
+        'icon' => 'package-check',
+        'type' => 'success',
+        'badge' => '2 PO Selesai',
+        'sub' => null,
+        'link' => 'restock.php'
+    ],
+    [
+        'title' => 'Stok Kritis',
+        'value' => '4 Item Kritis',
+        'icon' => 'alert-triangle',
+        'type' => 'warning',
+        'badge' => null,
+        'sub' => 'Lihat Detail',
+        'link' => 'stok.php'
+    ],
+];
+
+$recent_transactions = [
+    ['id' => 'TRX-1092', 'customer' => 'Budi Santoso', 'time' => '10:42 WIB', 'total' => 'Rp 340.000'],
+    ['id' => 'TRX-1091', 'customer' => 'Siti Rahma', 'time' => '09:15 WIB', 'total' => 'Rp 1.250.000'],
+    ['id' => 'TRX-1090', 'customer' => 'Dewi Lestari', 'time' => '08:50 WIB', 'total' => 'Rp 180.000'],
+    ['id' => 'TRX-1089', 'customer' => 'Andi Wijaya', 'time' => 'Kemarin', 'total' => 'Rp 420.000'],
+    ['id' => 'TRX-1088', 'customer' => 'Rina Marlina', 'time' => 'Kemarin', 'total' => 'Rp 260.000'],
+];
+
+$chart_labels = ['1 Jul', '5 Jul', '10 Jul', '15 Jul', '20 Jul', '25 Jul', '30 Jul'];
+$chart_data = [1200000, 1800000, 1400000, 2900000, 2100000, 3100000, 2450000];
+?>
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -16,13 +71,11 @@
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
         body {
             font-family: 'Plus Jakarta Sans', sans-serif;
             background-color: #F9F8F6;
             color: #2D3748;
         }
-        /* Custom Scrollbar */
         .no-scrollbar::-webkit-scrollbar {
             display: none;
         }
@@ -34,55 +87,6 @@
 </head>
 <body class="antialiased min-h-screen flex flex-col justify-between">
 
-    <?php
-    // --- Mock Data Layer ---
-    $metrics = [
-        [
-            'title' => 'Penjualan Hari Ini',
-            'value' => 'Rp 2.450.000',
-            'icon' => 'wallet',
-            'type' => 'success',
-            'badge' => '+12.5% dari kemarin',
-            'sub' => null
-        ],
-        [
-            'title' => 'Transaksi Hari Ini',
-            'value' => '18 Transaksi',
-            'icon' => 'shopping-cart',
-            'type' => 'success',
-            'badge' => '+4 transaksi',
-            'sub' => null
-        ],
-        [
-            'title' => 'Pembelian Supplier',
-            'value' => 'Rp 850.000',
-            'icon' => 'package-check',
-            'type' => 'success',
-            'badge' => '2 PO Selesai',
-            'sub' => null
-        ],
-        [
-            'title' => 'Stok Kritis',
-            'value' => '4 Item Kritis',
-            'icon' => 'alert-triangle',
-            'type' => 'warning',
-            'badge' => null,
-            'sub' => 'Lihat Detail'
-        ],
-    ];
-
-    $recent_transactions = [
-        ['id' => 'TRX-1092', 'customer' => 'Budi Santoso', 'time' => '10:42 WIB', 'total' => 'Rp 340.000'],
-        ['id' => 'TRX-1091', 'customer' => 'Siti Rahma', 'time' => '09:15 WIB', 'total' => 'Rp 1.250.000'],
-        ['id' => 'TRX-1090', 'customer' => 'Dewi Lestari', 'time' => '08:50 WIB', 'total' => 'Rp 180.000'],
-        ['id' => 'TRX-1089', 'customer' => 'Andi Wijaya', 'time' => 'Kemarin', 'total' => 'Rp 420.000'],
-        ['id' => 'TRX-1088', 'customer' => 'Rina Marlina', 'time' => 'Kemarin', 'total' => 'Rp 260.000'],
-    ];
-
-    $chart_labels = ['1 Jul', '5 Jul', '10 Jul', '15 Jul', '20 Jul', '25 Jul', '30 Jul'];
-    $chart_data = [1200000, 1800000, 1400000, 2900000, 2100000, 3100000, 2450000];
-    ?>
-
     <!-- TOP NAVBAR -->
     <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
         <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
@@ -90,7 +94,7 @@
                 <button id="mobile-menu-btn" onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
                     <i data-lucide="menu" class="w-5 h-5"></i>
                 </button>
-                <a href="#" class="flex items-center gap-2.5">
+                <a href="dashboard.php" class="flex items-center gap-2.5">
                     <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm shadow-emerald-900/20">
                         <i data-lucide="sprout" class="w-5 h-5"></i>
                     </div>
@@ -120,14 +124,14 @@
                             <span class="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-semibold">2 Baru</span>
                         </div>
                         <div class="space-y-2 max-h-60 overflow-y-auto text-xs">
-                            <div class="p-2 rounded-xl bg-amber-50/70 border border-amber-100">
+                            <a href="stok.php" class="block p-2 rounded-xl bg-amber-50/70 border border-amber-100 hover:bg-amber-100/60 transition-colors">
                                 <p class="font-semibold text-amber-900">Stok Kritis: Fiddle Leaf Fig</p>
                                 <p class="text-amber-700 text-[11px] mt-0.5">Sisa stok 3 unit. Segera pesan ke supplier.</p>
-                            </div>
-                            <div class="p-2 rounded-xl bg-rose-50/70 border border-rose-100">
+                            </a>
+                            <a href="stok.php" class="block p-2 rounded-xl bg-rose-50/70 border border-rose-100 hover:bg-rose-100/60 transition-colors">
                                 <p class="font-semibold text-rose-900">Stok Habis: Calathea Orbifolia</p>
                                 <p class="text-rose-700 text-[11px] mt-0.5">Produk bernilai stok 0 dan dinonaktifkan di POS.</p>
-                            </div>
+                            </a>
                         </div>
                     </div>
                 </div>
@@ -150,23 +154,23 @@
 
                     <!-- Profile Dropdown Menu -->
                     <div id="profileDropdown" class="hidden absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-stone-100 p-2 space-y-1 z-50">
-                        <a href="profil.php" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
+                        <a href="pengaturan.php" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
                             <i data-lucide="user" class="w-4 h-4 text-stone-500"></i> Profil Saya
                         </a>
                         <a href="pengaturan.php" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
                             <i data-lucide="settings" class="w-4 h-4 text-stone-500"></i> Pengaturan Toko
                         </a>
-                       <hr class="border-stone-100 my-1">
-<a href="../Auth/logout.php" onclick="return confirm('Apakah Anda yakin ingin keluar?');" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 rounded-xl transition-colors">
-    <i data-lucide="log-out" class="w-4 h-4 text-rose-500"></i> Keluar
-</a>
+                        <hr class="border-stone-100 my-1">
+                        <a href="../Auth/logout.php" onclick="return confirm('Apakah Anda yakin ingin keluar?');" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 rounded-xl transition-colors">
+                            <i data-lucide="log-out" class="w-4 h-4 text-rose-500"></i> Keluar
+                        </a>
                     </div>
                 </div>
             </div>
         </div>
     </header>
 
-    <!-- WRAPPER UTAMA: HANYA MEMBUNGKUS SIDEBAR DAN MAIN CONTENT -->
+    <!-- WRAPPER UTAMA -->
     <div class="flex flex-1">
         <!-- SIDEBAR NAVIGASI -->
         <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0">
@@ -175,7 +179,6 @@
                 <nav class="space-y-1">
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-2">Main Menu</p>
                     
-                    <!-- Active Page: Dashboard -->
                     <a href="dashboard.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-semibold text-[#2E7D32] bg-[#2E7D32]/10 rounded-xl transition-colors">
                         <div class="flex items-center gap-3">
                             <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
@@ -188,6 +191,11 @@
                         <i data-lucide="shopping-bag" class="w-4 h-4"></i>
                         Penjualan (POS)
                     </a>
+
+                    <a href="transaksi.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 hover:text-stone-900 transition-colors">
+                        <i data-lucide="receipt" class="w-4 h-4"></i>
+                        Riwayat Transaksi
+                    </a>
                     
                     <a href="restock.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 hover:text-stone-900 transition-colors">
                         <i data-lucide="truck" class="w-4 h-4"></i>
@@ -197,6 +205,11 @@
                     <a href="stok.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 hover:text-stone-900 transition-colors">
                         <i data-lucide="package" class="w-4 h-4"></i>
                         Stok & Produk
+                    </a>
+
+                    <a href="data_master.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 hover:text-stone-900 transition-colors">
+                        <i data-lucide="database" class="w-4 h-4"></i>
+                        Data Master
                     </a>
                     
                     <a href="pelanggan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 hover:text-stone-900 transition-colors">
@@ -233,7 +246,7 @@
                         <i data-lucide="store" class="w-4 h-4"></i>
                     </div>
                     <div class="overflow-hidden">
-                        <p class="text-xs font-semibold text-stone-800 truncate">Cabang Bandung Central</p>
+                        <p class="text-xs font-semibold text-stone-800 truncate">PlantShop Utama</p>
                         <p class="text-[11px] text-stone-500 truncate">Sistem Online Active</p>
                     </div>
                 </div>
@@ -250,10 +263,10 @@
                     <p class="text-sm text-stone-500 mt-0.5">Pantau arus kas, stok tanaman, dan penjualan toko Anda hari ini.</p>
                 </div>
                 <div class="flex items-center gap-2">
-                    <button class="inline-flex items-center gap-2 bg-white border border-stone-300 px-3.5 py-2.5 rounded-xl text-sm font-medium text-stone-700 hover:bg-stone-50 shadow-sm transition-all">
+                    <a href="laporan.php" class="inline-flex items-center gap-2 bg-white border border-stone-300 px-3.5 py-2.5 rounded-xl text-sm font-medium text-stone-700 hover:bg-stone-50 shadow-sm transition-all">
                         <i data-lucide="calendar" class="w-4 h-4 text-stone-500"></i>
-                        <span>Hari Ini</span>
-                    </button>
+                        <span>Laporan Lanjutan</span>
+                    </a>
                     <a href="pos.php" class="inline-flex items-center gap-2 bg-[#2E7D32] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-emerald-800 shadow-sm shadow-emerald-900/20 transition-all">
                         <i data-lucide="plus" class="w-4 h-4"></i>
                         <span>Transaksi Baru</span>
@@ -264,7 +277,7 @@
             <!-- 4 METRIC CARDS -->
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <?php foreach ($metrics as $m): ?>
-                    <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 <?= $m['type'] === 'warning' ? 'border-t-[#D97706]' : 'border-t-[#2E7D32]' ?> flex flex-col justify-between">
+                    <a href="<?= $m['link'] ?>" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 <?= $m['type'] === 'warning' ? 'border-t-[#D97706]' : 'border-t-[#2E7D32]' ?> flex flex-col justify-between hover:shadow-md transition-shadow">
                         <div>
                             <div class="flex items-center justify-between mb-3">
                                 <p class="text-xs font-semibold uppercase tracking-wider text-stone-500"><?= $m['title'] ?></p>
@@ -284,13 +297,13 @@
                             <?php endif; ?>
 
                             <?php if ($m['sub']): ?>
-                                <a href="stok.php" class="inline-flex items-center gap-1 font-semibold text-[#D97706] hover:underline ml-auto">
+                                <span class="inline-flex items-center gap-1 font-semibold text-[#D97706] hover:underline ml-auto">
                                     <span><?= $m['sub'] ?></span>
                                     <i data-lucide="chevron-right" class="w-3 h-3"></i>
-                                </a>
+                                </span>
                             <?php endif; ?>
                         </div>
-                    </div>
+                    </a>
                 <?php endforeach; ?>
             </div>
 
@@ -343,7 +356,7 @@
                                 </thead>
                                 <tbody class="divide-y divide-stone-100 text-xs font-medium text-stone-700">
                                     <?php foreach ($recent_transactions as $trx): ?>
-                                        <tr class="hover:bg-stone-50/80 transition-colors">
+                                        <tr class="hover:bg-stone-50/80 transition-colors cursor-pointer" onclick="window.location.href='transaksi.php';">
                                             <td class="py-3 pr-2 font-mono text-stone-400 text-[11px]"><?= $trx['id'] ?></td>
                                             <td class="py-3 px-2 font-semibold text-stone-800"><?= $trx['customer'] ?></td>
                                             <td class="py-3 px-2 text-stone-400 text-[11px]"><?= $trx['time'] ?></td>
@@ -357,7 +370,7 @@
 
                     <!-- Footer Action -->
                     <div class="pt-4 border-t border-stone-100 mt-4 flex justify-end">
-                        <a href="laporan.php" class="inline-flex items-center gap-1 text-xs font-semibold text-[#2E7D32] hover:underline transition-all">
+                        <a href="transaksi.php" class="inline-flex items-center gap-1 text-xs font-semibold text-[#2E7D32] hover:underline transition-all">
                             <span>Lihat Semua Transaksi</span>
                             <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
                         </a>
@@ -368,15 +381,14 @@
 
         </main>
     </div>
-    <!-- KONTEN WRAPPER DISINI DIREMBOK/DITUTUP TOTAL SEBELUM FOOTER DITULIS -->
 
-    <!-- GLOBAL WEB FOOTER (PULAU TERPISAH DI PALING BAWAH HALAMAN) -->
+    <!-- GLOBAL WEB FOOTER -->
     <footer class="w-full bg-white border-t border-stone-200/80 mt-12 z-20">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
             <div class="grid grid-cols-1 md:grid-cols-4 gap-8 pb-8 border-b border-stone-100">
                 <!-- Branding & Info -->
                 <div class="space-y-3 md:col-span-1">
-                    <a href="#" class="flex items-center gap-2.5">
+                    <a href="dashboard.php" class="flex items-center gap-2.5">
                         <div class="w-8 h-8 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
                             <i data-lucide="sprout" class="w-4 h-4"></i>
                         </div>
@@ -418,7 +430,6 @@
                             <span>Server Status: <strong class="text-stone-800 font-semibold">Online</strong></span>
                         </div>
                         <p class="text-stone-400">Versi POS: 1.0.4</p>
-                        <p class="text-stone-400">Cabang: Bandung Central</p>
                     </div>
                 </div>
             </div>
@@ -465,7 +476,6 @@
             profile?.classList.toggle('hidden');
         }
 
-        // Global Search Dummy Function
         function syncGlobalSearch(val) {
             console.log("Mencari:", val);
         }
@@ -486,7 +496,6 @@
         // Initialize Chart.js
         const ctx = document.getElementById('salesChart').getContext('2d');
         
-        // Green Gradient Area setup
         const gradient = ctx.createLinearGradient(0, 0, 0, 300);
         gradient.addColorStop(0, 'rgba(46, 125, 50, 0.35)');
         gradient.addColorStop(1, 'rgba(46, 125, 50, 0.0)');

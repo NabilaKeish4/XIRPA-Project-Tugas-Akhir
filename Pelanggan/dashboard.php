@@ -27,7 +27,7 @@ if (isset($_POST['add_to_cart'])) {
 
 // Fitur Pencarian Produk
 $search = mysqli_real_escape_string($conn, $_GET['search'] ?? '');
-$query = "SELECT * FROM produk WHERE nama_produk LIKE '%$search%'";
+$query = "SELECT * FROM produk WHERE nama_tanaman LIKE '%$search%'";
 $result = mysqli_query($conn, $query);
 ?>
 
