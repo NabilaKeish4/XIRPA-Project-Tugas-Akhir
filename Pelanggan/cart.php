@@ -30,19 +30,35 @@ if (isset($_POST['update_cart']) && isset($_POST['jumlah'])) {
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <title>Keranjang Belanja - PlantHub</title>
+    <title>Keranjang Belanja - TPLANT</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: { brand: { 500: '#63B745', 600: '#529E38' } }
+                }
+            }
+        }
+    </script>
 </head>
-<body class="bg-emerald-50 text-gray-800">
-    <div class="container mx-auto p-6 max-w-4xl">
-        <h1 class="text-2xl font-bold text-emerald-900 mb-6">Keranjang Belanja Anda 🛒</h1>
+<body class="bg-gray-50 text-gray-800 font-sans antialiased">
+    <header class="bg-white border-b border-gray-100">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+            <a href="dashboard.php" class="text-2xl font-black tracking-wider text-gray-900">TPLANT</a>
+            <a href="dashboard.php" class="text-xs font-bold text-gray-500 hover:text-brand-500 uppercase">&larr; Lanjut Belanja</a>
+        </div>
+    </header>
+
+    <div class="max-w-4xl mx-auto p-6 my-8">
+        <h1 class="text-2xl font-black uppercase text-gray-900 mb-6">Keranjang Belanja 🛒</h1>
 
         <?php if (!empty($_SESSION['cart'])): ?>
             <form method="POST">
-                <div class="bg-white rounded-xl shadow border overflow-hidden">
+                <div class="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                     <table class="w-full text-left border-collapse">
                         <thead>
-                            <tr class="bg-emerald-100 text-emerald-900 text-sm">
+                            <tr class="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider border-b">
                                 <th class="p-4">Produk</th>
                                 <th class="p-4">Harga</th>
                                 <th class="p-4">Jumlah</th>
@@ -57,19 +73,19 @@ if (isset($_POST['update_cart']) && isset($_POST['jumlah'])) {
                                 $id_clean = (int)$id;
                                 $res = mysqli_query($conn, "SELECT * FROM produk WHERE id_produk = '$id_clean'");
                                 $p = mysqli_fetch_assoc($res);
-                                if (!$p) continue; // Melewati jika produk tidak ditemukan di database
+                                if (!$p) continue;
                                 $subtotal = $p['harga'] * $jumlah;
                                 $grand_total += $subtotal;
                             ?>
                             <tr>
-                                <td class="p-4 font-semibold"><?= htmlspecialchars($p['nama_produk']) ?></td>
+                                <td class="p-4 font-bold text-gray-900"><?= htmlspecialchars($p['nama_produk']) ?></td>
                                 <td class="p-4">Rp <?= number_format($p['harga'], 0, ',', '.') ?></td>
                                 <td class="p-4">
-                                    <input type="number" name="jumlah[<?= $id_clean ?>]" value="<?= (int)$jumlah ?>" min="1" class="w-16 border rounded p-1 text-center">
+                                    <input type="number" name="jumlah[<?= $id_clean ?>]" value="<?= (int)$jumlah ?>" min="1" class="w-16 border rounded-lg p-1 text-center text-xs font-bold">
                                 </td>
-                                <td class="p-4 font-semibold">Rp <?= number_format($subtotal, 0, ',', '.') ?></td>
+                                <td class="p-4 font-bold text-gray-900">Rp <?= number_format($subtotal, 0, ',', '.') ?></td>
                                 <td class="p-4 text-center">
-                                    <a href="cart.php?hapus=<?= $id_clean ?>" class="text-red-500 hover:underline">Hapus</a>
+                                    <a href="cart.php?hapus=<?= $id_clean ?>" class="text-red-500 hover:underline text-xs font-bold uppercase">Hapus</a>
                                 </td>
                             </tr>
                             <?php endforeach; ?>
@@ -77,21 +93,21 @@ if (isset($_POST['update_cart']) && isset($_POST['jumlah'])) {
                     </table>
                 </div>
 
-                <div class="mt-6 flex justify-between items-center bg-white p-4 rounded-xl shadow">
+                <div class="mt-6 flex justify-between items-center bg-white p-6 rounded-2xl border border-gray-100 shadow-sm">
                     <div>
-                        <span class="text-gray-600">Total Pembayaran: </span>
-                        <span class="text-2xl font-bold text-emerald-600">Rp <?= number_format($grand_total, 0, ',', '.') ?></span>
+                        <span class="text-xs text-gray-400 uppercase font-bold block">Total Pembayaran</span>
+                        <span class="text-2xl font-black text-gray-900">Rp <?= number_format($grand_total, 0, ',', '.') ?></span>
                     </div>
                     <div class="space-x-2">
-                        <button type="submit" name="update_cart" class="bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300">Update Cart</button>
-                        <a href="checkout.php" class="bg-emerald-600 text-white px-6 py-2 rounded-lg hover:bg-emerald-700 font-semibold">Lanjut Checkout &rarr;</a>
+                        <button type="submit" name="update_cart" class="bg-gray-100 text-gray-700 px-4 py-2.5 rounded-xl text-xs font-bold uppercase">Update Cart</button>
+                        <a href="checkout.php" class="bg-brand-500 hover:bg-brand-600 text-white px-6 py-2.5 rounded-xl text-xs font-bold uppercase transition inline-block">Checkout &rarr;</a>
                     </div>
                 </div>
             </form>
         <?php else: ?>
-            <div class="bg-white p-8 text-center rounded-xl shadow">
-                <p class="text-gray-500 mb-4">Keranjang belanja Anda masih kosong.</p>
-                <a href="dashboard.php" class="bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700">Mulai Belanja</a>
+            <div class="bg-white p-12 text-center rounded-2xl border border-gray-100 shadow-sm">
+                <p class="text-gray-400 mb-4 text-sm">Keranjang belanja Anda masih kosong.</p>
+                <a href="dashboard.php" class="bg-brand-500 text-white px-6 py-2.5 rounded-xl text-xs font-bold uppercase hover:bg-brand-600 inline-block">Mulai Belanja</a>
             </div>
         <?php endif; ?>
     </div>

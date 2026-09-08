@@ -4,7 +4,6 @@ require_once '../Config/database.php';
 
 $id_transaksi = (int)($_GET['id'] ?? 0);
 
-// Ambil data transaksi
 $query_tx = "SELECT * FROM transaksi WHERE id_transaksi = '$id_transaksi'";
 $res_tx = mysqli_query($conn, $query_tx);
 $tx = mysqli_fetch_assoc($res_tx);
@@ -14,7 +13,6 @@ if (!$tx) {
     exit;
 }
 
-// Ambil item pesanan
 $query_detail = "SELECT d.*, p.nama_produk FROM detail_transaksi d 
                  JOIN produk p ON d.id_produk = p.id_produk 
                  WHERE d.id_transaksi = '$id_transaksi'";
@@ -25,18 +23,27 @@ $res_detail = mysqli_query($conn, $query_detail);
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <title>Nota Pesanan #<?= (int)$tx['id_transaksi'] ?> - PlantHub</title>
+    <title>Nota Pesanan #<?= (int)$tx['id_transaksi'] ?> - TPLANT</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: { brand: { 500: '#63B745', 600: '#529E38' } }
+                }
+            }
+        }
+    </script>
 </head>
-<body class="bg-emerald-50 text-gray-800">
-    <div class="container mx-auto p-6 max-w-xl">
-        <div class="bg-white p-6 rounded-xl shadow-lg border border-emerald-100">
-            <div class="text-center border-b pb-4 mb-4">
-                <h1 class="text-2xl font-bold text-emerald-800">PlantHub</h1>
-                <p class="text-xs text-gray-500">Nota Pembelian Produk Tanaman Hias</p>
+<body class="bg-gray-50 text-gray-800 font-sans antialiased">
+    <div class="max-w-xl mx-auto p-6 my-12">
+        <div class="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm">
+            <div class="text-center border-b pb-4 mb-6">
+                <h1 class="text-3xl font-black tracking-wider text-gray-900">TPLANT</h1>
+                <p class="text-xs text-gray-400 uppercase tracking-widest mt-1">Nota Pembelian Produk</p>
             </div>
 
-            <div class="text-sm space-y-1 mb-4">
+            <div class="text-xs space-y-1.5 mb-6 text-gray-600">
                 <p><strong>No. Transaksi:</strong> #<?= (int)$tx['id_transaksi'] ?></p>
                 <p><strong>Tanggal:</strong> <?= htmlspecialchars($tx['tanggal']) ?></p>
                 <p><strong>Penerima:</strong> <?= htmlspecialchars($tx['nama_penerima']) ?> (<?= htmlspecialchars($tx['telepon']) ?>)</p>
@@ -44,33 +51,33 @@ $res_detail = mysqli_query($conn, $query_detail);
                 <p><strong>Metode Pembayaran:</strong> <?= htmlspecialchars($tx['metode_pembayaran']) ?></p>
             </div>
 
-            <table class="w-full text-left text-sm border-t border-b mb-4">
+            <table class="w-full text-left text-xs border-t border-b border-gray-100 mb-6">
                 <thead>
-                    <tr class="py-2 text-gray-600">
-                        <th class="py-2">Item</th>
-                        <th class="py-2 text-center">Qty</th>
-                        <th class="py-2 text-right">Subtotal</th>
+                    <tr class="py-3 text-gray-400 uppercase tracking-wider">
+                        <th class="py-3">Item</th>
+                        <th class="py-3 text-center">Qty</th>
+                        <th class="py-3 text-right">Subtotal</th>
                     </tr>
                 </thead>
-                <tbody class="divide-y">
+                <tbody class="divide-y divide-gray-50">
                     <?php while ($row = mysqli_fetch_assoc($res_detail)): ?>
                     <tr>
-                        <td class="py-2"><?= htmlspecialchars($row['nama_produk']) ?></td>
-                        <td class="py-2 text-center"><?= (int)$row['jumlah'] ?></td>
-                        <td class="py-2 text-right">Rp <?= number_format($row['harga'] * $row['jumlah'], 0, ',', '.') ?></td>
+                        <td class="py-3 font-bold text-gray-800"><?= htmlspecialchars($row['nama_produk']) ?></td>
+                        <td class="py-3 text-center"><?= (int)$row['jumlah'] ?></td>
+                        <td class="py-3 text-right font-bold">Rp <?= number_format($row['harga'] * $row['jumlah'], 0, ',', '.') ?></td>
                     </tr>
                     <?php endwhile; ?>
                 </tbody>
             </table>
 
-            <div class="flex justify-between font-bold text-lg text-emerald-900 border-b pb-4 mb-4">
+            <div class="flex justify-between font-black text-lg text-gray-900 border-b border-gray-100 pb-6 mb-6">
                 <span>Total Bayar:</span>
                 <span>Rp <?= number_format($tx['total'], 0, ',', '.') ?></span>
             </div>
 
             <div class="text-center space-x-2">
-                <button onclick="window.print()" class="bg-gray-600 text-white px-4 py-2 rounded-lg text-sm">Cetak Nota</button>
-                <a href="dashboard.php" class="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm inline-block">Kembali ke Katalog</a>
+                <button onclick="window.print()" class="bg-gray-100 text-gray-700 px-6 py-2.5 rounded-xl text-xs font-bold uppercase">Cetak Nota</button>
+                <a href="dashboard.php" class="bg-brand-500 text-white px-6 py-2.5 rounded-xl text-xs font-bold uppercase transition inline-block">Kembali ke Katalog</a>
             </div>
         </div>
     </div>
