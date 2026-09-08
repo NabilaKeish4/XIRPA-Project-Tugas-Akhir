@@ -55,7 +55,7 @@ if (isset($_POST['proses_checkout'])) {
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <title>Checkout - TPLANT</title>
+    <title>Checkout - PlantShop</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = {
@@ -67,43 +67,57 @@ if (isset($_POST['proses_checkout'])) {
         }
     </script>
 </head>
-<body class="bg-gray-50 text-gray-800 font-sans antialiased">
-    <header class="bg-white border-b border-gray-100">
-        <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-            <a href="dashboard.php" class="text-2xl font-black tracking-wider text-gray-900">TPLANT</a>
-            <a href="cart.php" class="text-xs font-bold text-gray-500 hover:text-brand-500 uppercase">&larr; Kembali ke Keranjang</a>
+<body class="bg-gray-50 text-gray-800 font-sans antialiased flex min-h-screen">
+
+    <!-- Sidebar Navbar (Samping) -->
+    <aside class="w-64 bg-white border-r border-gray-100 flex flex-col justify-between h-screen sticky top-0 shrink-0 z-50 p-6">
+        <div>
+            <a href="dashboard.php" class="text-2xl font-black tracking-wider text-gray-900 block mb-10">PlantShop</a>
+            <nav class="flex flex-col space-y-4 text-xs font-semibold uppercase tracking-wider text-gray-600">
+                <a href="dashboard.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">HOME</a>
+                <a href="dashboard.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Shop</a>
+                <a href="riwayat.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Riwayat</a>
+                <a href="cart.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Keranjang</a>
+            </nav>
         </div>
-    </header>
+        <div class="border-t border-gray-100 pt-6">
+            <a href="cart.php" class="text-xs font-bold text-gray-500 hover:text-brand-500 uppercase flex items-center gap-1">&larr; Kembali ke Keranjang</a>
+        </div>
+    </aside>
 
-    <div class="max-w-2xl mx-auto p-6 my-8">
-        <h1 class="text-2xl font-black uppercase text-gray-900 mb-6">Formulir Checkout</h1>
+    <!-- Main Content -->
+    <div class="flex-1 p-8 overflow-y-auto">
+        <div class="max-w-2xl mx-auto my-4">
+            <h1 class="text-2xl font-black uppercase text-gray-900 mb-6">Formulir Checkout</h1>
 
-        <form method="POST" class="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm space-y-4">
-            <div>
-                <label class="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Nama Penerima</label>
-                <input type="text" name="nama" required class="w-full border p-3 rounded-xl text-sm focus:outline-none focus:border-brand-500">
-            </div>
-            <div>
-                <label class="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Nomor Telepon/WA</label>
-                <input type="text" name="telepon" required class="w-full border p-3 rounded-xl text-sm focus:outline-none focus:border-brand-500">
-            </div>
-            <div>
-                <label class="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Alamat Pengiriman Lengkap</label>
-                <textarea name="alamat" required rows="3" class="w-full border p-3 rounded-xl text-sm focus:outline-none focus:border-brand-500"></textarea>
-            </div>
-            <div>
-                <label class="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Metode Pembayaran</label>
-                <select name="metode_pembayaran" class="w-full border p-3 rounded-xl text-sm focus:outline-none focus:border-brand-500">
-                    <option value="Transfer Bank">Transfer Bank (BCA / Mandiri)</option>
-                    <option value="E-Wallet">E-Wallet (Gopay / OVO / Dana)</option>
-                    <option value="COD">Bayar di Tempat (COD)</option>
-                </select>
-            </div>
+            <form method="POST" class="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Nama Penerima</label>
+                    <input type="text" name="nama" required class="w-full border p-3 rounded-xl text-sm focus:outline-none focus:border-brand-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Nomor Telepon/WA</label>
+                    <input type="text" name="telepon" required class="w-full border p-3 rounded-xl text-sm focus:outline-none focus:border-brand-500">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Alamat Pengiriman Lengkap</label>
+                    <textarea name="alamat" required rows="3" class="w-full border p-3 rounded-xl text-sm focus:outline-none focus:border-brand-500"></textarea>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Metode Pembayaran</label>
+                    <select name="metode_pembayaran" class="w-full border p-3 rounded-xl text-sm focus:outline-none focus:border-brand-500">
+                        <option value="Transfer Bank">Transfer Bank (BCA / Mandiri)</option>
+                        <option value="E-Wallet">E-Wallet (Gopay / OVO / Dana)</option>
+                        <option value="COD">Bayar di Tempat (COD)</option>
+                    </select>
+                </div>
 
-            <button type="submit" name="proses_checkout" class="w-full bg-brand-500 hover:bg-brand-600 text-white font-bold py-3.5 rounded-xl text-xs uppercase tracking-wider transition shadow-lg shadow-brand-500/20">
-                Selesaikan Pesanan
-            </button>
-        </form>
+                <button type="submit" name="proses_checkout" class="w-full bg-brand-500 hover:bg-brand-600 text-white font-bold py-3.5 rounded-xl text-xs uppercase tracking-wider transition shadow-lg shadow-brand-500/20">
+                    Selesaikan Pesanan
+                </button>
+            </form>
+        </div>
     </div>
+
 </body>
 </html>
