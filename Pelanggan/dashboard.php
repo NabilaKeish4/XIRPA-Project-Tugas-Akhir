@@ -111,10 +111,6 @@ $result = mysqli_query($conn, $query);
 
                 <div class="mt-8 flex items-center space-x-4">
                     <a href="#katalog" class="bg-brand-500 hover:bg-brand-600 text-white font-bold px-8 py-3 rounded-full text-sm transition shadow-lg shadow-brand-500/30">Buy Now</a>
-                    <a href="#katalog" class="flex items-center space-x-2 text-xs font-bold text-gray-800 hover:text-brand-500 transition">
-                        <span class="w-8 h-8 rounded-full bg-black text-white flex items-center justify-center">▶</span>
-                        <span>Learn how to take care a Plant</span>
-                    </a>
                 </div>
             </div>
 
