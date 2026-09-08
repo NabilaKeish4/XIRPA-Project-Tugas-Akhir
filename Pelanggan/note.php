@@ -2,7 +2,7 @@
 session_start();
 require_once '../Config/database.php';
 
-$id_transaksi = $_GET['id'] ?? 0;
+$id_transaksi = (int)($_GET['id'] ?? 0);
 
 // Ambil data transaksi
 $query_tx = "SELECT * FROM transaksi WHERE id_transaksi = '$id_transaksi'";
@@ -25,7 +25,7 @@ $res_detail = mysqli_query($conn, $query_detail);
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <title>Nota Pesanan #<?= $tx['id_transaksi'] ?> - PlantHub</title>
+    <title>Nota Pesanan #<?= (int)$tx['id_transaksi'] ?> - PlantHub</title>
     <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body class="bg-emerald-50 text-gray-800">
@@ -37,11 +37,11 @@ $res_detail = mysqli_query($conn, $query_detail);
             </div>
 
             <div class="text-sm space-y-1 mb-4">
-                <p><strong>No. Transaksi:</strong> #<?= $tx['id_transaksi'] ?></p>
-                <p><strong>Tanggal:</strong> <?= $tx['tanggal'] ?></p>
-                <p><strong>Penerima:</strong> <?= $tx['nama_penerima'] ?> (<?= $tx['telepon'] ?>)</p>
-                <p><strong>Alamat:</strong> <?= $tx['alamat'] ?></p>
-                <p><strong>Metode Pembayaran:</strong> <?= $tx['metode_pembayaran'] ?></p>
+                <p><strong>No. Transaksi:</strong> #<?= (int)$tx['id_transaksi'] ?></p>
+                <p><strong>Tanggal:</strong> <?= htmlspecialchars($tx['tanggal']) ?></p>
+                <p><strong>Penerima:</strong> <?= htmlspecialchars($tx['nama_penerima']) ?> (<?= htmlspecialchars($tx['telepon']) ?>)</p>
+                <p><strong>Alamat:</strong> <?= htmlspecialchars($tx['alamat']) ?></p>
+                <p><strong>Metode Pembayaran:</strong> <?= htmlspecialchars($tx['metode_pembayaran']) ?></p>
             </div>
 
             <table class="w-full text-left text-sm border-t border-b mb-4">
@@ -55,8 +55,8 @@ $res_detail = mysqli_query($conn, $query_detail);
                 <tbody class="divide-y">
                     <?php while ($row = mysqli_fetch_assoc($res_detail)): ?>
                     <tr>
-                        <td class="py-2"><?= $row['nama_produk'] ?></td>
-                        <td class="py-2 text-center"><?= $row['jumlah'] ?></td>
+                        <td class="py-2"><?= htmlspecialchars($row['nama_produk']) ?></td>
+                        <td class="py-2 text-center"><?= (int)$row['jumlah'] ?></td>
                         <td class="py-2 text-right">Rp <?= number_format($row['harga'] * $row['jumlah'], 0, ',', '.') ?></td>
                     </tr>
                     <?php endwhile; ?>

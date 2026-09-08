@@ -4,15 +4,17 @@ require_once '../Config/database.php';
 
 // Hapus Item
 if (isset($_GET['hapus'])) {
-    $id_hapus = $_GET['hapus'];
+    $id_hapus = (int)$_GET['hapus'];
     unset($_SESSION['cart'][$id_hapus]);
     header('Location: cart.php');
     exit;
 }
 
 // Update Jumlah Item
-if (isset($_POST['update_cart'])) {
+if (isset($_POST['update_cart']) && isset($_POST['jumlah'])) {
     foreach ($_POST['jumlah'] as $id => $qty) {
+        $id = (int)$id;
+        $qty = (int)$qty;
         if ($qty <= 0) {
             unset($_SESSION['cart'][$id]);
         } else {
@@ -52,20 +54,22 @@ if (isset($_POST['update_cart'])) {
                             <?php 
                             $grand_total = 0;
                             foreach ($_SESSION['cart'] as $id => $jumlah): 
-                                $res = mysqli_query($conn, "SELECT * FROM produk WHERE id_produk = '$id'");
+                                $id_clean = (int)$id;
+                                $res = mysqli_query($conn, "SELECT * FROM produk WHERE id_produk = '$id_clean'");
                                 $p = mysqli_fetch_assoc($res);
+                                if (!$p) continue; // Melewati jika produk tidak ditemukan di database
                                 $subtotal = $p['harga'] * $jumlah;
                                 $grand_total += $subtotal;
                             ?>
                             <tr>
-                                <td class="p-4 font-semibold"><?= $p['nama_produk'] ?></td>
+                                <td class="p-4 font-semibold"><?= htmlspecialchars($p['nama_produk']) ?></td>
                                 <td class="p-4">Rp <?= number_format($p['harga'], 0, ',', '.') ?></td>
                                 <td class="p-4">
-                                    <input type="number" name="jumlah[<?= $id ?>]" value="<?= $jumlah ?>" min="1" class="w-16 border rounded p-1 text-center">
+                                    <input type="number" name="jumlah[<?= $id_clean ?>]" value="<?= (int)$jumlah ?>" min="1" class="w-16 border rounded p-1 text-center">
                                 </td>
                                 <td class="p-4 font-semibold">Rp <?= number_format($subtotal, 0, ',', '.') ?></td>
                                 <td class="p-4 text-center">
-                                    <a href="cart.php?hapus=<?= $id ?>" class="text-red-500 hover:underline">Hapus</a>
+                                    <a href="cart.php?hapus=<?= $id_clean ?>" class="text-red-500 hover:underline">Hapus</a>
                                 </td>
                             </tr>
                             <?php endforeach; ?>

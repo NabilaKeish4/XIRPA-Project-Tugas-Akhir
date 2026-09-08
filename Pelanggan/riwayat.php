@@ -2,7 +2,7 @@
 session_start();
 require_once '../Config/database.php';
 
-$id_user = $_SESSION['id_user'] ?? 1;
+$id_user = (int)($_SESSION['id_user'] ?? 1);
 $query = "SELECT * FROM transaksi WHERE id_user = '$id_user' ORDER BY tanggal DESC";
 $result = mysqli_query($conn, $query);
 ?>
@@ -31,19 +31,19 @@ $result = mysqli_query($conn, $query);
                     </tr>
                 </thead>
                 <tbody class="divide-y">
-                    <?php if (mysqli_num_rows($result) > 0): ?>
+                    <?php if ($result && mysqli_num_rows($result) > 0): ?>
                         <?php while ($row = mysqli_fetch_assoc($result)): ?>
                         <tr>
-                            <td class="p-4 font-bold">#<?= $row['id_transaksi'] ?></td>
-                            <td class="p-4"><?= $row['tanggal'] ?></td>
+                            <td class="p-4 font-bold">#<?= (int)$row['id_transaksi'] ?></td>
+                            <td class="p-4"><?= htmlspecialchars($row['tanggal']) ?></td>
                             <td class="p-4 font-semibold">Rp <?= number_format($row['total'], 0, ',', '.') ?></td>
                             <td class="p-4">
                                 <span class="px-2 py-1 rounded text-xs font-bold <?= $row['status'] == 'Pending' ? 'bg-yellow-100 text-yellow-800' : 'bg-green-100 text-green-800' ?>">
-                                    <?= $row['status'] ?>
+                                    <?= htmlspecialchars($row['status']) ?>
                                 </span>
                             </td>
                             <td class="p-4 text-center">
-                                <a href="nota.php?id=<?= $row['id_transaksi'] ?>" class="text-emerald-600 hover:underline">Lihat Nota</a>
+                                <a href="nota.php?id=<?= (int)$row['id_transaksi'] ?>" class="text-emerald-600 hover:underline">Lihat Nota</a>
                             </td>
                         </tr>
                         <?php endwhile; ?>

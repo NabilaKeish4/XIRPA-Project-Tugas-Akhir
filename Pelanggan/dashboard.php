@@ -4,8 +4,12 @@ require_once '../Config/database.php';
 
 // Menangani Tambah ke Keranjang
 if (isset($_POST['add_to_cart'])) {
-    $id_produk = $_POST['id_produk'];
+    $id_produk = (int)$_POST['id_produk'];
     $jumlah = (int)$_POST['jumlah'];
+
+    if ($jumlah < 1) {
+        $jumlah = 1;
+    }
 
     if (!isset($_SESSION['cart'])) {
         $_SESSION['cart'] = [];
@@ -22,7 +26,7 @@ if (isset($_POST['add_to_cart'])) {
 }
 
 // Fitur Pencarian Produk
-$search = $_GET['search'] ?? '';
+$search = mysqli_real_escape_string($conn, $_GET['search'] ?? '');
 $query = "SELECT * FROM produk WHERE nama_produk LIKE '%$search%'";
 $result = mysqli_query($conn, $query);
 ?>
@@ -58,27 +62,27 @@ $result = mysqli_query($conn, $query);
             <p class="text-emerald-700 mb-4">Segarkan ruanganmu dengan koleksi tanaman hias terbaik dari kami.</p>
             
             <form method="GET" class="max-w-md mx-auto flex gap-2">
-                <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari tanaman (misal: Monstera)..." class="w-full px-4 py-2 border border-emerald-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                <input type="text" name="search" value="<?= htmlspecialchars($_GET['search'] ?? '') ?>" placeholder="Cari tanaman (misal: Monstera)..." class="w-full px-4 py-2 border border-emerald-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-500">
                 <button type="submit" class="bg-emerald-600 text-white px-5 py-2 rounded-lg hover:bg-emerald-700">Cari</button>
             </form>
         </div>
 
         <!-- Grid Produk -->
         <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
-            <?php if (mysqli_num_rows($result) > 0): ?>
+            <?php if ($result && mysqli_num_rows($result) > 0): ?>
                 <?php while ($row = mysqli_fetch_assoc($result)): ?>
                     <div class="bg-white rounded-xl shadow-md overflow-hidden hover:shadow-lg transition flex flex-col justify-between">
-                        <img src="../assets/img/<?= $row['foto_produk'] ?? 'default.jpg' ?>" alt="<?= $row['nama_produk'] ?>" class="h-48 w-full object-cover">
+                        <img src="../assets/img/<?= htmlspecialchars($row['foto_produk'] ?? 'default.jpg') ?>" alt="<?= htmlspecialchars($row['nama_produk']) ?>" class="h-48 w-full object-cover">
                         <div class="p-4 flex-grow">
-                            <h3 class="text-lg font-bold text-gray-900"><?= $row['nama_produk'] ?></h3>
+                            <h3 class="text-lg font-bold text-gray-900"><?= htmlspecialchars($row['nama_produk']) ?></h3>
                             <p class="text-emerald-600 font-bold mt-1">Rp <?= number_format($row['harga'], 0, ',', '.') ?></p>
-                            <p class="text-gray-500 text-xs mt-2 line-clamp-2"><?= $row['deskripsi'] ?></p>
+                            <p class="text-gray-500 text-xs mt-2 line-clamp-2"><?= htmlspecialchars($row['deskripsi']) ?></p>
                         </div>
                         <div class="p-4 pt-0 space-y-2">
-                            <a href="detail.php?id=<?= $row['id_produk'] ?>" class="block text-center border border-emerald-600 text-emerald-600 py-1.5 rounded-lg text-sm hover:bg-emerald-50">Detail</a>
+                            <a href="detail.php?id=<?= (int)$row['id_produk'] ?>" class="block text-center border border-emerald-600 text-emerald-600 py-1.5 rounded-lg text-sm hover:bg-emerald-50">Detail</a>
                             
                             <form method="POST">
-                                <input type="hidden" name="id_produk" value="<?= $row['id_produk'] ?>">
+                                <input type="hidden" name="id_produk" value="<?= (int)$row['id_produk'] ?>">
                                 <input type="hidden" name="jumlah" value="1">
                                 <button type="submit" name="add_to_cart" class="w-full bg-emerald-600 text-white py-1.5 rounded-lg text-sm hover:bg-emerald-700">+ Keranjang</button>
                             </form>

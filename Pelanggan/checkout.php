@@ -12,16 +12,19 @@ if (isset($_POST['proses_checkout'])) {
     $nama_penerima = mysqli_real_escape_string($conn, $_POST['nama']);
     $alamat        = mysqli_real_escape_string($conn, $_POST['alamat']);
     $telepon       = mysqli_real_escape_string($conn, $_POST['telepon']);
-    $metode_bayar  = $_POST['metode_pembayaran'];
-    $id_user       = $_SESSION['id_user'] ?? 1; // Fallback ID jika tanpa auth
+    $metode_bayar  = mysqli_real_escape_string($conn, $_POST['metode_pembayaran']);
+    $id_user       = (int)($_SESSION['id_user'] ?? 1); // Fallback ID jika tanpa auth
     $tanggal       = date('Y-m-d H:i:s');
 
     // Hitung Total
     $total_bayar = 0;
     foreach ($_SESSION['cart'] as $id => $jumlah) {
-        $res = mysqli_query($conn, "SELECT harga FROM produk WHERE id_produk = '$id'");
+        $id_clean = (int)$id;
+        $res = mysqli_query($conn, "SELECT harga FROM produk WHERE id_produk = '$id_clean'");
         $p = mysqli_fetch_assoc($res);
-        $total_bayar += $p['harga'] * $jumlah;
+        if ($p) {
+            $total_bayar += $p['harga'] * (int)$jumlah;
+        }
     }
 
     // Insert ke tabel Transaksi
@@ -33,12 +36,15 @@ if (isset($_POST['proses_checkout'])) {
 
         // Insert ke Detail Transaksi
         foreach ($_SESSION['cart'] as $id => $jumlah) {
-            $res = mysqli_query($conn, "SELECT harga FROM produk WHERE id_produk = '$id'");
+            $id_clean = (int)$id;
+            $qty = (int)$jumlah;
+            $res = mysqli_query($conn, "SELECT harga FROM produk WHERE id_produk = '$id_clean'");
             $p = mysqli_fetch_assoc($res);
-            $harga = $p['harga'];
-
-            mysqli_query($conn, "INSERT INTO detail_transaksi (id_transaksi, id_produk, jumlah, harga) 
-                                 VALUES ('$id_transaksi', '$id', '$jumlah', '$harga')");
+            if ($p) {
+                $harga = $p['harga'];
+                mysqli_query($conn, "INSERT INTO detail_transaksi (id_transaksi, id_produk, jumlah, harga) 
+                                     VALUES ('$id_transaksi', '$id_clean', '$qty', '$harga')");
+            }
         }
 
         // Kosongkan Keranjang
