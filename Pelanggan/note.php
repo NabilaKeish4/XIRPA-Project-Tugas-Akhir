@@ -13,7 +13,7 @@ if (!$tx) {
     exit;
 }
 
-$query_detail = "SELECT d.*, p.nama_produk FROM detail_transaksi d 
+$query_detail = "SELECT d.*, p.nama_tanaman FROM detail_transaksi d 
                  JOIN produk p ON d.id_produk = p.id_produk 
                  WHERE d.id_transaksi = '$id_transaksi'";
 $res_detail = mysqli_query($conn, $query_detail);
@@ -37,13 +37,13 @@ $res_detail = mysqli_query($conn, $query_detail);
 </head>
 <body class="bg-gray-50 text-gray-800 font-sans antialiased flex min-h-screen">
 
-    <!-- Sidebar Navbar (Samping) -->
+    <!-- Sidebar Navbar -->
     <aside class="w-64 bg-white border-r border-gray-100 flex flex-col justify-between h-screen sticky top-0 shrink-0 z-50 p-6 print:hidden">
         <div>
             <a href="dashboard.php" class="text-2xl font-black tracking-wider text-gray-900 block mb-10">PlantShop</a>
             <nav class="flex flex-col space-y-4 text-xs font-semibold uppercase tracking-wider text-gray-600">
                 <a href="dashboard.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">HOME</a>
-                <a href="dashboard.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Shop</a>
+                <a href="chat.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Konsultasi</a>
                 <a href="riwayat.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Riwayat</a>
                 <a href="cart.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Keranjang</a>
             </nav>
@@ -81,7 +81,7 @@ $res_detail = mysqli_query($conn, $query_detail);
                     <tbody class="divide-y divide-gray-50">
                         <?php while ($row = mysqli_fetch_assoc($res_detail)): ?>
                         <tr>
-                            <td class="py-3 font-bold text-gray-800"><?= htmlspecialchars($row['nama_produk']) ?></td>
+                            <td class="py-3 font-bold text-gray-800"><?= htmlspecialchars($row['nama_tanaman']) ?></td>
                             <td class="py-3 text-center"><?= (int)$row['jumlah'] ?></td>
                             <td class="py-3 text-right font-bold">Rp <?= number_format($row['harga'] * $row['jumlah'], 0, ',', '.') ?></td>
                         </tr>

@@ -44,13 +44,13 @@ if (isset($_POST['update_cart']) && isset($_POST['jumlah'])) {
 </head>
 <body class="bg-gray-50 text-gray-800 font-sans antialiased flex min-h-screen">
 
-    <!-- Sidebar Navbar (Samping) -->
+    <!-- Sidebar Navbar -->
     <aside class="w-64 bg-white border-r border-gray-100 flex flex-col justify-between h-screen sticky top-0 shrink-0 z-50 p-6">
         <div>
             <a href="dashboard.php" class="text-2xl font-black tracking-wider text-gray-900 block mb-10">PlantShop</a>
             <nav class="flex flex-col space-y-4 text-xs font-semibold uppercase tracking-wider text-gray-600">
                 <a href="dashboard.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">HOME</a>
-                <a href="dashboard.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Shop</a>
+                <a href="chat.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Konsultasi</a>
                 <a href="riwayat.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Riwayat</a>
                 <a href="cart.php" class="text-brand-500 font-bold bg-brand-light/40 px-4 py-3 rounded-xl flex items-center justify-between">
                     <span>Keranjang</span>
@@ -93,7 +93,7 @@ if (isset($_POST['update_cart']) && isset($_POST['jumlah'])) {
                                     $grand_total += $subtotal;
                                 ?>
                                 <tr>
-                                    <td class="p-4 font-bold text-gray-900"><?= htmlspecialchars($p['nama_produk']) ?></td>
+                                    <td class="p-4 font-bold text-gray-900"><?= htmlspecialchars($p['nama_tanaman']) ?></td>
                                     <td class="p-4">Rp <?= number_format($p['harga'], 0, ',', '.') ?></td>
                                     <td class="p-4">
                                         <input type="number" name="jumlah[<?= $id_clean ?>]" value="<?= (int)$jumlah ?>" min="1" class="w-16 border rounded-lg p-1 text-center text-xs font-bold">

@@ -7,7 +7,6 @@ if (empty($_SESSION['cart'])) {
     exit;
 }
 
-// Proses Simpan Transaksi
 if (isset($_POST['proses_checkout'])) {
     $nama_penerima = mysqli_real_escape_string($conn, $_POST['nama']);
     $alamat        = mysqli_real_escape_string($conn, $_POST['alamat']);
@@ -69,13 +68,13 @@ if (isset($_POST['proses_checkout'])) {
 </head>
 <body class="bg-gray-50 text-gray-800 font-sans antialiased flex min-h-screen">
 
-    <!-- Sidebar Navbar (Samping) -->
+    <!-- Sidebar Navbar -->
     <aside class="w-64 bg-white border-r border-gray-100 flex flex-col justify-between h-screen sticky top-0 shrink-0 z-50 p-6">
         <div>
             <a href="dashboard.php" class="text-2xl font-black tracking-wider text-gray-900 block mb-10">PlantShop</a>
             <nav class="flex flex-col space-y-4 text-xs font-semibold uppercase tracking-wider text-gray-600">
                 <a href="dashboard.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">HOME</a>
-                <a href="dashboard.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Shop</a>
+                <a href="chat.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Konsultasi</a>
                 <a href="riwayat.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Riwayat</a>
                 <a href="cart.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Keranjang</a>
             </nav>
