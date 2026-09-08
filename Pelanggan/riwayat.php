@@ -3,7 +3,7 @@ session_start();
 require_once '../Config/database.php';
 
 $user_id = (int)($_SESSION['user_id'] ?? 1);
-$query = "SELECT * FROM transaksi WHERE user_id = '$user_id' ORDER BY tanggal DESC";
+$query = "SELECT * FROM transaksi WHERE user_id = '$user_id' ORDER BY tanggal_transaksi DESC";
 $result = mysqli_query($conn, $query);
 ?>
 
