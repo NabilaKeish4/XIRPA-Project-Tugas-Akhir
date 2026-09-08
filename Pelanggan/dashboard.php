@@ -67,24 +67,24 @@ $result = mysqli_query($conn, $query);
         <div>
             <a href="dashboard.php" class="text-2xl font-black tracking-wider text-gray-900 block mb-10">PlantShop</a>
             
-            <nav class="flex flex-col space-y-4 text-xs font-semibold uppercase tracking-wider text-gray-600">
-                <a href="dashboard.php" class="text-brand-500 font-bold bg-brand-light/40 px-4 py-3 rounded-xl flex items-center justify-between">
-                    <span>HOME / SHOP</span>
-                    <span class="w-1.5 h-1.5 bg-brand-500 rounded-full"></span>
-                </a>
-                <a href="chat.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50 flex items-center justify-between">
-                    <span>Konsultasi</span>
-                </a>
-                <a href="riwayat.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Riwayat</a>
-                <a href="cart.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50 flex items-center justify-between">
-                    <span>Keranjang</span>
-                    <?php if (isset($_SESSION['cart']) && array_sum($_SESSION['cart']) > 0): ?>
-                        <span class="bg-brand-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold"><?= array_sum($_SESSION['cart']) ?></span>
-                    <?php else: ?>
-                        <span class="text-gray-400">(0)</span>
-                    <?php endif; ?>
-                </a>
-            </nav>
+          <nav class="flex flex-col space-y-4 text-xs font-semibold uppercase tracking-wider text-gray-600">
+    <a href="dashboard.php" class="text-brand-500 font-bold bg-brand-light/40 px-4 py-3 rounded-xl flex items-center justify-between">
+        <span>HOME</span>
+        <span class="w-1.5 h-1.5 bg-brand-500 rounded-full"></span>
+    </a>
+    <a href="dashboard.php#katalog" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50 flex items-center justify-between">
+        <span>Shop</span>
+    </a>
+    <a href="riwayat.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Riwayat</a>
+    <a href="cart.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50 flex items-center justify-between">
+        <span>Keranjang</span>
+        <?php if (isset($_SESSION['cart']) && array_sum($_SESSION['cart']) > 0): ?>
+            <span class="bg-brand-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold"><?= array_sum($_SESSION['cart']) ?></span>
+        <?php else: ?>
+            <span class="text-gray-400">(0)</span>
+        <?php endif; ?>
+    </a>
+</nav>
         </div>
 
         <div class="border-t border-gray-100 pt-6 space-y-4">
