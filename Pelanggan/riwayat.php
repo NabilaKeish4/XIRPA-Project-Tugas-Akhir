@@ -2,8 +2,8 @@
 session_start();
 require_once '../Config/database.php';
 
-$id_user = (int)($_SESSION['id_user'] ?? 1);
-$query = "SELECT * FROM transaksi WHERE id_user = '$id_user' ORDER BY tanggal DESC";
+$user_id = (int)($_SESSION['user_id'] ?? 1);
+$query = "SELECT * FROM transaksi WHERE user_id = '$user_id' ORDER BY tanggal DESC";
 $result = mysqli_query($conn, $query);
 ?>
 
