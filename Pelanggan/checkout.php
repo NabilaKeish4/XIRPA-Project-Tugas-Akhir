@@ -2,52 +2,69 @@
 session_start();
 require_once '../Config/database.php';
 
-// Pastikan keranjang tidak kosong
+// 1. Cek jika keranjang kosong
 if (empty($_SESSION['cart'])) {
     header('Location: katalog.php');
     exit;
 }
 
-// Ambil ID User dari session (fallback ke 1 jika belum set)
 $user_id = $_SESSION['user_id'] ?? $_SESSION['id_user'] ?? 1;
-
-// Persiapan data produk yang ada di keranjang
 $cart_items = $_SESSION['cart'] ?? [];
+
 $products_in_cart = [];
 $total_bayar = 0;
 
 if (!empty($cart_items)) {
-    // Pastikan array_keys aman untuk query
-    $ids = implode(',', array_map('intval', array_keys($cart_items)));
+    // Ambil semua keys/ID dari session keranjang
+    $raw_ids = array_keys($cart_items);
     
-    // Sesuaikan nama primary key tabel produk (ganti id_produk jika perlu)
-    $query = "SELECT * FROM produk WHERE id IN ($ids)"; 
-    $result = mysqli_query($conn, $query);
+    // Pastikan ID valid
+    $valid_ids = array_filter($raw_ids, function($val) {
+        return is_numeric($val) && $val > 0;
+    });
 
-    if ($result && mysqli_num_rows($result) > 0) {
-        while ($row = mysqli_fetch_assoc($result)) {
-            // Ambil ID sesuai kolom database
-            $prod_id = $row['id'] ?? $row['id_produk']; 
-            
-            $qty = $cart_items[$prod_id] ?? 0;
-            
-            // Sesuaikan kolom harga dan nama produk dengan database Anda
-            $harga = $row['harga_jual'] ?? $row['harga'] ?? $row['harga_produk'] ?? 0;
-            $nama_produk = $row['nama_tanaman'] ?? $row['nama_produk'] ?? 'Produk';
+    if (!empty($valid_ids)) {
+        $ids_string = implode(',', array_map('intval', $valid_ids));
 
-            $subtotal = $harga * $qty;
-            $total_bayar += $subtotal;
+        // QUERY FLEXIBLE: Mencari berdasarkan 'id' ATAU 'id_produk'
+        $query = "SELECT * FROM produk WHERE id IN ($ids_string) OR id_produk IN ($ids_string)";
+        $result = mysqli_query($conn, $query);
 
-            $products_in_cart[] = [
-                'id'       => $prod_id,
-                'name'     => $nama_produk,
-                'price'    => $harga,
-                'qty'      => $qty,
-                'subtotal' => $subtotal
-            ];
+        if ($result && mysqli_num_rows($result) > 0) {
+            while ($row = mysqli_fetch_assoc($result)) {
+                // Deteksi otomatis nama kolom ID di database
+                $db_id = $row['id'] ?? $row['id_produk'] ?? null;
+
+                if ($db_id && isset($cart_items[$db_id])) {
+                    // Ambil QTY (bisa berupa angka tunggal atau array bertingkat)
+                    $qty = is_array($cart_items[$db_id]) ? ($cart_items[$db_id]['qty'] ?? 1) : (int)$cart_items[$db_id];
+
+                    // Deteksi otomatis nama kolom harga & nama produk
+                    $harga = $row['harga_jual'] ?? $row['harga'] ?? $row['harga_produk'] ?? 0;
+                    $nama  = $row['nama_tanaman'] ?? $row['nama_produk'] ?? $row['nama'] ?? 'Produk';
+
+                    $subtotal = $harga * $qty;
+                    $total_bayar += $subtotal;
+
+                    $products_in_cart[] = [
+                        'id'       => $db_id,
+                        'name'     => $nama,
+                        'price'    => $harga,
+                        'qty'      => $qty,
+                        'subtotal' => $subtotal
+                    ];
+                }
+            }
         }
     }
 }
+
+// Hitung total item untuk sidebar
+$cart_count = 0;
+foreach ($cart_items as $item) {
+    $cart_count += is_array($item) ? ($item['qty'] ?? 1) : (int)$item;
+}
+?>
 // Proses saat tombol "Selesaikan Pesanan" diklik
 if (isset($_POST['proses_checkout'])) {
     $nama_penerima = mysqli_real_escape_string($conn, $_POST['nama']);
