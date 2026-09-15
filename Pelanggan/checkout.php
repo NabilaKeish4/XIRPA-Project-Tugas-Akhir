@@ -2,121 +2,238 @@
 session_start();
 require_once '../Config/database.php';
 
+// Pastikan keranjang tidak kosong
 if (empty($_SESSION['cart'])) {
-    header('Location: dashboard.php');
+    header('Location: katalog.php');
     exit;
 }
 
+// Ambil ID User dari session (fallback ke 1 jika belum set)
+$user_id = $_SESSION['user_id'] ?? $_SESSION['id_user'] ?? 1;
+
+// Persiapan data produk yang ada di keranjang
+$cart_items = $_SESSION['cart'] ?? [];
+$products_in_cart = [];
+$total_bayar = 0;
+
+if (!empty($cart_items)) {
+    $ids = implode(',', array_map('intval', array_keys($cart_items)));
+    // Menyesuaikan query dengan struktur tabel produk
+    $query = "SELECT * FROM produk WHERE id IN ($ids)";
+    $result = mysqli_query($conn, $query);
+
+    if ($result) {
+        while ($row = mysqli_fetch_assoc($result)) {
+            $qty = $cart_items[$row['id']];
+            // Menggunakan kolom harga_jual atau harga
+            $harga = $row['harga_jual'] ?? $row['harga'] ?? 0;
+            $subtotal = $harga * $qty;
+            $total_bayar += $subtotal;
+
+            $products_in_cart[] = [
+                'id' => $row['id'],
+                'name' => $row['nama_tanaman'],
+                'price' => $harga,
+                'qty' => $qty,
+                'subtotal' => $subtotal
+            ];
+        }
+    }
+}
+
+// Proses saat tombol "Selesaikan Pesanan" diklik
 if (isset($_POST['proses_checkout'])) {
     $nama_penerima = mysqli_real_escape_string($conn, $_POST['nama']);
     $alamat        = mysqli_real_escape_string($conn, $_POST['alamat']);
     $telepon       = mysqli_real_escape_string($conn, $_POST['telepon']);
     $metode_bayar  = mysqli_real_escape_string($conn, $_POST['metode_pembayaran']);
-    $id_user       = (int)($_SESSION['id_user'] ?? 1);
-    $tanggal       = date('Y-m-d H:i:s');
 
-    $total_bayar = 0;
-    foreach ($_SESSION['cart'] as $id => $jumlah) {
-        $id_clean = (int)$id;
-        $res = mysqli_query($conn, "SELECT harga FROM produk WHERE id_produk = '$id_clean'");
-        $p = mysqli_fetch_assoc($res);
-        if ($p) {
-            $total_bayar += $p['harga'] * (int)$jumlah;
-        }
-    }
-
-    $query_tx = "INSERT INTO transaksi (id_user, tanggal, total, nama_penerima, alamat, telepon, metode_pembayaran, status) 
-                 VALUES ('$id_user', '$tanggal', '$total_bayar', '$nama_penerima', '$alamat', '$telepon', '$metode_bayar', 'Pending')";
+    // 1. Simpan data utama transaksi ke tabel `transaksi` / `pesanan`
+    // Menggunakan kolom umum yang sesuai dengan halaman riwayat order
+    $query_tx = "INSERT INTO transaksi (user_id, total, nama_penerima, alamat, telepon, metode_pembayaran, status, created_at) 
+                 VALUES ('$user_id', '$total_bayar', '$nama_penerima', '$alamat', '$telepon', '$metode_bayar', 'Diproses', NOW())";
     
     if (mysqli_query($conn, $query_tx)) {
-        $id_transaksi = mysqli_insert_id($conn);
+        $transaksi_id = mysqli_insert_id($conn);
 
-        foreach ($_SESSION['cart'] as $id => $jumlah) {
-            $id_clean = (int)$id;
-            $qty = (int)$jumlah;
-            $res = mysqli_query($conn, "SELECT harga FROM produk WHERE id_produk = '$id_clean'");
-            $p = mysqli_fetch_assoc($res);
-            if ($p) {
-                $harga = $p['harga'];
-                mysqli_query($conn, "INSERT INTO detail_transaksi (id_transaksi, id_produk, jumlah, harga) 
-                                     VALUES ('$id_transaksi', '$id_clean', '$qty', '$harga')");
-            }
+        // 2. Simpan setiap detail produk ke tabel `transaksi_detail` / `detail_transaksi`
+        foreach ($products_in_cart as $item) {
+            $id_produk = (int)$item['id'];
+            $qty       = (int)$item['qty'];
+            $harga     = (float)$item['price'];
+
+            mysqli_query($conn, "INSERT INTO transaksi_detail (transaksi_id, id_produk, jumlah, harga) 
+                                 VALUES ('$transaksi_id', '$id_produk', '$qty', '$harga')");
         }
 
+        // 3. Kosongkan keranjang belanja
         unset($_SESSION['cart']);
-        header("Location: nota.php?id=$id_transaksi");
+
+        // 4. Arahkan pengguna ke halaman nota / riwayat order
+        header("Location: riwayat.php?success=1");
         exit;
+    } else {
+        $error = "Gagal memproses transaksi: " . mysqli_error($conn);
     }
 }
+
+$cart_count = array_sum($cart_items);
 ?>
 
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
-    <title>Checkout - PlantShop</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PlantHub - Checkout</title>
+    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons CDN -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
     <script>
         tailwind.config = {
             theme: {
                 extend: {
-                    colors: { brand: { 500: '#63B745', 600: '#529E38' } }
+                    colors: {
+                        planthub: {
+                            bg: '#F4F6F3',
+                            card: '#FFFFFF',
+                            green: '#3B5E2B',
+                            'green-hover': '#2e4a22',
+                            'green-light': '#EBF2E8',
+                            dark: '#1E291E',
+                            muted: '#6B7280',
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['"Plus Jakarta Sans"', 'sans-serif'],
+                    }
                 }
             }
         }
     </script>
+    <style>
+        body { background-color: #F4F6F3; color: #1E291E; font-family: 'Plus Jakarta Sans', sans-serif; }
+    </style>
 </head>
-<body class="bg-gray-50 text-gray-800 font-sans antialiased flex min-h-screen">
+<body class="antialiased min-h-screen flex p-4 lg:p-6 gap-6 text-stone-800">
 
-    <!-- Sidebar Navbar -->
-    <aside class="w-64 bg-white border-r border-gray-100 flex flex-col justify-between h-screen sticky top-0 shrink-0 z-50 p-6">
+    <!-- SIDEBAR -->
+    <aside class="w-64 bg-white rounded-2xl p-5 flex flex-col justify-between h-[calc(100vh-3rem)] sticky top-6 shrink-0 shadow-sm border border-stone-100/80 z-50">
         <div>
-            <a href="dashboard.php" class="text-2xl font-black tracking-wider text-gray-900 block mb-10">PlantShop</a>
-            <nav class="flex flex-col space-y-4 text-xs font-semibold uppercase tracking-wider text-gray-600">
-                <a href="dashboard.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">HOME</a>
-                <a href="dashboard.php#katalog" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Shop</a>
-                <a href="riwayat.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Riwayat</a>
-                <a href="cart.php" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50">Keranjang</a>
+            <a href="dashboard.php" class="flex items-center gap-2.5 mb-8 px-1">
+                <div class="w-9 h-9 rounded-xl bg-planthub-green flex items-center justify-center text-white shadow-sm shadow-emerald-950/20">
+                    <i data-lucide="sprout" class="w-5 h-5"></i>
+                </div>
+                <div>
+                    <h1 class="text-base font-bold tracking-tight text-planthub-dark leading-none">Plant<span class="text-planthub-green">Hub</span></h1>
+                    <p class="text-[9px] font-extrabold tracking-widest text-stone-400 uppercase mt-0.5">STORE PORTAL</p>
+                </div>
+            </a>
+
+            <nav class="flex flex-col space-y-1 text-xs font-medium text-stone-600">
+                <a href="dashboard.php" class="px-3.5 py-2.5 rounded-xl hover:bg-stone-50 flex items-center gap-2.5 transition">
+                    <i data-lucide="layout-grid" class="w-4 h-4"></i> Beranda
+                </a>
+                <a href="katalog.php" class="px-3.5 py-2.5 rounded-xl hover:bg-stone-50 flex items-center gap-2.5 transition">
+                    <i data-lucide="store" class="w-4 h-4"></i> Katalog Shop
+                </a>
+                <a href="cart.php" class="bg-planthub-green text-white font-bold px-3.5 py-2.5 rounded-xl flex items-center justify-between shadow-sm">
+                    <span class="flex items-center gap-2.5"><i data-lucide="shopping-bag" class="w-4 h-4"></i> Keranjang</span>
+                    <span class="w-1.5 h-1.5 bg-white rounded-full"></span>
+                </a>
+                <a href="riwayat.php" class="px-3.5 py-2.5 rounded-xl hover:bg-stone-50 flex items-center gap-2.5 transition">
+                    <i data-lucide="history" class="w-4 h-4"></i> Riwayat Order
+                </a>
+                <a href="chat.php" class="px-3.5 py-2.5 rounded-xl hover:bg-stone-50 flex items-center gap-2.5 transition">
+                    <i data-lucide="message-square" class="w-4 h-4"></i> Konsultasi
+                </a>
             </nav>
         </div>
-        <div class="border-t border-gray-100 pt-6">
-            <a href="cart.php" class="text-xs font-bold text-gray-500 hover:text-brand-500 uppercase flex items-center gap-1">&larr; Kembali ke Keranjang</a>
+
+        <div class="space-y-3 pt-3 border-t border-stone-100">
+            <a href="../Auth/logout.php" onclick="return confirm('Apakah Anda yakin ingin keluar?');" class="flex items-center justify-center gap-1.5 text-xs font-bold text-red-500 hover:text-red-600 py-1 transition">
+                <i data-lucide="log-out" class="w-3.5 h-3.5"></i> Keluar Sesi
+            </a>
         </div>
     </aside>
 
-    <!-- Main Content -->
-    <div class="flex-1 p-8 overflow-y-auto">
-        <div class="max-w-2xl mx-auto my-4">
-            <h1 class="text-2xl font-black uppercase text-gray-900 mb-6">Formulir Checkout</h1>
+    <!-- MAIN CONTENT -->
+    <main class="flex-1 bg-white rounded-2xl p-6 shadow-sm border border-stone-100/80 flex flex-col h-[calc(100vh-3rem)] overflow-y-auto">
+        <header class="flex items-center justify-between pb-5 border-b border-stone-100 mb-6">
+            <div>
+                <h2 class="text-xl font-bold text-stone-900">Formulir Checkout 📑</h2>
+                <p class="text-xs text-stone-400 mt-0.5">Lengkapi data diri dan alamat pengiriman Anda.</p>
+            </div>
+            <a href="cart.php" class="text-xs font-bold text-planthub-green hover:underline flex items-center gap-1">
+                &larr; Kembali ke Keranjang
+            </a>
+        </header>
 
-            <form method="POST" class="bg-white p-8 rounded-2xl border border-gray-100 shadow-sm space-y-4">
+        <?php if (isset($error)): ?>
+            <div class="mb-4 p-3 bg-red-50 text-red-600 rounded-xl text-xs border border-red-100">
+                <?= htmlspecialchars($error) ?>
+            </div>
+        <?php endif; ?>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- FORM PENGIRIMAN -->
+            <form method="POST" class="lg:col-span-2 space-y-4">
                 <div>
-                    <label class="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Nama Penerima</label>
-                    <input type="text" name="nama" required class="w-full border p-3 rounded-xl text-sm focus:outline-none focus:border-brand-500">
+                    <label class="block text-xs font-bold text-stone-700 mb-1">Nama Lengkap Penerima</label>
+                    <input type="text" name="nama" required class="w-full border border-stone-200 p-3 rounded-xl text-xs focus:outline-none focus:border-planthub-green">
                 </div>
                 <div>
-                    <label class="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Nomor Telepon/WA</label>
-                    <input type="text" name="telepon" required class="w-full border p-3 rounded-xl text-sm focus:outline-none focus:border-brand-500">
+                    <label class="block text-xs font-bold text-stone-700 mb-1">Nomor Telepon / WhatsApp</label>
+                    <input type="text" name="telepon" required class="w-full border border-stone-200 p-3 rounded-xl text-xs focus:outline-none focus:border-planthub-green">
                 </div>
                 <div>
-                    <label class="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Alamat Pengiriman Lengkap</label>
-                    <textarea name="alamat" required rows="3" class="w-full border p-3 rounded-xl text-sm focus:outline-none focus:border-brand-500"></textarea>
+                    <label class="block text-xs font-bold text-stone-700 mb-1">Alamat Pengiriman Lengkap</label>
+                    <textarea name="alamat" required rows="3" class="w-full border border-stone-200 p-3 rounded-xl text-xs focus:outline-none focus:border-planthub-green"></textarea>
                 </div>
                 <div>
-                    <label class="block text-xs font-bold uppercase tracking-wider text-gray-600 mb-1">Metode Pembayaran</label>
-                    <select name="metode_pembayaran" class="w-full border p-3 rounded-xl text-sm focus:outline-none focus:border-brand-500">
+                    <label class="block text-xs font-bold text-stone-700 mb-1">Metode Pembayaran</label>
+                    <select name="metode_pembayaran" class="w-full border border-stone-200 p-3 rounded-xl text-xs focus:outline-none focus:border-planthub-green">
                         <option value="Transfer Bank">Transfer Bank (BCA / Mandiri)</option>
-                        <option value="E-Wallet">E-Wallet (Gopay / OVO / Dana)</option>
+                        <option value="E-Wallet">E-Wallet (GoPay / ShopeePay / Dana)</option>
                         <option value="COD">Bayar di Tempat (COD)</option>
                     </select>
                 </div>
 
-                <button type="submit" name="proses_checkout" class="w-full bg-brand-500 hover:bg-brand-600 text-white font-bold py-3.5 rounded-xl text-xs uppercase tracking-wider transition shadow-lg shadow-brand-500/20">
+                <button type="submit" name="proses_checkout" class="w-full bg-planthub-green hover:bg-planthub-green-hover text-white font-bold py-3.5 rounded-xl text-xs uppercase tracking-wider transition shadow-sm mt-4">
                     Selesaikan Pesanan
                 </button>
             </form>
-        </div>
-    </div>
 
+            <!-- RINGKASAN PESANAN -->
+            <div class="bg-stone-50/60 p-5 rounded-2xl border border-stone-100 space-y-4 h-fit">
+                <h3 class="text-xs font-bold uppercase text-stone-400 pb-2 border-b border-stone-200">Ringkasan Pesanan</h3>
+                <div class="divide-y divide-stone-200/60 max-h-60 overflow-y-auto">
+                    <?php foreach ($products_in_cart as $item): ?>
+                        <div class="py-2 flex justify-between items-center text-xs">
+                            <div>
+                                <p class="font-bold text-stone-800"><?= htmlspecialchars($item['name']) ?></p>
+                                <p class="text-stone-400 text-[10px]"><?= $item['qty'] ?> x Rp <?= number_format($item['price'], 0, ',', '.') ?></p>
+                            </div>
+                            <span class="font-bold text-stone-700">Rp <?= number_format($item['subtotal'], 0, ',', '.') ?></span>
+                        </div>
+                    <?php endforeach; ?>
+                </div>
+
+                <div class="pt-3 border-t border-stone-200/60 flex justify-between items-center text-xs">
+                    <span class="font-bold text-stone-800">Total Pembayaran</span>
+                    <span class="text-base font-extrabold text-planthub-green">Rp <?= number_format($total_bayar, 0, ',', '.') ?></span>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        lucide.createIcons();
+    </script>
 </body>
 </html>
