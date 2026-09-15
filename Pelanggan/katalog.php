@@ -40,9 +40,10 @@ $filteredProducts = array_filter($productsData, function($product) use ($search,
 });
 
 // Menangani Tambah ke Keranjang / Beli Langsung
-if (isset($_POST['add_to_cart'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_to_cart'])) {
     $id_produk = (int)$_POST['id_produk'];
     $jumlah = (int)($_POST['jumlah'] ?? 1);
+    $action_type = $_POST['action_type'] ?? 'cart';
 
     if (!isset($_SESSION['cart'])) {
         $_SESSION['cart'] = [];
@@ -54,7 +55,7 @@ if (isset($_POST['add_to_cart'])) {
         $_SESSION['cart'][$id_produk] = $jumlah;
     }
 
-    if (isset($_POST['action_type']) && $_POST['action_type'] === 'buy_now') {
+    if ($action_type === 'buy_now') {
         header('Location: checkout.php');
         exit;
     }
@@ -276,18 +277,25 @@ $cart_count = isset($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
                                 </div>
                             </div>
 
-                            <div class="mt-4 pt-2.5 border-t border-stone-100">
-                                <form method="POST" action="katalog.php" class="grid grid-cols-2 gap-2">
+                            <!-- DUA FORM TERPISAH UNTUK AKSI '+ CART' DAN 'BELI' -->
+                            <div class="mt-4 pt-2.5 border-t border-stone-100 grid grid-cols-2 gap-2">
+                                <!-- Form Tambah ke Keranjang -->
+                                <form method="POST" action="katalog.php">
                                     <input type="hidden" name="id_produk" value="<?= $row['id'] ?>">
                                     <input type="hidden" name="jumlah" value="1">
                                     <input type="hidden" name="action_type" value="cart">
-                                    
-                                    <button type="submit" name="add_to_cart" <?= $row['out_of_stock'] ? 'disabled' : '' ?> class="<?= $row['out_of_stock'] ? 'bg-stone-100 text-stone-400 cursor-not-allowed' : 'bg-planthub-green-light text-planthub-green hover:bg-planthub-green hover:text-white' ?> font-bold py-2 rounded-xl text-[11px] transition flex items-center justify-center gap-1">
+                                    <button type="submit" name="add_to_cart" <?= $row['out_of_stock'] ? 'disabled' : '' ?> class="w-full <?= $row['out_of_stock'] ? 'bg-stone-100 text-stone-400 cursor-not-allowed' : 'bg-planthub-green-light text-planthub-green hover:bg-planthub-green hover:text-white' ?> font-bold py-2 rounded-xl text-[11px] transition flex items-center justify-center gap-1">
                                         <i data-lucide="shopping-cart" class="w-3.5 h-3.5"></i>
                                         <span>+ Cart</span>
                                     </button>
+                                </form>
 
-                                    <button type="submit" name="add_to_cart" value="1" onclick="this.form.action_type.value='buy_now';" <?= $row['out_of_stock'] ? 'disabled' : '' ?> class="<?= $row['out_of_stock'] ? 'bg-stone-200 text-stone-400 cursor-not-allowed' : 'bg-planthub-green hover:bg-planthub-green-hover text-white shadow-sm' ?> font-bold py-2 rounded-xl text-[11px] transition">
+                                <!-- Form Beli Langsung -->
+                                <form method="POST" action="katalog.php">
+                                    <input type="hidden" name="id_produk" value="<?= $row['id'] ?>">
+                                    <input type="hidden" name="jumlah" value="1">
+                                    <input type="hidden" name="action_type" value="buy_now">
+                                    <button type="submit" name="add_to_cart" <?= $row['out_of_stock'] ? 'disabled' : '' ?> class="w-full <?= $row['out_of_stock'] ? 'bg-stone-200 text-stone-400 cursor-not-allowed' : 'bg-planthub-green hover:bg-planthub-green-hover text-white shadow-sm' ?> font-bold py-2 rounded-xl text-[11px] transition">
                                         Beli
                                     </button>
                                 </form>
