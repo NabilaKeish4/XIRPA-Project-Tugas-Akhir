@@ -42,17 +42,33 @@ if (!empty($cart_items)) {
 }
 
 // Proses saat tombol "Selesaikan Pesanan" diklik
-if (isset($_POST['proses_checkout'])) {
-    $nama_penerima = mysqli_real_escape_string($conn, $_POST['nama']);
-    $alamat        = mysqli_real_escape_string($conn, $_POST['alamat']);
-    $telepon       = mysqli_real_escape_string($conn, $_POST['telepon']);
-    $metode_bayar  = mysqli_real_escape_string($conn, $_POST['metode_pembayaran']);
+// Generasi kode transaksi unik (contoh: TRX-20260915-1234)
+    $kode_transaksi = 'TRX-' . date('Ymd') . '-' . rand(1000, 9999);
 
-    // 1. Simpan data utama transaksi ke tabel `transaksi` / `pesanan`
-    // Menggunakan kolom umum yang sesuai dengan halaman riwayat order
-    $query_tx = "INSERT INTO transaksi (user_id, total_harga, nama_penerima, alamat, telepon, metode_pembayaran, status, created_at) 
-             VALUES ('$user_id', '$total_bayar', '$nama_penerima', '$alamat', '$telepon', '$metode_bayar', 'Diproses', NOW())";
+    // 1. Simpan data ke tabel transaksi
+    $query_tx = "INSERT INTO transaksi (kode_transaksi, tanggal_transaksi, user_id, nama_penerima, alamat, telepon, total_harga, metode_pembayaran, jenis_transaksi, status, created_at) 
+                 VALUES ('$kode_transaksi', NOW(), '$user_id', '$nama_penerima', '$alamat', '$telepon', '$total_bayar', '$metode_bayar', 'Penjualan', 'Diproses', NOW())";
     
+    if (mysqli_query($conn, $query_tx)) {
+        $transaksi_id = mysqli_insert_id($conn);
+
+        // 2. Simpan detail produk ke transaksi_detail
+        foreach ($products_in_cart as $item) {
+            $id_produk = (int)$item['id'];
+            $qty       = (int)$item['qty'];
+            $harga     = (float)$item['price'];
+
+            mysqli_query($conn, "INSERT INTO transaksi_detail (transaksi_id, id_produk, jumlah, harga) 
+                                 VALUES ('$transaksi_id', '$id_produk', '$qty', '$harga')");
+        }
+
+        // 3. Kosongkan keranjang & redirect
+        unset($_SESSION['cart']);
+        header("Location: riwayat.php?success=1");
+        exit;
+    } else {
+        $error = "Gagal memproses transaksi: " . mysqli_error($conn);
+    }
     if (mysqli_query($conn, $query_tx)) {
         $transaksi_id = mysqli_insert_id($conn);
 
