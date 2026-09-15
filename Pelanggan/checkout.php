@@ -2,23 +2,23 @@
 session_start();
 require_once '../Config/database.php';
 
-// 1. Cek jika keranjang kosong
+// Pastikan keranjang tidak kosong
 if (empty($_SESSION['cart'])) {
     header('Location: katalog.php');
     exit;
 }
 
+// Ambil ID User dari session (fallback ke 1 jika belum set)
 $user_id = $_SESSION['user_id'] ?? $_SESSION['id_user'] ?? 1;
-$cart_items = $_SESSION['cart'] ?? [];
 
+// Persiapan data produk yang ada di keranjang
+$cart_items = $_SESSION['cart'] ?? [];
 $products_in_cart = [];
 $total_bayar = 0;
 
 if (!empty($cart_items)) {
-    // Ambil semua keys/ID dari session keranjang
+    // Ambil daftar ID produk dan bersihkan dari karakter non-numerik
     $raw_ids = array_keys($cart_items);
-    
-    // Pastikan ID valid
     $valid_ids = array_filter($raw_ids, function($val) {
         return is_numeric($val) && $val > 0;
     });
@@ -26,29 +26,28 @@ if (!empty($cart_items)) {
     if (!empty($valid_ids)) {
         $ids_string = implode(',', array_map('intval', $valid_ids));
 
-        // QUERY FLEXIBLE: Mencari berdasarkan 'id' ATAU 'id_produk'
-        $query = "SELECT * FROM produk WHERE id IN ($ids_string) OR id_produk IN ($ids_string)";
+        // Query mengambil data produk berdasarkan kolom `id`
+        $query = "SELECT * FROM produk WHERE id IN ($ids_string)";
         $result = mysqli_query($conn, $query);
 
         if ($result && mysqli_num_rows($result) > 0) {
             while ($row = mysqli_fetch_assoc($result)) {
-                // Deteksi otomatis nama kolom ID di database
-                $db_id = $row['id'] ?? $row['id_produk'] ?? null;
+                $id = $row['id'];
 
-                if ($db_id && isset($cart_items[$db_id])) {
-                    // Ambil QTY (bisa berupa angka tunggal atau array bertingkat)
-                    $qty = is_array($cart_items[$db_id]) ? ($cart_items[$db_id]['qty'] ?? 1) : (int)$cart_items[$db_id];
+                if (isset($cart_items[$id])) {
+                    // Deteksi jika session menyimpan array bertingkat atau angka langsung
+                    $qty = is_array($cart_items[$id]) ? ($cart_items[$id]['qty'] ?? 1) : (int)$cart_items[$id];
 
-                    // Deteksi otomatis nama kolom harga & nama produk
-                    $harga = $row['harga_jual'] ?? $row['harga'] ?? $row['harga_produk'] ?? 0;
-                    $nama  = $row['nama_tanaman'] ?? $row['nama_produk'] ?? $row['nama'] ?? 'Produk';
+                    // Fallback nama kolom harga dan nama produk
+                    $harga = $row['harga_jual'] ?? $row['harga'] ?? 0;
+                    $nama_produk = $row['nama_tanaman'] ?? $row['nama'] ?? 'Produk';
 
                     $subtotal = $harga * $qty;
                     $total_bayar += $subtotal;
 
                     $products_in_cart[] = [
-                        'id'       => $db_id,
-                        'name'     => $nama,
+                        'id'       => $id,
+                        'name'     => $nama_produk,
                         'price'    => $harga,
                         'qty'      => $qty,
                         'subtotal' => $subtotal
@@ -57,12 +56,6 @@ if (!empty($cart_items)) {
             }
         }
     }
-}
-
-// Hitung total item untuk sidebar
-$cart_count = 0;
-foreach ($cart_items as $item) {
-    $cart_count += is_array($item) ? ($item['qty'] ?? 1) : (int)$item;
 }
 
 // Proses saat tombol "Selesaikan Pesanan" diklik
@@ -105,7 +98,11 @@ if (isset($_POST['proses_checkout'])) {
     }
 }
 
-$cart_count = array_sum($cart_items);
+// Hitung total item belanjaan untuk penanda
+$cart_count = 0;
+foreach ($cart_items as $item) {
+    $cart_count += is_array($item) ? ($item['qty'] ?? 1) : (int)$item;
+}
 ?>
 
 <!DOCTYPE html>
@@ -241,15 +238,19 @@ $cart_count = array_sum($cart_items);
             <div class="bg-stone-50/60 p-5 rounded-2xl border border-stone-100 space-y-4 h-fit">
                 <h3 class="text-xs font-bold uppercase text-stone-400 pb-2 border-b border-stone-200">Ringkasan Pesanan</h3>
                 <div class="divide-y divide-stone-200/60 max-h-60 overflow-y-auto">
-                    <?php foreach ($products_in_cart as $item): ?>
-                        <div class="py-2 flex justify-between items-center text-xs">
-                            <div>
-                                <p class="font-bold text-stone-800"><?= htmlspecialchars($item['name']) ?></p>
-                                <p class="text-stone-400 text-[10px]"><?= $item['qty'] ?> x Rp <?= number_format($item['price'], 0, ',', '.') ?></p>
+                    <?php if (!empty($products_in_cart)): ?>
+                        <?php foreach ($products_in_cart as $item): ?>
+                            <div class="py-2 flex justify-between items-center text-xs">
+                                <div>
+                                    <p class="font-bold text-stone-800"><?= htmlspecialchars($item['name']) ?></p>
+                                    <p class="text-stone-400 text-[10px]"><?= $item['qty'] ?> x Rp <?= number_format($item['price'], 0, ',', '.') ?></p>
+                                </div>
+                                <span class="font-bold text-stone-700">Rp <?= number_format($item['subtotal'], 0, ',', '.') ?></span>
                             </div>
-                            <span class="font-bold text-stone-700">Rp <?= number_format($item['subtotal'], 0, ',', '.') ?></span>
-                        </div>
-                    <?php endforeach; ?>
+                        <?php endforeach; ?>
+                    <?php else: ?>
+                        <p class="py-3 text-xs text-stone-400 italic">Tidak ada item di keranjang.</p>
+                    <?php endif; ?>
                 </div>
 
                 <div class="pt-3 border-t border-stone-200/60 flex justify-between items-center text-xs">
