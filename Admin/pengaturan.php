@@ -2,6 +2,9 @@
 session_start();
 require_once '../Config/database.php'; // Koneksi ke DB plant_hub
 
+// Tentukan halaman aktif untuk indikator sidebar
+$current_page = basename($_SERVER['PHP_SELF']);
+
 // --- AUTOCREATE TABEL PENGATURAN (Diperbarui dengan kolom logo & foto profil) ---
 $create_table = "CREATE TABLE IF NOT EXISTS pengaturan (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -185,57 +188,141 @@ $avatar_src = (!empty($data_toko['foto_profil']) && file_exists('../uploads/' . 
         </div>
     </div>
 </header>
+
     <div class="flex flex-1">
-        <!-- SIDEBAR NAVIGASI (Preserved from Dashboard) -->
-        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0">
-            <div class="p-4 space-y-6">
+        <!-- SIDEBAR NAVIGASI DINAMIS -->
+        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
+            <div class="space-y-6">
+                <!-- Brand Logo Sidebar -->
+                <div class="px-2 pt-2">
+                    <a href="dashboard.php" class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-2xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
+                            <i data-lucide="sprout" class="w-6 h-6"></i>
+                        </div>
+                        <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Shop</span></span>
+                    </a>
+                </div>
+
+                <!-- Navigation Menu -->
                 <nav class="space-y-1">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-2">Main Menu</p>
-                    <a href="dashboard.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 transition-colors">
-                        <i data-lucide="layout-dashboard" class="w-4 h-4"></i> Dashboard
+                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
+                    
+                    <!-- Dashboard -->
+                    <a href="dashboard.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'dashboard.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="layout-grid" class="w-5 h-5 <?= $current_page == 'dashboard.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                            <span>Dashboard</span>
+                        </div>
+                        <?php if($current_page == 'dashboard.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
                     </a>
-                    <a href="pos.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 transition-colors">
-                        <i data-lucide="shopping-bag" class="w-4 h-4"></i> Penjualan (POS)
+                    
+                    <!-- Kasir (POS) -->
+                    <a href="pos.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'pos.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="shopping-bag" class="w-5 h-5 <?= $current_page == 'pos.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                            <span>Kasir (POS)</span>
+                        </div>
+                        <?php if($current_page == 'pos.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
                     </a>
-                    <a href="restock.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 transition-colors">
-                        <i data-lucide="truck" class="w-4 h-4"></i> Pembelian (Restock)
+                    
+                    <!-- Pembelian (Restock) -->
+                    <a href="restock.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'restock.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="truck" class="w-5 h-5 <?= $current_page == 'restock.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                            <span>Pembelian (Restock)</span>
+                        </div>
+                        <?php if($current_page == 'restock.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
                     </a>
-                    <a href="stok.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 transition-colors">
-                        <i data-lucide="package" class="w-4 h-4"></i> Stok & Produk
+                    
+                    <!-- Stok & Produk -->
+                    <a href="stok.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'stok.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="box" class="w-5 h-5 <?= $current_page == 'stok.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                            <span>Stok & Produk</span>
+                        </div>
+                        <?php if($current_page == 'stok.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
                     </a>
-                    <a href="pelanggan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 transition-colors">
-                        <i data-lucide="users" class="w-4 h-4"></i> Pelanggan
+
+                    <!-- Konsultasi Chat -->
+                    <a href="chat.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'chat.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="message-square" class="w-5 h-5 <?= $current_page == 'chat.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                            <span>Konsultasi Chat</span>
+                        </div>
+                        <?php if($current_page == 'chat.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
                     </a>
-                    <a href="laporan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 transition-colors">
-                        <i data-lucide="bar-chart-3" class="w-4 h-4"></i> Laporan
+                    
+                    <!-- Pelanggan -->
+                    <a href="pelanggan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'pelanggan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="users" class="w-5 h-5 <?= $current_page == 'pelanggan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                            <span>Pelanggan</span>
+                        </div>
+                        <?php if($current_page == 'pelanggan.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
+                    </a>
+                    
+                    <!-- Laporan -->
+                    <a href="laporan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'laporan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="bar-chart-2" class="w-5 h-5 <?= $current_page == 'laporan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                            <span>Laporan</span>
+                        </div>
+                        <?php if($current_page == 'laporan.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
                     </a>
                 </nav>
 
-                <hr class="border-stone-100">
+                <hr class="border-stone-100 my-4">
 
+                <!-- System Secondary Menu -->
                 <nav class="space-y-1">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-2">Pengaturan</p>
-                    <a href="pengaturan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-semibold text-[#2E7D32] bg-[#2E7D32]/10 rounded-xl transition-colors">
+                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">PENGATURAN</p>
+                    
+                    <!-- Pengaturan Toko -->
+                    <a href="pengaturan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'pengaturan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
                         <div class="flex items-center gap-3">
-                            <i data-lucide="settings" class="w-4 h-4"></i> Pengaturan Toko
+                            <i data-lucide="settings" class="w-5 h-5 <?= $current_page == 'pengaturan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                            <span>Pengaturan Toko</span>
                         </div>
-                        <span class="w-1.5 h-1.5 rounded-full bg-[#2E7D32]"></span>
+                        <?php if($current_page == 'pengaturan.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
                     </a>
-                    <a href="bantuan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 transition-colors">
-                        <i data-lucide="help-circle" class="w-4 h-4"></i> Bantuan
+
+                    <!-- Bantuan -->
+                    <a href="bantuan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'bantuan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="help-circle" class="w-5 h-5 <?= $current_page == 'bantuan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                            <span>Bantuan</span>
+                        </div>
+                        <?php if($current_page == 'bantuan.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
                     </a>
                 </nav>
             </div>
 
-            <div class="p-4 m-4 rounded-xl bg-stone-50 border border-stone-200/60">
-                <div class="flex items-center gap-3">
-                    <div class="p-2 bg-emerald-100 text-[#2E7D32] rounded-lg">
-                        <i data-lucide="store" class="w-4 h-4"></i>
-                    </div>
-                    <div class="overflow-hidden">
-                        <p class="text-xs font-semibold text-stone-800 truncate"><?= htmlspecialchars($data_toko['nama_cabang']) ?></p>
-                        <p class="text-[11px] text-stone-500 truncate">Sistem Online Active</p>
-                    </div>
+            <!-- Cabang Info Badge -->
+            <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3 mt-auto">
+                <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
+                    <i data-lucide="store" class="w-5 h-5"></i>
+                </div>
+                <div class="overflow-hidden">
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= htmlspecialchars($data_toko['nama_cabang']) ?></p>
+                    <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online Active</p>
                 </div>
             </div>
         </aside>
@@ -351,6 +438,14 @@ $avatar_src = (!empty($data_toko['foto_profil']) && file_exists('../uploads/' . 
 
     <script>
         lucide.createIcons();
+
+        // Toggle untuk Dropdown Notifikasi & Profil
+        function toggleDropdown(id) {
+            const el = document.getElementById(id);
+            if (el) {
+                el.classList.toggle('hidden');
+            }
+        }
 
         // Preview Foto Profil Langsung Saat Dipilih
         function previewImage(event) {

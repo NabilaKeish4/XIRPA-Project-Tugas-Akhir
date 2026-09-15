@@ -2,6 +2,9 @@
 // MENGHUBUNGKAN KE DATABASE
 require_once __DIR__ . '/../Config/database.php';
 
+// Mengetahui halaman PHP yang sedang aktif saat ini
+$current_page = basename($_SERVER['PHP_SELF']);
+
 // --- Data Dummy / Query Data ---
 $metrics = [
     [
@@ -172,7 +175,7 @@ $chart_data = [1200000, 1800000, 1400000, 2900000, 2100000, 3100000, 2450000];
 
     <!-- WRAPPER UTAMA -->
     <div class="flex flex-1">
-        <!-- SIDEBAR NAVIGASI DESAIN BARU -->
+        <!-- SIDEBAR NAVIGASI DINAMIS -->
         <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
             <div class="space-y-6">
                 <!-- Brand Logo Sidebar -->
@@ -189,43 +192,81 @@ $chart_data = [1200000, 1800000, 1400000, 2900000, 2100000, 3100000, 2450000];
                 <nav class="space-y-1">
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
                     
-                    <a href="dashboard.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
-                        <i data-lucide="layout-grid" class="w-5 h-5 text-stone-500"></i>
-                        <span>Dashboard</span>
+                    <!-- Dashboard -->
+                    <a href="dashboard.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'dashboard.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="layout-grid" class="w-5 h-5 <?= $current_page == 'dashboard.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                            <span>Dashboard</span>
+                        </div>
+                        <?php if($current_page == 'dashboard.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
                     </a>
                     
-                    <a href="pos.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
-                        <i data-lucide="shopping-bag" class="w-5 h-5 text-stone-500"></i>
-                        <span>Kasir (POS)</span>
+                    <!-- Kasir (POS) -->
+                    <a href="pos.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'pos.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="shopping-bag" class="w-5 h-5 <?= $current_page == 'pos.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                            <span>Kasir (POS)</span>
+                        </div>
+                        <?php if($current_page == 'pos.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
                     </a>
                     
-                    <a href="restock.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
-                        <i data-lucide="truck" class="w-5 h-5 text-stone-500"></i>
-                        <span>Pembelian (Restock)</span>
+                    <!-- Pembelian (Restock) -->
+                    <a href="restock.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'restock.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="truck" class="w-5 h-5 <?= $current_page == 'restock.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                            <span>Pembelian (Restock)</span>
+                        </div>
+                        <?php if($current_page == 'restock.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
                     </a>
                     
-                    <a href="stok.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
-                        <i data-lucide="box" class="w-5 h-5 text-stone-500"></i>
-                        <span>Stok & Produk</span>
+                    <!-- Stok & Produk -->
+                    <a href="stok.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'stok.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="box" class="w-5 h-5 <?= $current_page == 'stok.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                            <span>Stok & Produk</span>
+                        </div>
+                        <?php if($current_page == 'stok.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
                     </a>
 
-                    <!-- Active Menu: Konsultasi Chat -->
-                    <a href="chat.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold text-[#1E7D32] bg-[#E8F5E9] rounded-xl transition-colors">
+                    <!-- Konsultasi Chat -->
+                    <a href="chat.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'chat.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
                         <div class="flex items-center gap-3">
-                            <i data-lucide="message-square" class="w-5 h-5 text-[#1E7D32]"></i>
+                            <i data-lucide="message-square" class="w-5 h-5 <?= $current_page == 'chat.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
                             <span>Konsultasi Chat</span>
                         </div>
-                        <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php if($current_page == 'chat.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
                     </a>
                     
-                    <a href="pelanggan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
-                        <i data-lucide="users" class="w-5 h-5 text-stone-500"></i>
-                        <span>Pelanggan</span>
+                    <!-- Pelanggan -->
+                    <a href="pelanggan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'pelanggan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="users" class="w-5 h-5 <?= $current_page == 'pelanggan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                            <span>Pelanggan</span>
+                        </div>
+                        <?php if($current_page == 'pelanggan.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
                     </a>
                     
-                    <a href="laporan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
-                        <i data-lucide="bar-chart-2" class="w-5 h-5 text-stone-500"></i>
-                        <span>Laporan</span>
+                    <!-- Laporan -->
+                    <a href="laporan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'laporan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="bar-chart-2" class="w-5 h-5 <?= $current_page == 'laporan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                            <span>Laporan</span>
+                        </div>
+                        <?php if($current_page == 'laporan.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
                     </a>
                 </nav>
 
@@ -234,12 +275,19 @@ $chart_data = [1200000, 1800000, 1400000, 2900000, 2100000, 3100000, 2450000];
                 <!-- System Secondary Menu -->
                 <nav class="space-y-1">
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">PENGATURAN</p>
-                    <a href="pengaturan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
-                        <i data-lucide="settings" class="w-5 h-5 text-stone-500"></i>
-                        <span>Pengaturan Toko</span>
+                    <a href="pengaturan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'pengaturan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
+                        <div class="flex items-center gap-3">
+                            <i data-lucide="settings" class="w-5 h-5 <?= $current_page == 'pengaturan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                            <span>Pengaturan Toko</span>
+                        </div>
+                        <?php if($current_page == 'pengaturan.php'): ?>
+                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
+                        <?php endif; ?>
                     </a>
                 </nav>
             </div>
+
+            
 
             <!-- Cabang Info Badge -->
             <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3 mt-auto">
