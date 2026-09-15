@@ -101,15 +101,7 @@ $cart_count = isset($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
     </script>
 </head>
 <body class="antialiased flex min-h-screen bg-[#F9F8F6] text-stone-800">
-
-<<<<<<< HEAD
-    <!-- Sidebar Navbar -->
-    <aside class="w-64 bg-white border-r border-gray-100 flex flex-col justify-between h-screen sticky top-0 shrink-0 z-50 p-6">
-=======
-    <!-- SIDE NAVBAR -->
-    <aside class="w-64 bg-white border-r border-stone-200 flex flex-col justify-between h-screen sticky top-0 shrink-0 z-50 p-6">
->>>>>>> d3ff7d9 (perubahan pada pelanggan oleh nabila)
-        <div>
+<div>
             <a href="dashboard.php" class="flex items-center gap-2.5 mb-10">
                 <div class="w-9 h-9 rounded-xl bg-brand-primary flex items-center justify-center text-white shadow-md shadow-emerald-900/20">
                     <i data-lucide="sprout" class="w-5 h-5"></i>
