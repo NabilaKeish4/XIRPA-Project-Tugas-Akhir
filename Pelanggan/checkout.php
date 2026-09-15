@@ -64,7 +64,7 @@ $cart_count = 0;
 foreach ($cart_items as $item) {
     $cart_count += is_array($item) ? ($item['qty'] ?? 1) : (int)$item;
 }
-?>
+
 // Proses saat tombol "Selesaikan Pesanan" diklik
 if (isset($_POST['proses_checkout'])) {
     $nama_penerima = mysqli_real_escape_string($conn, $_POST['nama']);
