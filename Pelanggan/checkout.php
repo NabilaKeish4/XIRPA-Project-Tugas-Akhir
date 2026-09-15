@@ -50,8 +50,8 @@ if (isset($_POST['proses_checkout'])) {
 
     // 1. Simpan data utama transaksi ke tabel `transaksi` / `pesanan`
     // Menggunakan kolom umum yang sesuai dengan halaman riwayat order
-    $query_tx = "INSERT INTO transaksi (user_id, total, nama_penerima, alamat, telepon, metode_pembayaran, status, created_at) 
-                 VALUES ('$user_id', '$total_bayar', '$nama_penerima', '$alamat', '$telepon', '$metode_bayar', 'Diproses', NOW())";
+    $query_tx = "INSERT INTO transaksi (user_id, total_harga, nama_penerima, alamat, telepon, metode_pembayaran, status, created_at) 
+             VALUES ('$user_id', '$total_bayar', '$nama_penerima', '$alamat', '$telepon', '$metode_bayar', 'Diproses', NOW())";
     
     if (mysqli_query($conn, $query_tx)) {
         $transaksi_id = mysqli_insert_id($conn);
