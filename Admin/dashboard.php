@@ -94,8 +94,8 @@ $chart_data = [1200000, 1800000, 1400000, 2900000, 2100000, 3100000, 2450000];
                 <button id="mobile-menu-btn" onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
                     <i data-lucide="menu" class="w-5 h-5"></i>
                 </button>
-                <a href="dashboard.php" class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm shadow-emerald-900/20">
+                <a href="dashboard.php" class="flex items-center gap-2.5 lg:hidden">
+                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
                         <i data-lucide="sprout" class="w-5 h-5"></i>
                     </div>
                     <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Shop</span></span>
@@ -172,83 +172,83 @@ $chart_data = [1200000, 1800000, 1400000, 2900000, 2100000, 3100000, 2450000];
 
     <!-- WRAPPER UTAMA -->
     <div class="flex flex-1">
-        <!-- SIDEBAR NAVIGASI -->
-        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0">
-            <div class="p-4 space-y-6">
+        <!-- SIDEBAR NAVIGASI DESAIN BARU -->
+        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
+            <div class="space-y-6">
+                <!-- Brand Logo Sidebar -->
+                <div class="px-2 pt-2">
+                    <a href="dashboard.php" class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-2xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
+                            <i data-lucide="sprout" class="w-6 h-6"></i>
+                        </div>
+                        <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Shop</span></span>
+                    </a>
+                </div>
+
                 <!-- Navigation Menu -->
                 <nav class="space-y-1">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-2">Main Menu</p>
+                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
                     
-                    <a href="dashboard.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-semibold text-[#2E7D32] bg-[#2E7D32]/10 rounded-xl transition-colors">
+                    <a href="dashboard.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
+                        <i data-lucide="layout-grid" class="w-5 h-5 text-stone-500"></i>
+                        <span>Dashboard</span>
+                    </a>
+                    
+                    <a href="pos.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
+                        <i data-lucide="shopping-bag" class="w-5 h-5 text-stone-500"></i>
+                        <span>Kasir (POS)</span>
+                    </a>
+                    
+                    <a href="restock.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
+                        <i data-lucide="truck" class="w-5 h-5 text-stone-500"></i>
+                        <span>Pembelian (Restock)</span>
+                    </a>
+                    
+                    <a href="stok.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
+                        <i data-lucide="box" class="w-5 h-5 text-stone-500"></i>
+                        <span>Stok & Produk</span>
+                    </a>
+
+                    <!-- Active Menu: Konsultasi Chat -->
+                    <a href="chat.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold text-[#1E7D32] bg-[#E8F5E9] rounded-xl transition-colors">
                         <div class="flex items-center gap-3">
-                            <i data-lucide="layout-dashboard" class="w-4 h-4"></i>
-                            Dashboard
+                            <i data-lucide="message-square" class="w-5 h-5 text-[#1E7D32]"></i>
+                            <span>Konsultasi Chat</span>
                         </div>
-                        <span class="w-1.5 h-1.5 rounded-full bg-[#2E7D32]"></span>
+                        <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
                     </a>
                     
-                    <a href="pos.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 hover:text-stone-900 transition-colors">
-                        <i data-lucide="shopping-bag" class="w-4 h-4"></i>
-                        Penjualan (POS)
-                    </a>
-
-                    <a href="transaksi.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 hover:text-stone-900 transition-colors">
-                        <i data-lucide="receipt" class="w-4 h-4"></i>
-                        Riwayat Transaksi
+                    <a href="pelanggan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
+                        <i data-lucide="users" class="w-5 h-5 text-stone-500"></i>
+                        <span>Pelanggan</span>
                     </a>
                     
-                    <a href="restock.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 hover:text-stone-900 transition-colors">
-                        <i data-lucide="truck" class="w-4 h-4"></i>
-                        Pembelian (Restock)
-                    </a>
-                    
-                    <a href="stok.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 hover:text-stone-900 transition-colors">
-                        <i data-lucide="package" class="w-4 h-4"></i>
-                        Stok & Produk
-                    </a>
-
-                    <a href="data_master.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 hover:text-stone-900 transition-colors">
-                        <i data-lucide="database" class="w-4 h-4"></i>
-                        Data Master
-                    </a>
-                    
-                    <a href="pelanggan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 hover:text-stone-900 transition-colors">
-                        <i data-lucide="users" class="w-4 h-4"></i>
-                        Pelanggan
-                    </a>
-                    
-                    <a href="laporan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 hover:text-stone-900 transition-colors">
-                        <i data-lucide="bar-chart-3" class="w-4 h-4"></i>
-                        Laporan
+                    <a href="laporan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
+                        <i data-lucide="bar-chart-2" class="w-5 h-5 text-stone-500"></i>
+                        <span>Laporan</span>
                     </a>
                 </nav>
 
-                <hr class="border-stone-100">
+                <hr class="border-stone-100 my-4">
 
                 <!-- System Secondary Menu -->
                 <nav class="space-y-1">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-2">Pengaturan</p>
-                    <a href="pengaturan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 transition-colors">
-                        <i data-lucide="settings" class="w-4 h-4"></i>
-                        Pengaturan Toko
-                    </a>
-                    <a href="bantuan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-medium text-stone-600 rounded-xl hover:bg-stone-100 transition-colors">
-                        <i data-lucide="help-circle" class="w-4 h-4"></i>
-                        Bantuan
+                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">PENGATURAN</p>
+                    <a href="pengaturan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-semibold text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
+                        <i data-lucide="settings" class="w-5 h-5 text-stone-500"></i>
+                        <span>Pengaturan Toko</span>
                     </a>
                 </nav>
             </div>
 
-            <!-- Quick Store Info Badge -->
-            <div class="p-4 m-4 rounded-xl bg-stone-50 border border-stone-200/60">
-                <div class="flex items-center gap-3">
-                    <div class="p-2 bg-emerald-100 text-[#2E7D32] rounded-lg">
-                        <i data-lucide="store" class="w-4 h-4"></i>
-                    </div>
-                    <div class="overflow-hidden">
-                        <p class="text-xs font-semibold text-stone-800 truncate">PlantShop Utama</p>
-                        <p class="text-[11px] text-stone-500 truncate">Sistem Online Active</p>
-                    </div>
+            <!-- Cabang Info Badge -->
+            <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3 mt-auto">
+                <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
+                    <i data-lucide="store" class="w-5 h-5"></i>
+                </div>
+                <div class="overflow-hidden">
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">Cabang Batu Central</p>
+                    <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online Active</p>
                 </div>
             </div>
         </aside>
