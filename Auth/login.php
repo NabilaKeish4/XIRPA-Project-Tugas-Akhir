@@ -13,22 +13,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password = $_POST['password'];
 
     $query = mysqli_query($conn, "SELECT * FROM users WHERE username = '$email' OR email = '$email'");
-    
+
     if ($query && mysqli_num_rows($query) === 1) {
         $user = mysqli_fetch_assoc($query);
-        
+
         if (password_verify($password, $user['password']) || $password === $user['password']) {
             $_SESSION['user_id'] = $user['id'];
             $_SESSION['nama']    = $user['nama'];
             $_SESSION['role']    = $user['role'];
 
-            header("Location: ../Admin/dashboard.php");
+            // REDIRECT BERDASARKAN ROLE
+            if ($user['role'] === 'admin') {
+                header("Location: ../Admin/dashboard.php");
+            } else {
+                header("Location: ../Pelanggan/index.php"); // Sesuaikan folder pelangganmu
+            }
             exit;
         } else {
             $pesan = "Password salah!";
         }
     } else {
         $pesan = "Akun tidak ditemukan!";
+    }
+}
+?>
     }
 }
 ?>
