@@ -91,7 +91,6 @@ if (!empty($cart_items)) {
     } else {
         $error = "Gagal memproses transaksi: " . mysqli_error($conn);
     }
-}
 
 $cart_count = array_sum($cart_items);
 ?>
