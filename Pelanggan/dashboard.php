@@ -117,15 +117,6 @@ $cart_count = isset($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
                 <span class="text-xl font-extrabold tracking-tight text-stone-800">Plant<span class="text-brand-primary">Shop</span></span>
             </a>
             
-<<<<<<< HEAD
-            <nav class="flex flex-col space-y-4 text-xs font-semibold uppercase tracking-wider text-gray-600">
-                <a href="dashboard.php" class="text-brand-500 font-bold bg-brand-light/40 px-4 py-3 rounded-xl flex items-center justify-between">
-                    <span>HOME</span>
-                    <span class="w-1.5 h-1.5 bg-brand-500 rounded-full"></span>
-                </a>
-                <a href="dashboard.php#katalog" class="hover:text-brand-500 transition px-4 py-3 rounded-xl hover:bg-gray-50 flex items-center justify-between">
-                    <span>Shop</span>
-=======
             <nav class="flex flex-col space-y-2 text-xs font-bold tracking-wider uppercase text-stone-500">
                 <a href="dashboard.php" class="text-brand-primary font-extrabold bg-brand-primary-light px-4 py-3 rounded-xl flex items-center justify-between shadow-sm">
                     <span class="flex items-center gap-2.5">
@@ -138,7 +129,6 @@ $cart_count = isset($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
                 <a href="katalog.php" class="hover:text-brand-primary hover:bg-stone-50 px-4 py-3 rounded-xl flex items-center gap-2.5 transition">
                     <i data-lucide="store" class="w-4 h-4"></i>
                     <span>Katalog Shop</span>
->>>>>>> d3ff7d9 (perubahan pada pelanggan oleh nabila)
                 </a>
 
                 <a href="cart.php" class="hover:text-brand-primary hover:bg-stone-50 px-4 py-3 rounded-xl flex items-center justify-between transition">
