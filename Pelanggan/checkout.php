@@ -18,14 +18,12 @@ $total_bayar = 0;
 
 if (!empty($cart_items)) {
     $ids = implode(',', array_map('intval', array_keys($cart_items)));
-    // Menyesuaikan query dengan struktur tabel produk
     $query = "SELECT * FROM produk WHERE id IN ($ids)";
     $result = mysqli_query($conn, $query);
 
     if ($result) {
         while ($row = mysqli_fetch_assoc($result)) {
             $qty = $cart_items[$row['id']];
-            // Menggunakan kolom harga_jual atau harga
             $harga = $row['harga_jual'] ?? $row['harga'] ?? 0;
             $subtotal = $harga * $qty;
             $total_bayar += $subtotal;
@@ -42,37 +40,25 @@ if (!empty($cart_items)) {
 }
 
 // Proses saat tombol "Selesaikan Pesanan" diklik
-// Generasi kode transaksi unik (contoh: TRX-20260915-1234)
+if (isset($_POST['proses_checkout'])) {
+    $nama_penerima = mysqli_real_escape_string($conn, $_POST['nama']);
+    $alamat        = mysqli_real_escape_string($conn, $_POST['alamat']);
+    $telepon       = mysqli_real_escape_string($conn, $_POST['telepon']);
+    $metode_bayar  = mysqli_real_escape_string($conn, $_POST['metode_pembayaran']);
+
+    // Kode transaksi unik otomatis (Contoh: TRX-20260915-8493)
     $kode_transaksi = 'TRX-' . date('Ymd') . '-' . rand(1000, 9999);
 
-    // 1. Simpan data ke tabel transaksi
-    $query_tx = "INSERT INTO transaksi (kode_transaksi, tanggal_transaksi, user_id, nama_penerima, alamat, telepon, total_harga, metode_pembayaran, jenis_transaksi, status, created_at) 
-                 VALUES ('$kode_transaksi', NOW(), '$user_id', '$nama_penerima', '$alamat', '$telepon', '$total_bayar', '$metode_bayar', 'Penjualan', 'Diproses', NOW())";
+    // 1. Simpan data utama transaksi ke tabel `transaksi`
+    $query_tx = "INSERT INTO transaksi 
+                 (kode_transaksi, tanggal_transaksi, user_id, nama_penerima, alamat, telepon, total_harga, total, metode_pembayaran, jenis_transaksi, status, created_at) 
+                 VALUES 
+                 ('$kode_transaksi', NOW(), '$user_id', '$nama_penerima', '$alamat', '$telepon', '$total_bayar', '$total_bayar', '$metode_bayar', 'Penjualan', 'Diproses', NOW())";
     
     if (mysqli_query($conn, $query_tx)) {
         $transaksi_id = mysqli_insert_id($conn);
 
-        // 2. Simpan detail produk ke transaksi_detail
-        foreach ($products_in_cart as $item) {
-            $id_produk = (int)$item['id'];
-            $qty       = (int)$item['qty'];
-            $harga     = (float)$item['price'];
-
-            mysqli_query($conn, "INSERT INTO transaksi_detail (transaksi_id, id_produk, jumlah, harga) 
-                                 VALUES ('$transaksi_id', '$id_produk', '$qty', '$harga')");
-        }
-
-        // 3. Kosongkan keranjang & redirect
-        unset($_SESSION['cart']);
-        header("Location: riwayat.php?success=1");
-        exit;
-    } else {
-        $error = "Gagal memproses transaksi: " . mysqli_error($conn);
-    }
-    if (mysqli_query($conn, $query_tx)) {
-        $transaksi_id = mysqli_insert_id($conn);
-
-        // 2. Simpan setiap detail produk ke tabel `transaksi_detail` / `detail_transaksi`
+        // 2. Simpan setiap detail produk ke tabel `transaksi_detail`
         foreach ($products_in_cart as $item) {
             $id_produk = (int)$item['id'];
             $qty       = (int)$item['qty'];
@@ -85,7 +71,7 @@ if (!empty($cart_items)) {
         // 3. Kosongkan keranjang belanja
         unset($_SESSION['cart']);
 
-        // 4. Arahkan pengguna ke halaman nota / riwayat order
+        // 4. Arahkan pengguna ke halaman riwayat order
         header("Location: riwayat.php?success=1");
         exit;
     } else {
