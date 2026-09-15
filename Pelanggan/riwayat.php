@@ -48,7 +48,7 @@ if (empty($ordersData)) {
 $cart_count = isset($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
 ?>
 
-<!DOCTYPE html>
+<!DOCTYPE html>     
 <html lang="id">
 <head>
     <meta charset="UTF-8">

@@ -17,28 +17,37 @@ $products_in_cart = [];
 $total_bayar = 0;
 
 if (!empty($cart_items)) {
+    // Pastikan array_keys aman untuk query
     $ids = implode(',', array_map('intval', array_keys($cart_items)));
-    $query = "SELECT * FROM produk WHERE id IN ($ids)";
+    
+    // Sesuaikan nama primary key tabel produk (ganti id_produk jika perlu)
+    $query = "SELECT * FROM produk WHERE id IN ($ids)"; 
     $result = mysqli_query($conn, $query);
 
-    if ($result) {
+    if ($result && mysqli_num_rows($result) > 0) {
         while ($row = mysqli_fetch_assoc($result)) {
-            $qty = $cart_items[$row['id']];
-            $harga = $row['harga_jual'] ?? $row['harga'] ?? 0;
+            // Ambil ID sesuai kolom database
+            $prod_id = $row['id'] ?? $row['id_produk']; 
+            
+            $qty = $cart_items[$prod_id] ?? 0;
+            
+            // Sesuaikan kolom harga dan nama produk dengan database Anda
+            $harga = $row['harga_jual'] ?? $row['harga'] ?? $row['harga_produk'] ?? 0;
+            $nama_produk = $row['nama_tanaman'] ?? $row['nama_produk'] ?? 'Produk';
+
             $subtotal = $harga * $qty;
             $total_bayar += $subtotal;
 
             $products_in_cart[] = [
-                'id' => $row['id'],
-                'name' => $row['nama_tanaman'],
-                'price' => $harga,
-                'qty' => $qty,
+                'id'       => $prod_id,
+                'name'     => $nama_produk,
+                'price'    => $harga,
+                'qty'      => $qty,
                 'subtotal' => $subtotal
             ];
         }
     }
 }
-
 // Proses saat tombol "Selesaikan Pesanan" diklik
 if (isset($_POST['proses_checkout'])) {
     $nama_penerima = mysqli_real_escape_string($conn, $_POST['nama']);
