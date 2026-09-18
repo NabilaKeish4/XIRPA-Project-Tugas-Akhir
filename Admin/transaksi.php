@@ -1,195 +1,300 @@
 <?php
-// Hubungkan ke file database
-include '../Config/database.php';
+session_start();
+require_once '../Config/database.php';
 
-// Navigasi Utama
-$nav_items = [
-    ['name' => 'Dashboard', 'icon' => 'layout-dashboard', 'url' => 'dashboard.php', 'active' => false],
-    ['name' => 'Sales (POS)', 'icon' => 'shopping-bag', 'url' => 'pos.php', 'active' => false],
-    ['name' => 'Purchasing', 'icon' => 'truck', 'url' => 'restock.php', 'active' => false],
-    ['name' => 'Products', 'icon' => 'sprout', 'url' => 'stok.php', 'active' => false],
-    ['name' => 'Customers', 'icon' => 'users', 'url' => 'data_master.php', 'active' => false],
-    ['name' => 'Reports', 'icon' => 'bar-chart-3', 'url' => 'laporan.php', 'active' => false],
-];
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
+    header("Location: ../Auth/login.php");
+    exit;
+}
 
-$all_transactions = [
-    ['id' => 'TRX-1092', 'customer' => 'Budi Santoso', 'date' => '21 Agu 2026 10:42 WIB', 'method' => 'QRIS', 'status' => 'Selesai', 'total' => 'Rp 340.000'],
-    ['id' => 'TRX-1091', 'customer' => 'Siti Rahma', 'date' => '21 Agu 2026 09:15 WIB', 'method' => 'Tunai', 'status' => 'Selesai', 'total' => 'Rp 1.250.000'],
-    ['id' => 'TRX-1090', 'customer' => 'Dewi Lestari', 'date' => '21 Agu 2026 08:50 WIB', 'method' => 'Transfer', 'status' => 'Selesai', 'total' => 'Rp 180.000'],
-    ['id' => 'TRX-1089', 'customer' => 'Andi Wijaya', 'date' => '20 Agu 2026 16:20 WIB', 'method' => 'QRIS', 'status' => 'Selesai', 'total' => 'Rp 420.000'],
-    ['id' => 'TRX-1088', 'customer' => 'Rina Marlina', 'date' => '20 Agu 2026 14:10 WIB', 'method' => 'Tunai', 'status' => 'Selesai', 'total' => 'Rp 260.000'],
-];
+$admin_nama = $_SESSION['nama_user'] ?? 'Admin';
+
+// =========================================================
+// FILTER
+// =========================================================
+$search       = isset($_GET['search']) ? mysqli_real_escape_string($conn, trim($_GET['search'])) : '';
+$filterJenis  = $_GET['jenis']  ?? 'semua';
+$filterStatus = $_GET['status'] ?? 'semua';
+
+$allowedJenis  = ['semua', 'penjualan', 'pembelian'];
+$allowedStatus = ['semua', 'Diproses', 'Dikirim', 'Selesai', 'Batal'];
+if (!in_array($filterJenis, $allowedJenis))   $filterJenis  = 'semua';
+if (!in_array($filterStatus, $allowedStatus)) $filterStatus = 'semua';
+
+$where = "WHERE 1=1";
+if ($filterJenis !== 'semua') {
+    $jenisEsc = mysqli_real_escape_string($conn, $filterJenis);
+    $where .= " AND t.jenis_transaksi = '$jenisEsc'";
+}
+if ($filterStatus !== 'semua') {
+    $statusEsc = mysqli_real_escape_string($conn, $filterStatus);
+    $where .= " AND t.status = '$statusEsc'";
+}
+if ($search !== '') {
+    $where .= " AND (t.kode_transaksi LIKE '%$search%' OR t.nama_penerima LIKE '%$search%' OR u.nama_lengkap LIKE '%$search%')";
+}
+
+// =========================================================
+// AMBIL TRANSAKSI
+// =========================================================
+$transaksi = [];
+$qTrx = mysqli_query($conn, "
+    SELECT t.*, 
+           COALESCE(u.nama_lengkap, 'Walk-in / Supplier') AS pelanggan,
+           (SELECT COUNT(*) FROM transaksi_detail td WHERE td.transaksi_id = t.id) AS jml_item
+    FROM transaksi t
+    LEFT JOIN users u ON t.user_id = u.id
+    $where
+    ORDER BY t.created_at DESC
+    LIMIT 100
+");
+if ($qTrx) while ($r = mysqli_fetch_assoc($qTrx)) $transaksi[] = $r;
+
+// =========================================================
+// STATISTIK RINGKAS
+// =========================================================
+$stat = ['penjualan' => 0, 'pembelian' => 0, 'trx_jual' => 0, 'trx_beli' => 0];
+$qStat = mysqli_query($conn, "
+    SELECT 
+        COALESCE(SUM(CASE WHEN jenis_transaksi='penjualan' THEN total_harga ELSE 0 END),0) AS penjualan,
+        COALESCE(SUM(CASE WHEN jenis_transaksi='pembelian' THEN total_harga ELSE 0 END),0) AS pembelian,
+        COALESCE(SUM(CASE WHEN jenis_transaksi='penjualan' THEN 1 ELSE 0 END),0) AS trx_jual,
+        COALESCE(SUM(CASE WHEN jenis_transaksi='pembelian' THEN 1 ELSE 0 END),0) AS trx_beli
+    FROM transaksi
+");
+if ($qStat) $stat = mysqli_fetch_assoc($qStat);
+
+function badgeStatus($status) {
+    switch ($status) {
+        case 'Diproses': return 'bg-amber-50 text-amber-700 border-amber-200';
+        case 'Dikirim':  return 'bg-blue-50 text-blue-700 border-blue-200';
+        case 'Selesai':  return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+        case 'Batal':    return 'bg-rose-50 text-rose-700 border-rose-200';
+        default:         return 'bg-stone-100 text-stone-600 border-stone-200';
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlantShop - Daftar Transaksi</title>
-    <!-- Tailwind CSS CDN -->
+    <title>PlantHub - Riwayat Transaksi</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Lucide Icons CDN -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Google Fonts: Plus Jakarta Sans -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        brand: {
-                            bg: '#F9F8F6',
-                            text: '#2D3748',
-                            primary: '#2E7D32',
-                            'primary-hover': '#236327',
-                            'primary-light': '#E8F5E9',
-                            sage: '#81C784',
-                            amber: '#F59E0B',
-                            'amber-light': '#FEF3C7',
-                        }
-                    },
-                    fontFamily: {
-                        sans: ['"Plus Jakarta Sans"', 'sans-serif'],
-                    }
-                }
-            }
-        }
-    </script>
-    <style>
-        body {
-            background-color: #F9F8F6;
-            color: #2D3748;
-            font-family: 'Plus Jakarta Sans', sans-serif;
-        }
-    </style>
+    <style> body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; } </style>
 </head>
 <body class="antialiased min-h-screen flex flex-col">
 
-    <!-- Top Navbar -->
+    <!-- HEADER -->
     <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
-        <div class="px-4 lg:px-8 py-3 flex items-center justify-between gap-4">
-            <!-- Brand & Mobile Toggle -->
+        <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
             <div class="flex items-center gap-3">
-                <button id="mobile-menu-btn" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
-                    <i data-lucide="menu" class="w-6 h-6"></i>
+                <button onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
+                    <i data-lucide="menu" class="w-5 h-5"></i>
                 </button>
-                <div class="flex items-center gap-2.5">
-                    <div class="bg-brand-primary p-2 rounded-xl text-white shadow-sm shadow-emerald-900/20">
-                        <i data-lucide="leaf" class="w-5 h-5"></i>
+                <a href="dashboard.php" class="flex items-center gap-2.5">
+                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
+                        <i data-lucide="sprout" class="w-5 h-5"></i>
                     </div>
-                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-brand-primary">Shop</span></span>
-                </div>
+                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
+                </a>
             </div>
 
-            <!-- Search Bar -->
-            <div class="hidden md:flex flex-1 max-w-md mx-4">
-                <div class="relative w-full">
-                    <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
-                    <input type="text" placeholder="Cari ID transaksi atau nama..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/20 focus:border-brand-primary transition-all">
-                </div>
+            <div class="hidden md:flex flex-1 max-w-md">
+                <span class="text-xs text-stone-500 self-center">Riwayat Transaksi</span>
             </div>
 
-            <!-- Profile & Notifications -->
             <div class="flex items-center gap-3">
-                <button class="relative p-2 rounded-xl text-stone-600 hover:bg-stone-100 transition-colors">
-                    <i data-lucide="bell" class="w-5 h-5"></i>
-                    <span class="absolute top-1.5 right-1.5 w-2 h-2 bg-rose-500 rounded-full ring-2 ring-white"></span>
-                </button>
-                <div class="h-6 w-[1px] bg-stone-200 hidden sm:block"></div>
-                <div class="flex items-center gap-3 pl-1">
-                    <img src="https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=120" alt="Nabila" class="w-9 h-9 rounded-xl object-cover ring-2 ring-brand-primary/20">
+                <a href="dashboard.php" class="flex items-center gap-3 pl-1">
+                    <img src="https://ui-avatars.com/api/?name=<?= urlencode($admin_nama) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
                     <div class="hidden sm:block text-left">
-                        <p class="text-sm font-semibold text-stone-800 leading-tight">Nabila</p>
-                        <p class="text-xs text-stone-500 font-medium">Store Admin</p>
+                        <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
+                        <p class="text-xs text-stone-500">Administrator</p>
                     </div>
-                </div>
+                </a>
             </div>
         </div>
     </header>
 
     <div class="flex flex-1">
-        <!-- Sidebar Navigation -->
-        <aside id="sidebar" class="fixed lg:static inset-y-0 left-0 z-20 w-64 bg-white border-r border-stone-200/80 -translate-x-full lg:translate-x-0 transition-transform duration-200 ease-in-out flex flex-col justify-between pt-16 lg:pt-0">
-            <div class="p-4 space-y-1.5">
-                <div class="px-3 py-2 text-xs font-semibold uppercase tracking-wider text-stone-400">Navigasi Utama</div>
-                <?php foreach ($nav_items as $item): ?>
-                    <a href="<?= $item['url'] ?>" class="flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-medium text-sm transition-all duration-150 <?= $item['active'] ? 'bg-brand-primary text-white shadow-sm shadow-emerald-900/20' : 'text-stone-600 hover:bg-stone-100 hover:text-stone-900' ?>">
-                        <i data-lucide="<?= $item['icon'] ?>" class="w-4 h-4"></i>
-                        <span><?= $item['name'] ?></span>
-                    </a>
-                <?php endforeach; ?>
+        <!-- SIDEBAR -->
+        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
+            <div class="space-y-6">
+                <nav class="space-y-1">
+                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
+                    <?php
+                    $menu = [
+                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
+                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
+                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
+                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
+                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
+                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
+                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => true],
+                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
+                    ];
+                    foreach ($menu as $m):
+                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
+                    ?>
+                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
+                            <div class="flex items-center gap-3">
+                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                                <span><?= $m['label'] ?></span>
+                            </div>
+                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
+                        </a>
+                    <?php endforeach; ?>
+
+                    <hr class="border-stone-100 my-3">
+
+                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">PENGATURAN</p>
+                    <?php
+                    $menu2 = [
+                        ['url' => 'pengaturan.php', 'icon' => 'settings',    'label' => 'Pengaturan Toko', 'active' => false],
+                        ['url' => 'bantuan.php',    'icon' => 'help-circle', 'label' => 'Bantuan',         'active' => false],
+                    ];
+                    foreach ($menu2 as $m):
+                    ?>
+                        <a href="<?= $m['url'] ?>" class="flex items-center gap-3 px-3 py-2.5 text-sm font-bold rounded-xl text-stone-700 hover:bg-stone-100 transition-colors">
+                            <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 text-stone-500"></i>
+                            <span><?= $m['label'] ?></span>
+                        </a>
+                    <?php endforeach; ?>
+                </nav>
             </div>
 
-            <div class="p-4 m-4 rounded-2xl bg-brand-primary-light/60 border border-emerald-100">
-                <div class="flex items-center gap-2 text-brand-primary font-semibold text-xs mb-1">
-                    <i data-lucide="store" class="w-4 h-4"></i>
-                    <span>Toko Buka</span>
+            <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3 mt-auto">
+                <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
+                    <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
-                <p class="text-xs text-stone-600">Sistem POS online & tersinkronisasi otomatis.</p>
+                <div class="overflow-hidden">
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">PlantHub Admin</p>
+                    <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
+                </div>
             </div>
         </aside>
 
-        <!-- Main Content Area -->
-        <main class="flex-1 p-4 lg:p-8 space-y-6 max-w-7xl mx-auto w-full">
-            
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div>
-                    <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Riwayat Transaksi Penjualan</h1>
-                    <p class="text-sm text-stone-500 mt-0.5">Daftar seluruh pesanan dan pembayaran dari pelanggan.</p>
-                </div>
-                <a href="pos.php" class="inline-flex items-center gap-2 bg-brand-primary text-white px-4 py-2 rounded-xl text-sm font-semibold hover:bg-brand-primary-hover shadow-sm shadow-emerald-900/20 transition-all">
-                    <i data-lucide="plus" class="w-4 h-4"></i>
-                    <span>Transaksi Baru (POS)</span>
-                </a>
+        <!-- MAIN -->
+        <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
+
+            <div>
+                <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Riwayat Transaksi</h1>
+                <p class="text-sm text-stone-500 mt-0.5">Semua transaksi penjualan & pembelian dari pelanggan dan supplier.</p>
             </div>
 
-            <!-- Table Card -->
-            <div class="bg-white rounded-2xl border border-stone-200/70 shadow-sm overflow-hidden">
-                <div class="p-6 border-b border-stone-100 flex items-center justify-between">
-                    <h2 class="text-lg font-bold text-stone-800">Seluruh Transaksi</h2>
-                    <button class="inline-flex items-center gap-1.5 text-xs font-semibold text-stone-600 bg-stone-100 hover:bg-stone-200 px-3 py-1.5 rounded-lg transition-colors">
-                        <i data-lucide="filter" class="w-3.5 h-3.5"></i> Filter Tanggal
-                    </button>
+            <!-- STATISTIK -->
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32]">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Total Penjualan</p>
+                    <p class="text-lg font-bold text-stone-800 mt-1">Rp <?= number_format($stat['penjualan'], 0, ',', '.') ?></p>
+                    <p class="text-[11px] text-stone-400 mt-1"><?= (int)$stat['trx_jual'] ?> transaksi</p>
                 </div>
+                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#D97706]">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Total Pembelian</p>
+                    <p class="text-lg font-bold text-stone-800 mt-1">Rp <?= number_format($stat['pembelian'], 0, ',', '.') ?></p>
+                    <p class="text-[11px] text-stone-400 mt-1"><?= (int)$stat['trx_beli'] ?> restock</p>
+                </div>
+                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-emerald-500">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Transaksi Tampil</p>
+                    <p class="text-lg font-bold text-stone-800 mt-1"><?= count($transaksi) ?></p>
+                    <p class="text-[11px] text-stone-400 mt-1">Setelah filter</p>
+                </div>
+                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-blue-500">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Filter Aktif</p>
+                    <p class="text-sm font-bold text-stone-800 mt-1 capitalize"><?= htmlspecialchars($filterJenis) ?> / <?= htmlspecialchars($filterStatus) ?></p>
+                    <a href="transaksi.php" class="text-[11px] text-[#2E7D32] font-semibold hover:underline mt-1 inline-block">Reset filter</a>
+                </div>
+            </div>
 
+            <!-- FILTER BAR -->
+            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-4">
+                <form method="GET" action="transaksi.php" class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div class="md:col-span-2 relative">
+                        <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
+                        <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari kode transaksi / penerima..." class="w-full pl-10 pr-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                    </div>
+                    <select name="jenis" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                        <option value="semua" <?= $filterJenis === 'semua' ? 'selected' : '' ?>>Semua Jenis</option>
+                        <option value="penjualan" <?= $filterJenis === 'penjualan' ? 'selected' : '' ?>>Penjualan</option>
+                        <option value="pembelian" <?= $filterJenis === 'pembelian' ? 'selected' : '' ?>>Pembelian</option>
+                    </select>
+                    <select name="status" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                        <option value="semua" <?= $filterStatus === 'semua' ? 'selected' : '' ?>>Semua Status</option>
+                        <option value="Diproses" <?= $filterStatus === 'Diproses' ? 'selected' : '' ?>>Diproses</option>
+                        <option value="Dikirim"  <?= $filterStatus === 'Dikirim'  ? 'selected' : '' ?>>Dikirim</option>
+                        <option value="Selesai"  <?= $filterStatus === 'Selesai'  ? 'selected' : '' ?>>Selesai</option>
+                        <option value="Batal"    <?= $filterStatus === 'Batal'    ? 'selected' : '' ?>>Batal</option>
+                    </select>
+                    <button type="submit" class="md:col-span-4 bg-[#2E7D32] hover:bg-emerald-800 text-white text-sm font-semibold py-2.5 rounded-xl transition">
+                        Terapkan Filter
+                    </button>
+                </form>
+            </div>
+
+            <!-- TABEL -->
+            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse">
                         <thead>
-                            <tr class="border-b border-stone-100 bg-stone-50/50 text-[11px] font-semibold text-stone-400 uppercase tracking-wider">
-                                <th class="py-3 px-6">Kode TRX</th>
-                                <th class="py-3 px-4">Pelanggan</th>
-                                <th class="py-3 px-4">Waktu</th>
-                                <th class="py-3 px-4">Metode Bayar</th>
-                                <th class="py-3 px-4">Status</th>
-                                <th class="py-3 px-4 text-right">Total</th>
-                                <th class="py-3 px-6 text-center">Aksi</th>
+                            <tr class="border-b border-stone-200 bg-stone-50/50 text-[11px] font-bold text-stone-500 uppercase tracking-wider">
+                                <th class="py-3.5 px-6">Kode</th>
+                                <th class="py-3.5 px-4">Pelanggan / Supplier</th>
+                                <th class="py-3.5 px-4">Tanggal</th>
+                                <th class="py-3.5 px-4">Jenis</th>
+                                <th class="py-3.5 px-4">Status</th>
+                                <th class="py-3.5 px-4 text-center">Item</th>
+                                <th class="py-3.5 px-4 text-right">Total</th>
+                                <th class="py-3.5 px-6 text-center">Aksi</th>
                             </tr>
                         </thead>
-                        <tbody class="divide-y divide-stone-100 text-sm font-medium text-stone-700">
-                            <?php foreach ($all_transactions as $trx): ?>
-                                <tr class="hover:bg-stone-50/80 transition-colors">
-                                    <td class="py-4 px-6 font-mono text-xs font-semibold text-stone-500"><?= $trx['id'] ?></td>
-                                    <td class="py-4 px-4 font-semibold text-stone-800"><?= $trx['customer'] ?></td>
-                                    <td class="py-4 px-4 text-stone-500 text-xs"><?= $trx['date'] ?></td>
-                                    <td class="py-4 px-4 text-stone-600"><span class="px-2.5 py-1 bg-stone-100 rounded-md text-xs font-semibold"><?= $trx['method'] ?></span></td>
-                                    <td class="py-4 px-4">
-                                        <span class="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-100">
-                                            <i data-lucide="check-circle-2" class="w-3 h-3"></i> <?= $trx['status'] ?>
-                                        </span>
-                                    </td>
-                                    <td class="py-4 px-4 text-right font-bold text-brand-primary"><?= $trx['total'] ?></td>
-                                    <td class="py-4 px-6 text-center">
-                                        <button class="inline-flex items-center gap-1 text-xs font-semibold text-brand-primary hover:text-brand-primary-hover bg-brand-primary-light/60 px-3 py-1.5 rounded-lg transition-colors">
-                                            <i data-lucide="eye" class="w-3.5 h-3.5"></i> Detail
-                                        </button>
+                        <tbody class="divide-y divide-stone-100 text-xs">
+                            <?php if (empty($transaksi)): ?>
+                                <tr>
+                                    <td colspan="8" class="py-12 text-center">
+                                        <div class="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                                            <i data-lucide="receipt" class="w-6 h-6 text-stone-400"></i>
+                                        </div>
+                                        <p class="text-sm font-semibold text-stone-700">Belum ada transaksi</p>
+                                        <p class="text-xs text-stone-500 mt-1">Transaksi pelanggan akan muncul di sini setelah mereka checkout.</p>
                                     </td>
                                 </tr>
-                            <?php endforeach; ?>
+                            <?php else: ?>
+                                <?php foreach ($transaksi as $t): 
+                                    $isJual = ($t['jenis_transaksi'] === 'penjualan');
+                                ?>
+                                    <tr class="hover:bg-stone-50/60 transition-colors">
+                                        <td class="py-3.5 px-6 font-mono text-[11px] font-semibold text-stone-700"><?= htmlspecialchars($t['kode_transaksi']) ?></td>
+                                        <td class="py-3.5 px-4 font-semibold text-stone-800"><?= htmlspecialchars($t['pelanggan']) ?></td>
+                                        <td class="py-3.5 px-4 text-stone-500"><?= date('d M Y, H:i', strtotime($t['created_at'])) ?></td>
+                                        <td class="py-3.5 px-4">
+                                            <span class="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase <?= $isJual ? 'bg-emerald-50 text-[#2E7D32] border border-emerald-100' : 'bg-amber-50 text-[#D97706] border border-amber-100' ?>">
+                                                <?= htmlspecialchars($t['jenis_transaksi']) ?>
+                                            </span>
+                                        </td>
+                                        <td class="py-3.5 px-4">
+                                            <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold uppercase border <?= badgeStatus($t['status']) ?>">
+                                                <?= htmlspecialchars($t['status']) ?>
+                                            </span>
+                                        </td>
+                                        <td class="py-3.5 px-4 text-center font-semibold text-stone-700"><?= (int)$t['jml_item'] ?></td>
+                                        <td class="py-3.5 px-4 text-right font-bold text-stone-800">Rp <?= number_format($t['total_harga'], 0, ',', '.') ?></td>
+                                        <td class="py-3.5 px-6 text-center">
+                                            <a href="detail_transaksi.php?id=<?= (int)$t['id'] ?>" class="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-[#2E7D32] hover:bg-emerald-50 rounded-lg transition">
+                                                <i data-lucide="eye" class="w-3.5 h-3.5"></i> Detail
+                                            </a>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
                         </tbody>
                     </table>
+                </div>
+
+                <div class="p-4 bg-stone-50/60 border-t border-stone-100 flex items-center justify-between text-xs text-stone-500">
+                    <span>Menampilkan <b class="text-stone-700"><?= count($transaksi) ?></b> transaksi terbaru</span>
+                    <span class="text-stone-400">Maksimal 100 baris terakhir</span>
                 </div>
             </div>
 
@@ -198,11 +303,14 @@ $all_transactions = [
 
     <script>
         lucide.createIcons();
-        const mobileBtn = document.getElementById('mobile-menu-btn');
-        const sidebar = document.getElementById('sidebar');
-        mobileBtn?.addEventListener('click', () => {
-            sidebar.classList.toggle('-translate-x-full');
-        });
+        function toggleMobileSidebar() {
+            const s = document.getElementById('sidebar');
+            s?.classList.toggle('hidden');
+            s?.classList.toggle('fixed');
+            s?.classList.toggle('inset-y-0');
+            s?.classList.toggle('left-0');
+            s?.classList.toggle('z-40');
+        }
     </script>
 </body>
 </html>

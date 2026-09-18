@@ -1,436 +1,342 @@
 <?php
 session_start();
-require_once '../Config/database.php'; // Koneksi ke DB plant_hub
+require_once '../Config/database.php';
 
-// Tentukan halaman aktif untuk indikator sidebar
-$current_page = basename($_SERVER['PHP_SELF']);
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
+    header("Location: ../Auth/login.php");
+    exit;
+}
 
-// --- AUTOCREATE TABEL PENGATURAN (Diperbarui dengan kolom logo & foto profil) ---
-$create_table = "CREATE TABLE IF NOT EXISTS pengaturan (
+$admin_id   = (int)$_SESSION['user_id'];
+$admin_nama = $_SESSION['nama_user'] ?? 'Admin';
+
+// =========================================================
+// PASTIKAN TABEL pengaturan ADA
+// =========================================================
+mysqli_query($conn, "CREATE TABLE IF NOT EXISTS pengaturan (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    nama_toko VARCHAR(100) NOT NULL,
-    nama_cabang VARCHAR(100) NOT NULL,
-    no_telepon VARCHAR(20) NOT NULL,
-    email_toko VARCHAR(100) NOT NULL,
-    alamat_toko TEXT NOT NULL,
+    nama_toko VARCHAR(100) NOT NULL DEFAULT 'PlantHub',
+    nama_cabang VARCHAR(100) NOT NULL DEFAULT 'Cabang Utama',
+    no_telepon VARCHAR(20) NULL,
+    email_toko VARCHAR(100) NULL,
+    alamat_toko TEXT NULL,
     catatan_nota TEXT NULL,
     logo_toko VARCHAR(255) DEFAULT 'default_logo.png',
     foto_profil VARCHAR(255) DEFAULT 'default_avatar.jpg',
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-)";
-mysqli_query($conn, $create_table);
+)");
 
-// Pastikan ada setidaknya 1 baris data default
-$check_data = mysqli_query($conn, "SELECT * FROM pengaturan WHERE id = 1");
-if (mysqli_num_rows($check_data) == 0) {
-    $init_data = "INSERT INTO pengaturan (id, nama_toko, nama_cabang, no_telepon, email_toko, alamat_toko, catatan_nota) 
-                  VALUES (1, 'PlantShop', 'Cabang Bandung Central', '081234567890', 'admin@plantshop.com', 'Jl. Kebon Tanaman No. 123, Bandung', 'Terima kasih telah berbelanja tanaman di PlantShop!')";
-    mysqli_query($conn, $init_data);
+// Pastikan ada 1 baris id=1
+$qCek = mysqli_query($conn, "SELECT * FROM pengaturan WHERE id = 1");
+if (!$qCek || mysqli_num_rows($qCek) === 0) {
+    mysqli_query($conn, "INSERT INTO pengaturan (id, nama_toko, nama_cabang, no_telepon, email_toko, alamat_toko, catatan_nota) 
+                         VALUES (1, 'PlantHub', 'Cabang Utama', '081234567890', 'admin@planthub.com', 'Jl. Contoh No. 123', 'Terima kasih telah berbelanja di PlantHub!')");
 }
 
-// --- LOGIKA SIMPAN / UPDATE PENGATURAN & UPLOAD FOTO ---
-$pesan_sukses = "";
-$pesan_error  = "";
+// =========================================================
+// FUNGSI UPLOAD
+// =========================================================
+function uploadFile($file, $prefix, $oldFile = '') {
+    if (!isset($file) || $file['error'] !== UPLOAD_ERR_OK) return $oldFile;
+
+    $allowed = ['jpg', 'jpeg', 'png', 'webp'];
+    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+
+    if (!in_array($ext, $allowed)) return $oldFile;
+    if ($file['size'] > 2 * 1024 * 1024) return $oldFile;
+
+    $dir = '../uploads/';
+    if (!is_dir($dir)) mkdir($dir, 0755, true);
+
+    $newName = $prefix . '_' . time() . '_' . rand(1000, 9999) . '.' . $ext;
+    if (move_uploaded_file($file['tmp_name'], $dir . $newName)) {
+        if ($oldFile && !in_array($oldFile, ['default.jpg', 'default_logo.png', 'default_avatar.jpg']) && file_exists($dir . $oldFile)) {
+            @unlink($dir . $oldFile);
+        }
+        return $newName;
+    }
+    return $oldFile;
+}
+
+// =========================================================
+// SIMPAN PENGATURAN
+// =========================================================
+$pesan_sukses = '';
+$pesan_error  = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['simpan_pengaturan'])) {
-    $nama_toko    = mysqli_real_escape_string($conn, $_POST['nama_toko']);
-    $nama_cabang  = mysqli_real_escape_string($conn, $_POST['nama_cabang']);
-    $no_telepon   = mysqli_real_escape_string($conn, $_POST['no_telepon']);
-    $email_toko   = mysqli_real_escape_string($conn, $_POST['email_toko']);
-    $alamat_toko  = mysqli_real_escape_string($conn, $_POST['alamat_toko']);
-    $catatan_nota = mysqli_real_escape_string($conn, $_POST['catatan_nota']);
+    $nama_toko    = mysqli_real_escape_string($conn, trim($_POST['nama_toko'] ?? ''));
+    $nama_cabang  = mysqli_real_escape_string($conn, trim($_POST['nama_cabang'] ?? ''));
+    $no_telepon   = mysqli_real_escape_string($conn, trim($_POST['no_telepon'] ?? ''));
+    $email_toko   = mysqli_real_escape_string($conn, trim($_POST['email_toko'] ?? ''));
+    $alamat_toko  = mysqli_real_escape_string($conn, trim($_POST['alamat_toko'] ?? ''));
+    $catatan_nota = mysqli_real_escape_string($conn, trim($_POST['catatan_nota'] ?? ''));
 
-    // Handle Upload Foto Profil Admin
-    $foto_profil_sql = "";
-    if (isset($_FILES['foto_profil']) && $_FILES['foto_profil']['error'] === UPLOAD_ERR_OK) {
-        $fileTmpPath = $_FILES['foto_profil']['tmp_name'];
-        $fileName    = $_FILES['foto_profil']['name'];
-        $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
-        $allowedExtensions = ['jpg', 'jpeg', 'png', 'webp'];
+    // Ambil data lama
+    $qOld = mysqli_query($conn, "SELECT * FROM pengaturan WHERE id = 1");
+    $dataLama = mysqli_fetch_assoc($qOld);
 
-        if (in_array($fileExtension, $allowedExtensions)) {
-            $newFileName = 'profil_' . time() . '.' . $fileExtension;
-            $uploadFileDir = '../uploads/';
-            if (!is_dir($uploadFileDir)) {
-                mkdir($uploadFileDir, 0755, true);
-            }
-            $dest_path = $uploadFileDir . $newFileName;
-            if (move_uploaded_file($fileTmpPath, $dest_path)) {
-                $foto_profil_sql = ", foto_profil = '$newFileName'";
-            }
-        }
-    }
+    // Upload logo & foto profil
+    $logo_toko   = uploadFile($_FILES['logo_toko']   ?? null, 'logo',   $dataLama['logo_toko']);
+    $foto_profil = uploadFile($_FILES['foto_profil'] ?? null, 'profil', $dataLama['foto_profil']);
 
-    $update_query = "UPDATE pengaturan SET 
-                     nama_toko = '$nama_toko',
-                     nama_cabang = '$nama_cabang',
-                     no_telepon = '$no_telepon',
-                     email_toko = '$email_toko',
-                     alamat_toko = '$alamat_toko',
-                     catatan_nota = '$catatan_nota'
-                     $foto_profil_sql
-                     WHERE id = 1";
-
-    if (mysqli_query($conn, $update_query)) {
-        $pesan_sukses = "Pengaturan toko & foto profil berhasil diperbarui!";
+    if ($nama_toko === '') {
+        $pesan_error = "Nama toko wajib diisi.";
     } else {
-        $pesan_error = "Gagal memperbarui pengaturan: " . mysqli_error($conn);
+        $sql = "UPDATE pengaturan SET 
+                    nama_toko = '$nama_toko',
+                    nama_cabang = '$nama_cabang',
+                    no_telepon = '$no_telepon',
+                    email_toko = '$email_toko',
+                    alamat_toko = '$alamat_toko',
+                    catatan_nota = '$catatan_nota',
+                    logo_toko = '$logo_toko',
+                    foto_profil = '$foto_profil'
+                WHERE id = 1";
+        if (mysqli_query($conn, $sql)) {
+            $pesan_sukses = "Pengaturan berhasil diperbarui.";
+        } else {
+            $pesan_error = "Gagal menyimpan: " . mysqli_error($conn);
+        }
     }
 }
 
-// Ambil data pengaturan terbaru
-$res_pengaturan = mysqli_query($conn, "SELECT * FROM pengaturan WHERE id = 1");
-$data_toko     = mysqli_fetch_assoc($res_pengaturan);
+// =========================================================
+// AMBIL DATA PENGATURAN
+// =========================================================
+$data_toko = mysqli_fetch_assoc(mysqli_query($conn, "SELECT * FROM pengaturan WHERE id = 1"));
 
-// Path Foto Profil
-$avatar_src = (!empty($data_toko['foto_profil']) && file_exists('../uploads/' . $data_toko['foto_profil'])) 
-    ? '../uploads/' . $data_toko['foto_profil'] 
-    : 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=120';
+// Path gambar
+$logo_src = (!empty($data_toko['logo_toko']) && file_exists('../uploads/' . $data_toko['logo_toko']))
+    ? '../uploads/' . $data_toko['logo_toko']
+    : 'https://ui-avatars.com/api/?name=PH&background=2E7D32&color=fff&size=128';
+
+$avatar_src = (!empty($data_toko['foto_profil']) && file_exists('../uploads/' . $data_toko['foto_profil']))
+    ? '../uploads/' . $data_toko['foto_profil']
+    : 'https://ui-avatars.com/api/?name=' . urlencode($admin_nama) . '&background=2E7D32&color=fff';
 ?>
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title><?= htmlspecialchars($data_toko['nama_toko']) ?> - Pengaturan Toko</title>
-    <!-- Tailwind CSS CDN -->
+    <title>PlantHub - Pengaturan Toko</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Lucide Icons CDN -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
-        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; }
-    </style>
+    <style> body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; } </style>
 </head>
 <body class="antialiased min-h-screen flex flex-col">
 
-   <!-- TOP NAVBAR -->
-<header class="sticky top-0 z-50 bg-white border-b border-stone-200/80 shadow-sm">
-    <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-        
-        <!-- Logo & Mobile Menu Toggle -->
-        <div class="flex items-center gap-3">
-            <button id="mobile-menu-btn" type="button" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100 transition-colors cursor-pointer">
-                <i data-lucide="menu" class="w-5 h-5"></i>
-            </button>
-            <a href="dashboard.php" class="flex items-center gap-2.5">
-                <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm shadow-emerald-900/20">
-                    <i data-lucide="sprout" class="w-5 h-5"></i>
+    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
+        <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <button onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
+                    <i data-lucide="menu" class="w-5 h-5"></i>
+                </button>
+                <a href="dashboard.php" class="flex items-center gap-2.5">
+                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
+                        <i data-lucide="sprout" class="w-5 h-5"></i>
+                    </div>
+                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
+                </a>
+            </div>
+
+            <div class="hidden md:flex flex-1 max-w-md">
+                <span class="text-xs text-stone-500 self-center">Pengaturan Toko</span>
+            </div>
+
+            <a href="dashboard.php" class="flex items-center gap-3 pl-1">
+                <img src="<?= $avatar_src ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
+                <div class="hidden sm:block text-left">
+                    <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
+                    <p class="text-xs text-stone-500">Administrator</p>
                 </div>
-                <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Shop</span></span>
             </a>
         </div>
-
-        <!-- Search Bar -->
-        <div class="hidden md:flex flex-1 max-w-md relative">
-            <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
-            <input type="text" placeholder="Cari..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] transition-all placeholder:text-stone-400">
-        </div>
-
-        <!-- Right Menu (Notification & Profile Dropdown) -->
-        <div class="flex items-center gap-3">
-            
-            <!-- Tombol Notifikasi -->
-            <div class="relative">
-                <button type="button" id="notifBtn" onclick="toggleDropdown('notifMenu')" class="relative p-2 text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-full transition-colors cursor-pointer">
-                    <i data-lucide="bell" class="w-5 h-5"></i>
-                    <span class="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-[#D97706] rounded-full ring-2 ring-white"></span>
-                </button>
-
-                <!-- Dropdown Notifikasi -->
-                <div id="notifMenu" class="hidden absolute right-0 mt-2 w-72 bg-white rounded-2xl border border-stone-200 shadow-lg py-2 z-50">
-                    <div class="px-4 py-2 border-b border-stone-100 flex justify-between items-center">
-                        <span class="text-xs font-bold text-stone-800 uppercase">Notifikasi</span>
-                        <span class="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-bold"> Baru</span>
-                    </div>
-                    <div class="p-3 text-xs text-stone-500 hover:bg-stone-50 transition-colors cursor-pointer">
-                        <p class="font-semibold text-stone-800">Stok Monstera Menipis</p>
-                        <p class="text-[11px] text-stone-400">Tersisa 2 item di gudang.</p>
-                    </div>
-                </div>
-            </div>
-
-            <div class="h-6 w-px bg-stone-200 hidden sm:block"></div>
-
-            <!-- Tombol Dropdown Profil Admin -->
-            <div class="relative">
-                <button type="button" onclick="toggleDropdown('profileMenu')" class="flex items-center gap-3 pl-1 hover:opacity-80 transition-opacity cursor-pointer focus:outline-none">
-                    <div class="relative">
-                        <img id="navAvatar" src="<?= $avatar_src ?>" alt="Nabila" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
-                        <span class="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full ring-2 ring-white"></span>
-                    </div>
-                    <div class="hidden sm:block text-left">
-                        <p class="text-sm font-semibold text-stone-800 leading-tight">Nabila</p>
-                        <p class="text-xs text-stone-500">Administrator</p>
-                    </div>
-                    <i data-lucide="chevron-down" class="w-4 h-4 text-stone-400 hidden sm:block"></i>
-                </button>
-
-                <!-- Menu Dropdown Profil -->
-                <div id="profileMenu" class="hidden absolute right-0 mt-2 w-48 bg-white rounded-2xl border border-stone-200 shadow-lg py-1.5 z-50">
-                    <a href="pengaturan.php" class="flex items-center gap-2.5 px-4 py-2 text-xs font-semibold text-stone-700 hover:bg-stone-100 transition-colors">
-                        <i data-lucide="settings" class="w-4 h-4 text-stone-500"></i>
-                        <span>Pengaturan Akun</span>
-                    </a>
-                    <hr class="my-1 border-stone-100">
-                    <a href="logout.php" onclick="return confirm('Yakin ingin keluar?')" class="flex items-center gap-2.5 px-4 py-2 text-xs font-semibold text-red-600 hover:bg-red-50 transition-colors">
-                        <i data-lucide="log-out" class="w-4 h-4 text-red-500"></i>
-                        <span>Keluar (Logout)</span>
-                    </a>
-                </div>
-            </div>
-
-        </div>
-    </div>
-</header>
+    </header>
 
     <div class="flex flex-1">
-        <!-- SIDEBAR NAVIGASI DINAMIS -->
         <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
             <div class="space-y-6">
-                <!-- Brand Logo Sidebar -->
-                <div class="px-2 pt-2">
-                    <a href="dashboard.php" class="flex items-center gap-3">
-                        <div class="w-10 h-10 rounded-2xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
-                            <i data-lucide="sprout" class="w-6 h-6"></i>
-                        </div>
-                        <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Shop</span></span>
-                    </a>
-                </div>
-
-                <!-- Navigation Menu -->
                 <nav class="space-y-1">
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
-                    
-                    <!-- Dashboard -->
-                    <a href="dashboard.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'dashboard.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="layout-grid" class="w-5 h-5 <?= $current_page == 'dashboard.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Dashboard</span>
-                        </div>
-                        <?php if($current_page == 'dashboard.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                    
-                    <!-- Kasir (POS) -->
-                    <a href="pos.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'pos.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="shopping-bag" class="w-5 h-5 <?= $current_page == 'pos.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Kasir (POS)</span>
-                        </div>
-                        <?php if($current_page == 'pos.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                    
-                    <!-- Pembelian (Restock) -->
-                    <a href="restock.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'restock.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="truck" class="w-5 h-5 <?= $current_page == 'restock.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Pembelian (Restock)</span>
-                        </div>
-                        <?php if($current_page == 'restock.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                    
-                    <!-- Stok & Produk -->
-                    <a href="stok.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'stok.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="box" class="w-5 h-5 <?= $current_page == 'stok.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Stok & Produk</span>
-                        </div>
-                        <?php if($current_page == 'stok.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-
-                    <!-- Konsultasi Chat -->
-                    <a href="chat.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'chat.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="message-square" class="w-5 h-5 <?= $current_page == 'chat.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Konsultasi Chat</span>
-                        </div>
-                        <?php if($current_page == 'chat.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                    
-                    <!-- Pelanggan -->
-                    <a href="pelanggan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'pelanggan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="users" class="w-5 h-5 <?= $current_page == 'pelanggan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Pelanggan</span>
-                        </div>
-                        <?php if($current_page == 'pelanggan.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                    
-                    <!-- Laporan -->
-                    <a href="laporan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'laporan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="bar-chart-2" class="w-5 h-5 <?= $current_page == 'laporan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Laporan</span>
-                        </div>
-                        <?php if($current_page == 'laporan.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                </nav>
-
-                <hr class="border-stone-100 my-4">
-
-                <!-- System Secondary Menu -->
-                <nav class="space-y-1">
+                    <?php
+                    $menu = [
+                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
+                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
+                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
+                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
+                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
+                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
+                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
+                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
+                    ];
+                    foreach ($menu as $m):
+                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
+                    ?>
+                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
+                            <div class="flex items-center gap-3">
+                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                                <span><?= $m['label'] ?></span>
+                            </div>
+                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
+                        </a>
+                    <?php endforeach; ?>
+                    <hr class="border-stone-100 my-3">
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">PENGATURAN</p>
-                    
-                    <!-- Pengaturan Toko -->
-                    <a href="pengaturan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'pengaturan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="settings" class="w-5 h-5 <?= $current_page == 'pengaturan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Pengaturan Toko</span>
-                        </div>
-                        <?php if($current_page == 'pengaturan.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-
-                    <!-- Bantuan -->
-                    <a href="bantuan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'bantuan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="help-circle" class="w-5 h-5 <?= $current_page == 'bantuan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Bantuan</span>
-                        </div>
-                        <?php if($current_page == 'bantuan.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
+                    <?php
+                    $menu2 = [
+                        ['url' => 'pengaturan.php', 'icon' => 'settings',    'label' => 'Pengaturan Toko', 'active' => true],
+                        ['url' => 'bantuan.php',    'icon' => 'help-circle', 'label' => 'Bantuan',         'active' => false],
+                    ];
+                    foreach ($menu2 as $m):
+                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
+                    ?>
+                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
+                            <div class="flex items-center gap-3">
+                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                                <span><?= $m['label'] ?></span>
+                            </div>
+                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
+                        </a>
+                    <?php endforeach; ?>
                 </nav>
             </div>
-
-            <!-- Cabang Info Badge -->
             <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3 mt-auto">
                 <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= htmlspecialchars($data_toko['nama_cabang']) ?></p>
-                    <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online Active</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">PlantHub Admin</p>
+                    <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>
         </aside>
 
-        <!-- MAIN CONTENT AREA -->
         <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-4xl mx-auto w-full space-y-6">
-            
+
             <div>
-                <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Pengaturan Sistem</h1>
-                <p class="text-sm text-stone-500 mt-0.5">Atur profil administrator, identitas cabang toko, dan preferensi struk.</p>
+                <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Pengaturan Toko</h1>
+                <p class="text-sm text-stone-500 mt-0.5">Atur identitas toko, kontak, dan preferensi struk.</p>
             </div>
 
-            <!-- Notifikasi Alert -->
+            <!-- ALERT -->
             <?php if (!empty($pesan_sukses)): ?>
                 <div class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm flex items-center gap-2">
                     <i data-lucide="check-circle" class="w-5 h-5 text-[#2E7D32]"></i>
-                    <span><?= $pesan_sukses ?></span>
+                    <span><?= htmlspecialchars($pesan_sukses) ?></span>
                 </div>
             <?php endif; ?>
-
             <?php if (!empty($pesan_error)): ?>
-                <div class="p-4 bg-red-50 border border-red-200 text-red-800 rounded-xl text-sm flex items-center gap-2">
-                    <i data-lucide="alert-circle" class="w-5 h-5 text-red-600"></i>
-                    <span><?= $pesan_error ?></span>
+                <div class="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-sm flex items-center gap-2">
+                    <i data-lucide="alert-circle" class="w-5 h-5"></i>
+                    <span><?= htmlspecialchars($pesan_error) ?></span>
                 </div>
             <?php endif; ?>
 
             <form method="POST" action="pengaturan.php" enctype="multipart/form-data" class="space-y-6">
-                
-                <!-- BAGIAN 1: FOTO PROFIL ADMIN -->
-                <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4">
+
+                <!-- KARTU 1: LOGO + FOTO PROFIL -->
+                <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-5">
                     <div class="border-b border-stone-100 pb-3">
-                        <h2 class="text-base font-bold text-stone-800">Foto Profil Administrator</h2>
-                        <p class="text-xs text-stone-500">Ubah foto profil yang tampil pada header aplikasi.</p>
+                        <h2 class="text-base font-bold text-stone-800">Logo & Profil Admin</h2>
+                        <p class="text-xs text-stone-500 mt-0.5">Gambar akan tampil di header dan halaman pelanggan.</p>
                     </div>
 
-                    <div class="flex flex-col sm:flex-row items-center gap-6">
-                        <div class="relative group">
-                            <img id="previewAvatar" src="<?= $avatar_src ?>" alt="Preview Profil" class="w-24 h-24 rounded-2xl object-cover ring-4 ring-stone-100 shadow-sm">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- Logo Toko -->
+                        <div>
+                            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Logo Toko</label>
+                            <div class="flex items-center gap-4">
+                                <img id="previewLogo" src="<?= htmlspecialchars($logo_src) ?>" class="w-20 h-20 rounded-2xl object-cover ring-4 ring-stone-100 bg-stone-50">
+                                <div>
+                                    <label class="inline-flex items-center gap-2 bg-stone-100 hover:bg-stone-200 text-stone-700 px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer transition">
+                                        <i data-lucide="upload" class="w-4 h-4"></i>
+                                        <span>Pilih Logo</span>
+                                        <input type="file" name="logo_toko" accept="image/*" class="hidden" onchange="previewImage(event, 'previewLogo')">
+                                    </label>
+                                    <p class="text-[10px] text-stone-400 mt-1.5">JPG/PNG/WEBP, maks 2MB.</p>
+                                </div>
+                            </div>
                         </div>
-                        <div class="space-y-2 text-center sm:text-left">
-                            <label class="inline-flex items-center gap-2 bg-stone-100 hover:bg-stone-200 text-stone-700 px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer transition-colors">
-                                <i data-lucide="upload" class="w-4 h-4"></i>
-                                <span>Pilih Foto Baru</span>
-                                <input type="file" name="foto_profil" accept="image/*" class="hidden" onchange="previewImage(event)">
-                            </label>
-                            <p class="text-[11px] text-stone-400">Format yang didukung: JPG, PNG, atau WEBP. Maksimal 2MB.</p>
+
+                        <!-- Foto Profil -->
+                        <div>
+                            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Foto Profil Admin</label>
+                            <div class="flex items-center gap-4">
+                                <img id="previewProfil" src="<?= htmlspecialchars($avatar_src) ?>" class="w-20 h-20 rounded-2xl object-cover ring-4 ring-stone-100 bg-stone-50">
+                                <div>
+                                    <label class="inline-flex items-center gap-2 bg-stone-100 hover:bg-stone-200 text-stone-700 px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer transition">
+                                        <i data-lucide="upload" class="w-4 h-4"></i>
+                                        <span>Pilih Foto</span>
+                                        <input type="file" name="foto_profil" accept="image/*" class="hidden" onchange="previewImage(event, 'previewProfil')">
+                                    </label>
+                                    <p class="text-[10px] text-stone-400 mt-1.5">Foto yang tampil di header.</p>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- BAGIAN 2: INFORMASI UMUM TOKO -->
+                <!-- KARTU 2: INFO TOKO -->
                 <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4">
                     <div class="border-b border-stone-100 pb-3">
-                        <h2 class="text-base font-bold text-stone-800">Informasi Umum Toko</h2>
-                        <p class="text-xs text-stone-500">Detail identitas dan alamat lokasi cabang utama.</p>
+                        <h2 class="text-base font-bold text-stone-800">Informasi Toko</h2>
+                        <p class="text-xs text-stone-500 mt-0.5">Identitas dan detail kontak toko Anda.</p>
                     </div>
 
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Nama Toko</label>
+                            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Nama Toko <span class="text-rose-500">*</span></label>
                             <input type="text" name="nama_toko" value="<?= htmlspecialchars($data_toko['nama_toko']) ?>" required class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
                         </div>
-
                         <div>
-                            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Nama Cabang / Lokasi</label>
-                            <input type="text" name="nama_cabang" value="<?= htmlspecialchars($data_toko['nama_cabang']) ?>" required class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Nama Cabang</label>
+                            <input type="text" name="nama_cabang" value="<?= htmlspecialchars($data_toko['nama_cabang']) ?>" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
                         </div>
-                    </div>
-
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">No. Telepon / WhatsApp</label>
-                            <input type="text" name="no_telepon" value="<?= htmlspecialchars($data_toko['no_telepon']) ?>" required class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">No. Telepon / WA</label>
+                            <input type="text" name="no_telepon" value="<?= htmlspecialchars($data_toko['no_telepon']) ?>" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
                         </div>
-
                         <div>
                             <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Email Toko</label>
-                            <input type="email" name="email_toko" value="<?= htmlspecialchars($data_toko['email_toko']) ?>" required class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                            <input type="email" name="email_toko" value="<?= htmlspecialchars($data_toko['email_toko']) ?>" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
                         </div>
                     </div>
 
                     <div>
-                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Alamat Lengkap Toko</label>
-                        <textarea name="alamat_toko" rows="3" required class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]"><?= htmlspecialchars($data_toko['alamat_toko']) ?></textarea>
+                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Alamat Lengkap</label>
+                        <textarea name="alamat_toko" rows="3" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] resize-none"><?= htmlspecialchars($data_toko['alamat_toko']) ?></textarea>
                     </div>
                 </div>
 
-                <!-- BAGIAN 3: PENGATURAN STRUK -->
+                <!-- KARTU 3: CATATAN STRUK -->
                 <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4">
                     <div class="border-b border-stone-100 pb-3">
-                        <h2 class="text-base font-bold text-stone-800">Preferensi Struk POS</h2>
-                        <p class="text-xs text-stone-500">Catatan kaki yang akan secara otomatis dicetak di bagian bawah nota.</p>
+                        <h2 class="text-base font-bold text-stone-800">Preferensi Struk</h2>
+                        <p class="text-xs text-stone-500 mt-0.5">Catatan kaki yang muncul di bagian bawah struk pembelian.</p>
                     </div>
 
                     <div>
-                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Catatan Kaki Struk (Footer Struk)</label>
-                        <textarea name="catatan_nota" rows="2" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]"><?= htmlspecialchars($data_toko['catatan_nota']) ?></textarea>
+                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Catatan Kaki Struk</label>
+                        <textarea name="catatan_nota" rows="3" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] resize-none"><?= htmlspecialchars($data_toko['catatan_nota']) ?></textarea>
+                    </div>
+
+                    <div class="text-[11px] text-stone-400">
+                        <p class="font-semibold text-stone-500 mb-1">Terakhir diperbarui:</p>
+                        <p><?= !empty($data_toko['updated_at']) ? date('d M Y, H:i', strtotime($data_toko['updated_at'])) . ' WIB' : '-' ?></p>
                     </div>
                 </div>
 
-                <div class="flex items-center justify-end gap-3 pt-2">
-                    <a href="dashboard.php" class="px-5 py-2.5 rounded-xl text-sm font-semibold text-stone-600 hover:bg-stone-100">Batal</a>
-                    <button type="submit" name="simpan_pengaturan" class="inline-flex items-center gap-2 bg-[#2E7D32] text-white px-6 py-2.5 rounded-xl text-sm font-semibold hover:bg-emerald-800 shadow-sm transition-all cursor-pointer">
-                        <i data-lucide="save" class="w-4 h-4"></i>
-                        <span>Simpan Perubahan</span>
+                <!-- TOMBOL AKSI -->
+                <div class="flex items-center justify-end gap-3">
+                    <a href="dashboard.php" class="px-5 py-2.5 text-sm font-semibold text-stone-600 hover:bg-stone-100 rounded-xl">Batal</a>
+                    <button type="submit" name="simpan_pengaturan" class="inline-flex items-center gap-2 bg-[#2E7D32] text-white px-6 py-2.5 rounded-xl text-sm font-bold hover:bg-emerald-800 shadow-sm transition">
+                        <i data-lucide="save" class="w-4 h-4"></i> Simpan Pengaturan
                     </button>
                 </div>
+
             </form>
 
         </main>
@@ -439,35 +345,24 @@ $avatar_src = (!empty($data_toko['foto_profil']) && file_exists('../uploads/' . 
     <script>
         lucide.createIcons();
 
-        // Toggle untuk Dropdown Notifikasi & Profil
-        function toggleDropdown(id) {
-            const el = document.getElementById(id);
-            if (el) {
-                el.classList.toggle('hidden');
-            }
+        function toggleMobileSidebar() {
+            const s = document.getElementById('sidebar');
+            s?.classList.toggle('hidden');
+            s?.classList.toggle('fixed');
+            s?.classList.toggle('inset-y-0');
+            s?.classList.toggle('left-0');
+            s?.classList.toggle('z-40');
         }
 
-        // Preview Foto Profil Langsung Saat Dipilih
-        function previewImage(event) {
+        function previewImage(event, targetId) {
+            const file = event.target.files[0];
+            if (!file) return;
             const reader = new FileReader();
-            reader.onload = function() {
-                const output = document.getElementById('previewAvatar');
-                output.src = reader.result;
-            }
-            reader.readAsDataURL(event.target.files[0]);
+            reader.onload = (e) => {
+                document.getElementById(targetId).src = e.target.result;
+            };
+            reader.readAsDataURL(file);
         }
-
-        // Mobile Sidebar Toggle
-        const mobileBtn = document.getElementById('mobile-menu-btn');
-        const sidebar = document.getElementById('sidebar');
-        mobileBtn?.addEventListener('click', (e) => {
-            e.stopPropagation();
-            sidebar.classList.toggle('hidden');
-            sidebar.classList.toggle('fixed');
-            sidebar.classList.toggle('inset-y-0');
-            sidebar.classList.toggle('left-0');
-            sidebar.classList.toggle('z-40');
-        });
     </script>
 </body>
 </html>

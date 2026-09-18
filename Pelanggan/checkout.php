@@ -2,267 +2,392 @@
 session_start();
 require_once '../Config/database.php';
 
-// Pastikan keranjang tidak kosong
-if (empty($_SESSION['cart'])) {
-    header('Location: katalog.php');
+// =========================================================
+// PROTEKSI LOGIN
+// =========================================================
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'customer') {
+    header("Location: ../Auth/login.php");
     exit;
 }
 
-// Ambil ID User dari session (fallback ke 1 jika belum set)
-$user_id = $_SESSION['user_id'] ?? $_SESSION['id_user'] ?? 1;
+$user_id   = (int)$_SESSION['user_id'];
+$nama_user = $_SESSION['nama_user'] ?? 'Pelanggan';
 
-// Persiapan data produk yang ada di keranjang
-$cart_items = $_SESSION['cart'] ?? [];
-$products_in_cart = [];
-$total_bayar = 0;
+// =========================================================
+// CEK KERANJANG
+// =========================================================
+if (empty($_SESSION['cart']) || !is_array($_SESSION['cart'])) {
+    header("Location: cart.php");
+    exit;
+}
 
-if (!empty($cart_items)) {
-    // Ambil daftar ID produk dan bersihkan dari karakter non-numerik
-    $raw_ids = array_keys($cart_items);
-    $valid_ids = array_filter($raw_ids, function($val) {
-        return is_numeric($val) && $val > 0;
-    });
+// =========================================================
+// AMBIL DATA PRODUK DARI KERANJANG
+// =========================================================
+$cart_items = $_SESSION['cart'];
+$items      = [];
+$subtotal   = 0;
+$cart_count = 0;
 
-    if (!empty($valid_ids)) {
-        $ids_string = implode(',', array_map('intval', $valid_ids));
+$ids = implode(',', array_map('intval', array_keys($cart_items)));
+if ($ids !== '') {
+    $qItems = mysqli_query($conn, "
+        SELECT p.*, k.nama_kategori 
+        FROM produk p 
+        LEFT JOIN kategori k ON p.kategori_id = k.id 
+        WHERE p.id IN ($ids)
+    ");
+    if ($qItems) {
+        while ($row = mysqli_fetch_assoc($qItems)) {
+            $pid = (int)$row['id'];
+            if (!isset($cart_items[$pid])) continue;
 
-        // Query mengambil data produk berdasarkan kolom `id`
-        $query = "SELECT * FROM produk WHERE id IN ($ids_string)";
-        $result = mysqli_query($conn, $query);
+            $qty   = (int)$cart_items[$pid];
+            $harga = (float)$row['harga_jual'];
+            $sub   = $harga * $qty;
 
-        if ($result && mysqli_num_rows($result) > 0) {
-            while ($row = mysqli_fetch_assoc($result)) {
-                $id = $row['id'];
+            $subtotal   += $sub;
+            $cart_count += $qty;
 
-                if (isset($cart_items[$id])) {
-                    // Deteksi jika session menyimpan array bertingkat atau angka langsung
-                    $qty = is_array($cart_items[$id]) ? ($cart_items[$id]['qty'] ?? 1) : (int)$cart_items[$id];
+            $items[] = [
+                'id'       => $pid,
+                'nama'     => $row['nama_tanaman'],
+                'kategori' => $row['nama_kategori'] ?? 'Tanaman',
+                'harga'    => $harga,
+                'qty'      => $qty,
+                'subtotal' => $sub,
+                'stok'     => (int)$row['stok'],
+                'gambar'   => (!empty($row['gambar']) && $row['gambar'] !== 'default.jpg' && file_exists("../assets/img/" . $row['gambar']))
+                                ? "../assets/img/" . $row['gambar']
+                                : "https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400",
+            ];
+        }
+    }
+}
 
-                    // Fallback nama kolom harga dan nama produk
-                    $harga = $row['harga_jual'] ?? $row['harga'] ?? 0;
-                    $nama_produk = $row['nama_tanaman'] ?? $row['nama'] ?? 'Produk';
+if (empty($items)) {
+    header("Location: cart.php");
+    exit;
+}
 
-                    $subtotal = $harga * $qty;
-                    $total_bayar += $subtotal;
+$ppn   = $subtotal * 0.11;
+$total = $subtotal + $ppn;
 
-                    $products_in_cart[] = [
-                        'id'       => $id,
-                        'name'     => $nama_produk,
-                        'price'    => $harga,
-                        'qty'      => $qty,
-                        'subtotal' => $subtotal
-                    ];
+// =========================================================
+// AMBIL PROFIL USER (untuk autofill form)
+// =========================================================
+$profil = null;
+$qUser = mysqli_query($conn, "SELECT * FROM users WHERE id = $user_id LIMIT 1");
+if ($qUser) $profil = mysqli_fetch_assoc($qUser);
+
+// =========================================================
+// PROSES CHECKOUT
+// =========================================================
+$error = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
+    $nama_penerima = mysqli_real_escape_string($conn, trim($_POST['nama'] ?? ''));
+    $telepon       = mysqli_real_escape_string($conn, trim($_POST['telepon'] ?? ''));
+    $alamat        = mysqli_real_escape_string($conn, trim($_POST['alamat'] ?? ''));
+    $metode        = mysqli_real_escape_string($conn, $_POST['metode_pembayaran'] ?? 'transfer');
+    $catatan       = mysqli_real_escape_string($conn, trim($_POST['catatan'] ?? ''));
+
+    // Validasi
+    if ($nama_penerima === '' || $telepon === '' || $alamat === '') {
+        $error = "Semua field wajib diisi.";
+    } else {
+
+        // Validasi metode pembayaran
+        $metodeValid = ['tunai', 'qris', 'debit', 'transfer', 'ewallet', 'cod'];
+        if (!in_array($metode, $metodeValid)) $metode = 'transfer';
+
+        // ----- VALIDASI STOK ULANG (jaga-jaga) -----
+        $stokError = false;
+        foreach ($items as $it) {
+            if ($it['qty'] > $it['stok']) {
+                $error = "Stok produk \"{$it['nama']}\" tidak mencukupi (sisa {$it['stok']}).";
+                $stokError = true;
+                break;
+            }
+        }
+
+        if (!$stokError) {
+            // ----- GENERATE KODE TRANSAKSI -----
+            $kode = 'INV-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -5));
+
+            // Mulai transaksi DB (biar atomic)
+            mysqli_begin_transaction($conn);
+
+            try {
+                // 1. INSERT transaksi
+                $sqlTx = "
+                    INSERT INTO transaksi 
+                    (kode_transaksi, user_id, supplier_id, jenis_transaksi, nama_penerima, alamat, telepon, total_harga, metode_pembayaran, status, catatan, created_at)
+                    VALUES 
+                    ('$kode', $user_id, NULL, 'penjualan', '$nama_penerima', '$alamat', '$telepon', $total, '$metode', 'Diproses', '$catatan', NOW())
+                ";
+                if (!mysqli_query($conn, $sqlTx)) {
+                    throw new Exception("Gagal simpan transaksi: " . mysqli_error($conn));
                 }
+
+                $transaksi_id = mysqli_insert_id($conn);
+
+                // 2. INSERT transaksi_detail + UPDATE stok
+                foreach ($items as $it) {
+                    $pid       = (int)$it['id'];
+                    $qty       = (int)$it['qty'];
+                    $harga     = (float)$it['harga'];
+                    $sub       = (float)$it['subtotal'];
+
+                    $sqlDet = "
+                        INSERT INTO transaksi_detail 
+                        (transaksi_id, produk_id, jumlah, harga_satuan, subtotal)
+                        VALUES 
+                        ($transaksi_id, $pid, $qty, $harga, $sub)
+                    ";
+                    if (!mysqli_query($conn, $sqlDet)) {
+                        throw new Exception("Gagal simpan detail: " . mysqli_error($conn));
+                    }
+
+                    $sqlStok = "UPDATE produk SET stok = stok - $qty WHERE id = $pid AND stok >= $qty";
+                    if (!mysqli_query($conn, $sqlStok)) {
+                        throw new Exception("Gagal update stok: " . mysqli_error($conn));
+                    }
+                    if (mysqli_affected_rows($conn) === 0) {
+                        throw new Exception("Stok produk ID $pid tidak cukup.");
+                    }
+                }
+
+                // Commit
+                mysqli_commit($conn);
+
+                // Kosongkan keranjang
+                $_SESSION['cart'] = [];
+
+                // Redirect ke riwayat
+                header("Location: riwayat.php?success=1&kode=" . urlencode($kode));
+                exit;
+
+            } catch (Exception $e) {
+                mysqli_rollback($conn);
+                $error = $e->getMessage();
             }
         }
     }
 }
-
-// Proses saat tombol "Selesaikan Pesanan" diklik
-if (isset($_POST['proses_checkout'])) {
-    $nama_penerima = mysqli_real_escape_string($conn, $_POST['nama']);
-    $alamat        = mysqli_real_escape_string($conn, $_POST['alamat']);
-    $telepon       = mysqli_real_escape_string($conn, $_POST['telepon']);
-    $metode_bayar  = mysqli_real_escape_string($conn, $_POST['metode_pembayaran']);
-
-    // Kode transaksi unik otomatis (Contoh: TRX-20260915-8493)
-    $kode_transaksi = 'TRX-' . date('Ymd') . '-' . rand(1000, 9999);
-
-    // 1. Simpan data utama transaksi ke tabel `transaksi`
-    $query_tx = "INSERT INTO transaksi 
-                 (kode_transaksi, tanggal_transaksi, user_id, nama_penerima, alamat, telepon, total_harga, total, metode_pembayaran, jenis_transaksi, status, created_at) 
-                 VALUES 
-                 ('$kode_transaksi', NOW(), '$user_id', '$nama_penerima', '$alamat', '$telepon', '$total_bayar', '$total_bayar', '$metode_bayar', 'Penjualan', 'Diproses', NOW())";
-    
-    if (mysqli_query($conn, $query_tx)) {
-        $transaksi_id = mysqli_insert_id($conn);
-
-        // 2. Simpan setiap detail produk ke tabel `transaksi_detail`
-        foreach ($products_in_cart as $item) {
-            $id_produk = (int)$item['id'];
-            $qty       = (int)$item['qty'];
-            $harga     = (float)$item['price'];
-
-            mysqli_query($conn, "INSERT INTO transaksi_detail (transaksi_id, id_produk, jumlah, harga) 
-                                 VALUES ('$transaksi_id', '$id_produk', '$qty', '$harga')");
-        }
-
-        // 3. Kosongkan keranjang belanja
-        unset($_SESSION['cart']);
-
-        // 4. Arahkan pengguna ke halaman riwayat order
-        header("Location: riwayat.php?success=1");
-        exit;
-    } else {
-        $error = "Gagal memproses transaksi: " . mysqli_error($conn);
-    }
-}
-
-// Hitung total item belanjaan untuk penanda
-$cart_count = 0;
-foreach ($cart_items as $item) {
-    $cart_count += is_array($item) ? ($item['qty'] ?? 1) : (int)$item;
-}
 ?>
-
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PlantHub - Checkout</title>
-    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Lucide Icons CDN -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        planthub: {
-                            bg: '#F4F6F3',
-                            card: '#FFFFFF',
-                            green: '#3B5E2B',
-                            'green-hover': '#2e4a22',
-                            'green-light': '#EBF2E8',
-                            dark: '#1E291E',
-                            muted: '#6B7280',
-                        }
-                    },
-                    fontFamily: {
-                        sans: ['"Plus Jakarta Sans"', 'sans-serif'],
-                    }
-                }
-            }
-        }
-    </script>
-    <style>
-        body { background-color: #F4F6F3; color: #1E291E; font-family: 'Plus Jakarta Sans', sans-serif; }
-    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style> body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; } </style>
 </head>
-<body class="antialiased min-h-screen flex p-4 lg:p-6 gap-6 text-stone-800">
+<body class="antialiased min-h-screen flex flex-col">
 
-    <!-- SIDEBAR -->
-    <aside class="w-64 bg-white rounded-2xl p-5 flex flex-col justify-between h-[calc(100vh-3rem)] sticky top-6 shrink-0 shadow-sm border border-stone-100/80 z-50">
-        <div>
-            <a href="dashboard.php" class="flex items-center gap-2.5 mb-8 px-1">
-                <div class="w-9 h-9 rounded-xl bg-planthub-green flex items-center justify-center text-white shadow-sm shadow-emerald-950/20">
-                    <i data-lucide="sprout" class="w-5 h-5"></i>
-                </div>
-                <div>
-                    <h1 class="text-base font-bold tracking-tight text-planthub-dark leading-none">Plant<span class="text-planthub-green">Hub</span></h1>
-                    <p class="text-[9px] font-extrabold tracking-widest text-stone-400 uppercase mt-0.5">STORE PORTAL</p>
-                </div>
-            </a>
-
-            <nav class="flex flex-col space-y-1 text-xs font-medium text-stone-600">
-                <a href="dashboard.php" class="px-3.5 py-2.5 rounded-xl hover:bg-stone-50 flex items-center gap-2.5 transition">
-                    <i data-lucide="layout-grid" class="w-4 h-4"></i> Beranda
-                </a>
-                <a href="katalog.php" class="px-3.5 py-2.5 rounded-xl hover:bg-stone-50 flex items-center gap-2.5 transition">
-                    <i data-lucide="store" class="w-4 h-4"></i> Katalog Shop
-                </a>
-                <a href="cart.php" class="bg-planthub-green text-white font-bold px-3.5 py-2.5 rounded-xl flex items-center justify-between shadow-sm">
-                    <span class="flex items-center gap-2.5"><i data-lucide="shopping-bag" class="w-4 h-4"></i> Keranjang</span>
-                    <span class="w-1.5 h-1.5 bg-white rounded-full"></span>
-                </a>
-                <a href="riwayat.php" class="px-3.5 py-2.5 rounded-xl hover:bg-stone-50 flex items-center gap-2.5 transition">
-                    <i data-lucide="history" class="w-4 h-4"></i> Riwayat Order
-                </a>
-                <a href="chat.php" class="px-3.5 py-2.5 rounded-xl hover:bg-stone-50 flex items-center gap-2.5 transition">
-                    <i data-lucide="message-square" class="w-4 h-4"></i> Konsultasi
-                </a>
-            </nav>
-        </div>
-
-        <div class="space-y-3 pt-3 border-t border-stone-100">
-            <a href="../Auth/logout.php" onclick="return confirm('Apakah Anda yakin ingin keluar?');" class="flex items-center justify-center gap-1.5 text-xs font-bold text-red-500 hover:text-red-600 py-1 transition">
-                <i data-lucide="log-out" class="w-3.5 h-3.5"></i> Keluar Sesi
-            </a>
-        </div>
-    </aside>
-
-    <!-- MAIN CONTENT -->
-    <main class="flex-1 bg-white rounded-2xl p-6 shadow-sm border border-stone-100/80 flex flex-col h-[calc(100vh-3rem)] overflow-y-auto">
-        <header class="flex items-center justify-between pb-5 border-b border-stone-100 mb-6">
-            <div>
-                <h2 class="text-xl font-bold text-stone-900">Formulir Checkout 📑</h2>
-                <p class="text-xs text-stone-400 mt-0.5">Lengkapi data diri dan alamat pengiriman Anda.</p>
-            </div>
-            <a href="cart.php" class="text-xs font-bold text-planthub-green hover:underline flex items-center gap-1">
-                &larr; Kembali ke Keranjang
-            </a>
-        </header>
-
-        <?php if (isset($error)): ?>
-            <div class="mb-4 p-3 bg-red-50 text-red-600 rounded-xl text-xs border border-red-100">
-                <?= htmlspecialchars($error) ?>
-            </div>
-        <?php endif; ?>
-
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <!-- FORM PENGIRIMAN -->
-            <form method="POST" class="lg:col-span-2 space-y-4">
-                <div>
-                    <label class="block text-xs font-bold text-stone-700 mb-1">Nama Lengkap Penerima</label>
-                    <input type="text" name="nama" required class="w-full border border-stone-200 p-3 rounded-xl text-xs focus:outline-none focus:border-planthub-green">
-                </div>
-                <div>
-                    <label class="block text-xs font-bold text-stone-700 mb-1">Nomor Telepon / WhatsApp</label>
-                    <input type="text" name="telepon" required class="w-full border border-stone-200 p-3 rounded-xl text-xs focus:outline-none focus:border-planthub-green">
-                </div>
-                <div>
-                    <label class="block text-xs font-bold text-stone-700 mb-1">Alamat Pengiriman Lengkap</label>
-                    <textarea name="alamat" required rows="3" class="w-full border border-stone-200 p-3 rounded-xl text-xs focus:outline-none focus:border-planthub-green"></textarea>
-                </div>
-                <div>
-                    <label class="block text-xs font-bold text-stone-700 mb-1">Metode Pembayaran</label>
-                    <select name="metode_pembayaran" class="w-full border border-stone-200 p-3 rounded-xl text-xs focus:outline-none focus:border-planthub-green">
-                        <option value="Transfer Bank">Transfer Bank (BCA / Mandiri)</option>
-                        <option value="E-Wallet">E-Wallet (GoPay / ShopeePay / Dana)</option>
-                        <option value="COD">Bayar di Tempat (COD)</option>
-                    </select>
-                </div>
-
-                <button type="submit" name="proses_checkout" class="w-full bg-planthub-green hover:bg-planthub-green-hover text-white font-bold py-3.5 rounded-xl text-xs uppercase tracking-wider transition shadow-sm mt-4">
-                    Selesaikan Pesanan
+    <!-- HEADER -->
+    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
+        <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <button onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
+                    <i data-lucide="menu" class="w-5 h-5"></i>
                 </button>
+                <a href="dashboard.php" class="flex items-center gap-2.5">
+                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white">
+                        <i data-lucide="sprout" class="w-5 h-5"></i>
+                    </div>
+                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
+                </a>
+            </div>
+
+            <div class="hidden md:flex flex-1 max-w-md">
+                <span class="text-xs text-stone-500 self-center">Checkout — Selesaikan pesanan Anda</span>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <div class="h-6 w-px bg-stone-200 hidden sm:block"></div>
+                <a href="dashboard.php" class="flex items-center gap-3 pl-1">
+                    <img src="https://ui-avatars.com/api/?name=<?= urlencode($nama_user) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
+                    <div class="hidden sm:block text-left">
+                        <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($nama_user) ?></p>
+                        <p class="text-xs text-stone-500">Pelanggan</p>
+                    </div>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <div class="flex flex-1">
+        <!-- SIDEBAR -->
+        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
+            <div class="space-y-6">
+                <nav class="space-y-1">
+                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MENU PELANGGAN</p>
+                    <?php
+                    $menu = [
+                        ['url' => 'dashboard.php', 'icon' => 'layout-grid',    'label' => 'Beranda',        'active' => false],
+                        ['url' => 'katalog.php',   'icon' => 'store',          'label' => 'Katalog Shop',   'active' => false],
+                        ['url' => 'cart.php',      'icon' => 'shopping-bag',   'label' => 'Keranjang',      'active' => true],
+                        ['url' => 'riwayat.php',   'icon' => 'history',        'label' => 'Riwayat Order',  'active' => false],
+                        ['url' => 'chat.php',      'icon' => 'message-square', 'label' => 'Konsultasi',     'active' => false],
+                    ];
+                    foreach ($menu as $m):
+                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
+                    ?>
+                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
+                            <div class="flex items-center gap-3">
+                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                                <span><?= $m['label'] ?></span>
+                            </div>
+                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
+                        </a>
+                    <?php endforeach; ?>
+                </nav>
+            </div>
+            <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
+                    <i data-lucide="shopping-cart" class="w-5 h-5"></i>
+                </div>
+                <div class="overflow-hidden">
+                    <p class="text-sm font-bold text-stone-800 leading-tight">Troli Belanja</p>
+                    <p class="text-[11px] text-stone-400 mt-0.5"><?= $cart_count ?> item</p>
+                </div>
+            </div>
+        </aside>
+
+        <!-- MAIN -->
+        <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
+
+            <div>
+                <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Checkout Pesanan</h1>
+                <p class="text-sm text-stone-500 mt-0.5">Lengkapi data pengiriman dan pilih metode pembayaran.</p>
+            </div>
+
+            <?php if ($error): ?>
+                <div class="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-sm flex items-center gap-2">
+                    <i data-lucide="alert-circle" class="w-5 h-5 text-rose-500"></i>
+                    <span><?= htmlspecialchars($error) ?></span>
+                </div>
+            <?php endif; ?>
+
+            <form method="POST" action="checkout.php" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+                <!-- FORM PENGIRIMAN -->
+                <div class="lg:col-span-2 bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-5">
+                    <div class="border-b border-stone-100 pb-3">
+                        <h2 class="text-sm font-bold text-stone-800 uppercase tracking-wider">Data Pengiriman</h2>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Nama Penerima</label>
+                        <input type="text" name="nama" required
+                               value="<?= htmlspecialchars($profil['nama_lengkap'] ?? $nama_user) ?>"
+                               class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">No. Telepon / WhatsApp</label>
+                        <input type="text" name="telepon" required
+                               value="<?= htmlspecialchars($profil['no_hp'] ?? '') ?>"
+                               placeholder="081234567890"
+                               class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Alamat Pengiriman Lengkap</label>
+                        <textarea name="alamat" required rows="3"
+                                  placeholder="Jl. ... No. ..., Kelurahan, Kecamatan, Kota, Kode Pos"
+                                  class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]"><?= htmlspecialchars($profil['alamat'] ?? '') ?></textarea>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Metode Pembayaran</label>
+                        <select name="metode_pembayaran" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                            <option value="transfer">Transfer Bank</option>
+                            <option value="ewallet">E-Wallet (GoPay / OVO / Dana)</option>
+                            <option value="qris">QRIS</option>
+                            <option value="cod">Bayar di Tempat (COD)</option>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Catatan (Opsional)</label>
+                        <textarea name="catatan" rows="2"
+                                  placeholder="Contoh: Titip ke resepsionis, jangan dibanting, dll."
+                                  class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]"></textarea>
+                    </div>
+
+                    <div class="pt-2 flex items-center justify-between border-t border-stone-100">
+                        <a href="cart.php" class="text-xs font-semibold text-stone-500 hover:text-stone-800 inline-flex items-center gap-1">
+                            <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> Kembali ke Keranjang
+                        </a>
+                    </div>
+                </div>
+
+                <!-- RINGKASAN PESANAN -->
+                <div class="lg:col-span-1">
+                    <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4 sticky top-24">
+                        <h2 class="text-sm font-bold text-stone-800 uppercase tracking-wider border-b border-stone-100 pb-3">Ringkasan Pesanan</h2>
+
+                        <div class="space-y-3 max-h-72 overflow-y-auto">
+                            <?php foreach ($items as $it): ?>
+                                <div class="flex gap-3 items-start">
+                                    <img src="<?= htmlspecialchars($it['gambar']) ?>" class="w-12 h-12 rounded-lg object-cover bg-stone-100 shrink-0">
+                                    <div class="flex-1 min-w-0">
+                                        <p class="text-xs font-bold text-stone-800 truncate"><?= htmlspecialchars($it['nama']) ?></p>
+                                        <p class="text-[11px] text-stone-500"><?= $it['qty'] ?> x Rp <?= number_format($it['harga'], 0, ',', '.') ?></p>
+                                    </div>
+                                    <p class="text-xs font-bold text-stone-800 shrink-0">Rp <?= number_format($it['subtotal'], 0, ',', '.') ?></p>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+
+                        <div class="border-t border-stone-100 pt-3 space-y-2 text-sm">
+                            <div class="flex justify-between text-stone-600">
+                                <span>Subtotal (<?= $cart_count ?> item)</span>
+                                <span class="font-semibold">Rp <?= number_format($subtotal, 0, ',', '.') ?></span>
+                            </div>
+                            <div class="flex justify-between text-stone-600">
+                                <span>PPN 11%</span>
+                                <span class="font-semibold">Rp <?= number_format($ppn, 0, ',', '.') ?></span>
+                            </div>
+                            <div class="pt-2 border-t border-stone-200 flex justify-between items-baseline">
+                                <span class="text-sm font-bold text-stone-800">Total Bayar</span>
+                                <span class="text-xl font-bold text-[#2E7D32]">Rp <?= number_format($total, 0, ',', '.') ?></span>
+                            </div>
+                        </div>
+
+                        <button type="submit" name="proses_checkout"
+                                class="w-full bg-[#2E7D32] hover:bg-emerald-800 text-white font-bold py-3 rounded-xl text-sm transition inline-flex items-center justify-center gap-2 shadow-sm">
+                            <i data-lucide="check-circle" class="w-4 h-4"></i>
+                            <span>Selesaikan Pesanan</span>
+                        </button>
+
+                        <p class="text-[10px] text-stone-400 text-center leading-relaxed">
+                            Dengan menyelesaikan pesanan, Anda menyetujui syarat & ketentuan PlantHub.
+                        </p>
+                    </div>
+                </div>
+
             </form>
 
-            <!-- RINGKASAN PESANAN -->
-            <div class="bg-stone-50/60 p-5 rounded-2xl border border-stone-100 space-y-4 h-fit">
-                <h3 class="text-xs font-bold uppercase text-stone-400 pb-2 border-b border-stone-200">Ringkasan Pesanan</h3>
-                <div class="divide-y divide-stone-200/60 max-h-60 overflow-y-auto">
-                    <?php if (!empty($products_in_cart)): ?>
-                        <?php foreach ($products_in_cart as $item): ?>
-                            <div class="py-2 flex justify-between items-center text-xs">
-                                <div>
-                                    <p class="font-bold text-stone-800"><?= htmlspecialchars($item['name']) ?></p>
-                                    <p class="text-stone-400 text-[10px]"><?= $item['qty'] ?> x Rp <?= number_format($item['price'], 0, ',', '.') ?></p>
-                                </div>
-                                <span class="font-bold text-stone-700">Rp <?= number_format($item['subtotal'], 0, ',', '.') ?></span>
-                            </div>
-                        <?php endforeach; ?>
-                    <?php else: ?>
-                        <p class="py-3 text-xs text-stone-400 italic">Tidak ada item di keranjang.</p>
-                    <?php endif; ?>
-                </div>
-
-                <div class="pt-3 border-t border-stone-200/60 flex justify-between items-center text-xs">
-                    <span class="font-bold text-stone-800">Total Pembayaran</span>
-                    <span class="text-base font-extrabold text-planthub-green">Rp <?= number_format($total_bayar, 0, ',', '.') ?></span>
-                </div>
-            </div>
-        </div>
-    </main>
+        </main>
+    </div>
 
     <script>
         lucide.createIcons();
+        function toggleMobileSidebar() {
+            const s = document.getElementById('sidebar');
+            s?.classList.toggle('hidden');
+            s?.classList.toggle('fixed');
+            s?.classList.toggle('inset-y-0');
+            s?.classList.toggle('left-0');
+            s?.classList.toggle('z-40');
+        }
     </script>
 </body>
 </html>

@@ -2,30 +2,46 @@
 session_start();
 require_once '../Config/database.php';
 
-// Data Pengguna
-$user_id = $_SESSION['user_id'] ?? null;
-$nama_user = $_SESSION['nama_user'] ?? 'Pelanggan';
+// PROTEKSI LOGIN PELANGGAN
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'customer') {
+    header("Location: ../Auth/login.php");
+    exit;
+}
 
-// Hitung Item Keranjang
+$user_id    = (int)$_SESSION['user_id'];
+$nama_user  = $_SESSION['nama_user'] ?? 'Pelanggan';
 $cart_count = isset($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
 
-// Query Statistik Pelanggan dari Database
-$total_orders = 0;
+// Statistik pesanan
+$total_orders   = 0;
 $pending_orders = 0;
+$total_belanja  = 0;
 
-if ($user_id && isset($conn)) {
-    // Total Transaksi
-    $q_total = mysqli_query($conn, "SELECT COUNT(*) as total FROM pesanan WHERE user_id = '$user_id'");
-    if ($q_total) {
-        $total_orders = (int)(mysqli_fetch_assoc($q_total)['total'] ?? 0);
-    }
-
-    // Pesanan Aktif / Diproses
-    $q_pending = mysqli_query($conn, "SELECT COUNT(*) as pending FROM pesanan WHERE user_id = '$user_id' AND status IN ('pending', 'diproses', 'dikirim')");
-    if ($q_pending) {
-        $pending_orders = (int)(mysqli_fetch_assoc($q_pending)['pending'] ?? 0);
-    }
+$qStats = mysqli_query($conn, "
+    SELECT 
+        COUNT(*) AS total,
+        COALESCE(SUM(CASE WHEN status IN ('Diproses','Dikirim') THEN 1 ELSE 0 END), 0) AS pending,
+        COALESCE(SUM(CASE WHEN status = 'Selesai' THEN total_harga ELSE 0 END), 0) AS total_belanja
+    FROM transaksi
+    WHERE user_id = $user_id AND jenis_transaksi = 'penjualan'
+");
+if ($qStats) {
+    $s = mysqli_fetch_assoc($qStats);
+    $total_orders   = (int)$s['total'];
+    $pending_orders = (int)$s['pending'];
+    $total_belanja  = (float)$s['total_belanja'];
 }
+
+// Produk terbaru
+$produk_terbaru = [];
+$qProduk = mysqli_query($conn, "
+    SELECT p.*, k.nama_kategori 
+    FROM produk p 
+    LEFT JOIN kategori k ON p.kategori_id = k.id 
+    WHERE p.stok > 0 
+    ORDER BY p.id DESC LIMIT 4
+");
+if ($qProduk) while ($r = mysqli_fetch_assoc($qProduk)) $produk_terbaru[] = $r;
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -33,384 +49,222 @@ if ($user_id && isset($conn)) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PlantHub - Dashboard</title>
-    <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Lucide Icons CDN -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Google Fonts: Plus Jakarta Sans -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        planthub: {
-                            bg: '#F4F6F3',
-                            card: '#FFFFFF',
-                            green: '#3B5E2B',
-                            'green-hover': '#2e4a22',
-                            'green-light': '#EBF2E8',
-                            dark: '#1E291E',
-                            muted: '#6B7280',
-                        }
-                    },
-                    fontFamily: {
-                        sans: ['"Plus Jakarta Sans"', 'sans-serif'],
-                    }
-                }
-            }
-        }
-    </script>
-    <style>
-        body {
-            background-color: #F4F6F3;
-            color: #1E291E;
-            font-family: 'Plus Jakarta Sans', sans-serif;
-        }
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 6px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: rgba(0, 0, 0, 0.02);
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: rgba(0, 0, 0, 0.1);
-            border-radius: 9999px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-            background: rgba(0, 0, 0, 0.2);
-        }
-    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style> body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; } </style>
 </head>
-<body class="antialiased min-h-screen flex p-4 lg:p-6 gap-6 text-stone-800">
+<body class="antialiased min-h-screen flex flex-col">
 
-    <!-- FLOATING SIDEBAR (Presisi & Sejajar) -->
-    <aside class="w-64 bg-white rounded-2xl p-5 flex flex-col justify-between h-[calc(100vh-3rem)] sticky top-6 shrink-0 shadow-sm border border-stone-100/80 z-50">
-        <div>
-            <!-- LOGO PLANTHUB -->
-            <a href="dashboard.php" class="flex items-center gap-2.5 mb-8 px-1">
-                <div class="w-9 h-9 rounded-xl bg-planthub-green flex items-center justify-center text-white shadow-sm shadow-emerald-950/20">
-                    <i data-lucide="sprout" class="w-5 h-5"></i>
-                </div>
-                <div>
-                    <h1 class="text-base font-bold tracking-tight text-planthub-dark leading-none">Plant<span class="text-planthub-green">Hub</span></h1>
-                    <p class="text-[9px] font-extrabold tracking-widest text-stone-400 uppercase mt-0.5">STORE PORTAL</p>
-                </div>
-            </a>
-
-            <!-- NAVIGASI SIDEBAR -->
-            <nav class="flex flex-col space-y-1 text-xs font-medium text-stone-600">
-                <a href="dashboard.php" class="bg-planthub-green text-white font-bold px-3.5 py-2.5 rounded-xl flex items-center justify-between shadow-sm">
-                    <span class="flex items-center gap-2.5"><i data-lucide="layout-grid" class="w-4 h-4"></i> Beranda</span>
-                    <span class="w-1.5 h-1.5 bg-white rounded-full"></span>
-                </a>
-                <a href="katalog.php" class="px-3.5 py-2.5 rounded-xl hover:bg-stone-50 flex items-center gap-2.5 transition">
-                    <i data-lucide="store" class="w-4 h-4"></i> Katalog Shop
-                </a>
-                <a href="cart.php" class="px-3.5 py-2.5 rounded-xl hover:bg-stone-50 flex items-center justify-between transition">
-                    <span class="flex items-center gap-2.5"><i data-lucide="shopping-bag" class="w-4 h-4"></i> Keranjang</span>
-                    <span class="text-stone-400 text-[11px] font-semibold">(<?= $cart_count ?>)</span>
-                </a>
-                <a href="riwayat.php" class="px-3.5 py-2.5 rounded-xl hover:bg-stone-50 flex items-center gap-2.5 transition">
-                    <i data-lucide="history" class="w-4 h-4"></i> Riwayat Order
-                </a>
-                <a href="chat.php" class="px-3.5 py-2.5 rounded-xl hover:bg-stone-50 flex items-center gap-2.5 transition">
-                    <i data-lucide="message-square" class="w-4 h-4"></i> Konsultasi
-                </a>
-            </nav>
-        </div>
-
-        <!-- BOTTOM WIDGET & LOGOUT -->
-        <div class="space-y-3 pt-3 border-t border-stone-100">
-            <!-- TROLI BELANJA WIDGET -->
-            <div class="bg-stone-50 p-3 rounded-xl flex items-center justify-between border border-stone-100">
-                <div class="flex items-center gap-2">
-                    <i data-lucide="shopping-cart" class="w-3.5 h-3.5 text-stone-500"></i>
-                    <span class="text-xs font-semibold text-stone-700">Troli Belanja</span>
-                </div>
-                <span class="w-5 h-5 rounded-full bg-planthub-green text-white text-[10px] font-bold flex items-center justify-center">
-                    <?= $cart_count ?>
-                </span>
-            </div>
-
-            <!-- LOGOUT BUTTON -->
-            <a href="../Auth/logout.php" onclick="return confirm('Apakah Anda yakin ingin keluar?');" class="flex items-center justify-center gap-1.5 text-xs font-bold text-red-500 hover:text-red-600 py-1 transition">
-                <i data-lucide="log-out" class="w-3.5 h-3.5"></i> Keluar Sesi
-            </a>
-        </div>
-    </aside>
-
-    <!-- KONTEN UTAMA DASHBOARD -->
-    <main class="flex-1 bg-white rounded-2xl p-6 shadow-sm border border-stone-100/80 flex flex-col h-[calc(100vh-3rem)] overflow-y-auto custom-scrollbar">
-
-        <!-- HEADER TOP BAR -->
-        <header class="flex items-center justify-between pb-5 border-b border-stone-100 mb-6">
-            <div>
-                <h2 class="text-xl font-bold text-stone-900 flex items-center gap-2">
-                    <span>Halo,</span> 
-                    <span class="text-planthub-green"><?= htmlspecialchars($nama_user) ?></span> 👋
-                </h2>
-                <p class="text-xs text-stone-400 mt-0.5">Hadirkan suasana segar dan asri di setiap sudut ruanganmu.</p>
-            </div>
-
-            <a href="cart.php" class="w-9 h-9 rounded-xl border border-stone-200/80 flex items-center justify-center text-stone-600 hover:bg-stone-50 transition shadow-sm relative">
-                <i data-lucide="shopping-bag" class="w-4 h-4"></i>
-                <?php if ($cart_count > 0): ?>
-                    <span class="absolute -top-1 -right-1 w-3.5 h-3.5 bg-planthub-green text-white text-[8px] font-bold rounded-full flex items-center justify-center">
-                        <?= $cart_count ?>
-                    </span>
-                <?php endif; ?>
-            </a>
-        </header>
-
-        <!-- DASHBOARD BODY CONTENT -->
-        <div class="space-y-6 flex-1">
-
-            <!-- HERO BANNER GREEN CLEAN -->
-            <section class="bg-planthub-green rounded-2xl p-6 lg:p-8 relative overflow-hidden text-white flex flex-col md:flex-row items-center justify-between shadow-sm">
-                <div class="max-w-md space-y-3 z-10">
-                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-bold bg-white/10 text-white backdrop-blur-sm border border-white/20">
-                        <i data-lucide="sparkles" class="w-3 h-3 text-yellow-300"></i>
-                        Pilihan Koleksi Terbaik
-                    </span>
-                    
-                    <h1 class="text-2xl lg:text-3xl font-extrabold leading-tight tracking-tight">
-                        Verdantness & Green Vibe
-                    </h1>
-                    
-                    <p class="text-white/80 text-xs leading-relaxed font-light">
-                        Temukan keindahan tanaman hias pilihan untuk menciptakan atmosfer alami yang menenangkan.
-                    </p>
-
-                    <div class="pt-2 flex items-center gap-3">
-                        <a href="katalog.php" class="bg-white text-planthub-green hover:bg-stone-100 font-bold px-5 py-2.5 rounded-xl text-xs transition shadow-sm flex items-center gap-2">
-                            <i data-lucide="shopping-bag" class="w-3.5 h-3.5"></i>
-                            <span>Belanja Sekarang</span>
-                        </a>
-                    </div>
-                </div>
-
-                <!-- HERO IMAGE & BADGES -->
-                <div class="mt-6 md:mt-0 relative z-10 flex items-center justify-center">
-                    <img src="https://images.unsplash.com/photo-1485955900006-10f4d324d411?q=80&w=600&auto=format&fit=crop" 
-                         alt="Hero Plant" 
-                         class="w-48 h-48 lg:w-56 lg:h-56 object-cover rounded-2xl border-4 border-white/20 shadow-lg rotate-2 hover:rotate-0 transition duration-500">
-
-                    <div class="absolute -bottom-3 -left-4 bg-white/95 text-stone-800 p-2.5 rounded-xl shadow-md backdrop-blur-md flex items-center gap-2.5 border border-stone-100 hidden sm:flex">
-                        <div class="w-8 h-8 rounded-lg bg-planthub-green-light text-planthub-green flex items-center justify-center">
-                            <i data-lucide="shield-check" class="w-4 h-4"></i>
-                        </div>
-                        <div>
-                            <p class="text-[9px] font-bold text-stone-400 uppercase">Garansi Segar</p>
-                            <p class="text-xs font-extrabold">100% Quality Plant</p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Background Decor -->
-                <div class="absolute -right-16 -bottom-16 w-64 h-64 bg-white/5 rounded-full blur-2xl pointer-events-none"></div>
-            </section>
-
-            <!-- STATS CARDS WHITE CLEAN -->
-            <section class="grid grid-cols-1 md:grid-cols-3 gap-5">
-                
-                <!-- Stat Card 1 -->
-                <div class="bg-stone-50/50 p-4 rounded-2xl border border-stone-100 flex items-center justify-between group hover:shadow-sm transition">
-                    <div class="space-y-1">
-                        <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Troli Belanja</p>
-                        <h3 class="text-xl font-extrabold text-stone-800"><?= $cart_count ?> <span class="text-xs font-medium text-stone-400">Item</span></h3>
-                        <a href="cart.php" class="text-xs font-bold text-planthub-green hover:underline inline-flex items-center gap-1 pt-1">
-                            <span>Lihat Keranjang</span>
-                            <i data-lucide="arrow-right" class="w-3 h-3"></i>
-                        </a>
-                    </div>
-                    <div class="w-10 h-10 rounded-xl bg-white text-planthub-green flex items-center justify-center shadow-sm group-hover:bg-planthub-green group-hover:text-white transition border border-stone-100">
-                        <i data-lucide="shopping-bag" class="w-5 h-5"></i>
-                    </div>
-                </div>
-
-                <!-- Stat Card 2 -->
-                <div class="bg-stone-50/50 p-4 rounded-2xl border border-stone-100 flex items-center justify-between group hover:shadow-sm transition">
-                    <div class="space-y-1">
-                        <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Pesanan Diproses</p>
-                        <h3 class="text-xl font-extrabold text-stone-800"><?= $pending_orders ?> <span class="text-xs font-medium text-stone-400">Pesanan</span></h3>
-                        <a href="riwayat.php" class="text-xs font-bold text-planthub-green hover:underline inline-flex items-center gap-1 pt-1">
-                            <span>Lacak Status</span>
-                            <i data-lucide="arrow-right" class="w-3 h-3"></i>
-                        </a>
-                    </div>
-                    <div class="w-10 h-10 rounded-xl bg-white text-amber-600 flex items-center justify-center shadow-sm group-hover:bg-amber-600 group-hover:text-white transition border border-stone-100">
-                        <i data-lucide="truck" class="w-5 h-5"></i>
-                    </div>
-                </div>
-
-                <!-- Stat Card 3 -->
-                <div class="bg-stone-50/50 p-4 rounded-2xl border border-stone-100 flex items-center justify-between group hover:shadow-sm transition">
-                    <div class="space-y-1">
-                        <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Total Transaksi</p>
-                        <h3 class="text-xl font-extrabold text-stone-800"><?= $total_orders ?> <span class="text-xs font-medium text-stone-400">Selesai</span></h3>
-                        <a href="riwayat.php" class="text-xs font-bold text-planthub-green hover:underline inline-flex items-center gap-1 pt-1">
-                            <span>Riwayat Order</span>
-                            <i data-lucide="arrow-right" class="w-3 h-3"></i>
-                        </a>
-                    </div>
-                    <div class="w-10 h-10 rounded-xl bg-white text-blue-600 flex items-center justify-center shadow-sm group-hover:bg-blue-600 group-hover:text-white transition border border-stone-100">
-                        <i data-lucide="receipt" class="w-5 h-5"></i>
-                    </div>
-                </div>
-
-            </section>
-
-            <!-- FEATURED PRODUCTS GRID -->
-            <section class="space-y-4">
-                <div class="flex items-center justify-between">
-                    <h3 class="text-sm font-extrabold text-stone-800 tracking-tight flex items-center gap-2">
-                        <i data-lucide="leaf" class="w-4 h-4 text-planthub-green"></i>
-                        <span>Produk Populer</span>
-                    </h3>
-                    <a href="katalog.php" class="text-xs font-bold text-planthub-green hover:underline flex items-center gap-1">
-                        <span>Lihat Semua</span>
-                        <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
-                    </a>
-                </div>
-
-                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-                    
-                    <!-- Card 1 -->
-                    <div class="bg-white rounded-2xl p-3.5 border border-stone-100 shadow-sm hover:shadow-md transition flex flex-col justify-between group relative">
-                        <div>
-                            <div class="bg-stone-50 rounded-xl p-2 flex justify-center items-center h-40 relative overflow-hidden mb-3">
-                                <img src="https://images.unsplash.com/photo-1614594975525-e45190c55d0b?q=80&w=500&auto=format&fit=crop" 
-                                     alt="Monstera Deliciosa" 
-                                     class="h-32 object-cover rounded-lg group-hover:scale-105 transition duration-300">
-                                <span class="absolute top-2.5 left-2.5 bg-white/90 backdrop-blur-md px-2 py-0.5 rounded-md text-[9px] font-bold text-planthub-green shadow-sm flex items-center gap-1">
-                                    <i data-lucide="star" class="w-3 h-3 fill-amber-400 text-amber-400"></i> 4.9
-                                </span>
-                            </div>
-                            <div class="px-1">
-                                <p class="text-[9px] font-bold text-stone-400 uppercase tracking-wider">Indoor Plant</p>
-                                <h4 class="font-bold text-stone-800 text-xs">Monstera Deliciosa</h4>
-                                <div class="flex items-center justify-between pt-2">
-                                    <span class="text-sm font-extrabold text-planthub-green">Rp 120.000</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="mt-3 pt-2 border-t border-stone-100">
-                            <a href="katalog.php" class="w-full bg-planthub-green hover:bg-planthub-green-hover text-white font-bold py-2 rounded-xl text-[11px] transition flex items-center justify-center gap-1">
-                                <i data-lucide="shopping-bag" class="w-3.5 h-3.5"></i>
-                                <span>Lihat di Katalog</span>
-                            </a>
-                        </div>
-                    </div>
-
-                    <!-- Card 2 -->
-                    <div class="bg-white rounded-2xl p-3.5 border border-stone-100 shadow-sm hover:shadow-md transition flex flex-col justify-between group relative">
-                        <div>
-                            <div class="bg-stone-50 rounded-xl p-2 flex justify-center items-center h-40 relative overflow-hidden mb-3">
-                                <img src="https://images.unsplash.com/photo-1592150621744-aca64f48394a?q=80&w=500&auto=format&fit=crop" 
-                                     alt="Calathea Orbifolia" 
-                                     class="h-32 object-cover rounded-lg group-hover:scale-105 transition duration-300">
-                                <span class="absolute top-2.5 left-2.5 bg-white/90 backdrop-blur-md px-2 py-0.5 rounded-md text-[9px] font-bold text-planthub-green shadow-sm flex items-center gap-1">
-                                    <i data-lucide="star" class="w-3 h-3 fill-amber-400 text-amber-400"></i> 4.8
-                                </span>
-                            </div>
-                            <div class="px-1">
-                                <p class="text-[9px] font-bold text-stone-400 uppercase tracking-wider">Indoor Plant</p>
-                                <h4 class="font-bold text-stone-800 text-xs">Calathea Orbifolia</h4>
-                                <div class="flex items-center justify-between pt-2">
-                                    <span class="text-sm font-extrabold text-planthub-green">Rp 85.000</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="mt-3 pt-2 border-t border-stone-100">
-                            <a href="katalog.php" class="w-full bg-planthub-green hover:bg-planthub-green-hover text-white font-bold py-2 rounded-xl text-[11px] transition flex items-center justify-center gap-1">
-                                <i data-lucide="shopping-bag" class="w-3.5 h-3.5"></i>
-                                <span>Lihat di Katalog</span>
-                            </a>
-                        </div>
-                    </div>
-
-                    <!-- Card 3 -->
-                    <div class="bg-white rounded-2xl p-3.5 border border-stone-100 shadow-sm hover:shadow-md transition flex flex-col justify-between group relative">
-                        <div>
-                            <div class="bg-stone-50 rounded-xl p-2 flex justify-center items-center h-40 relative overflow-hidden mb-3">
-                                <img src="https://images.unsplash.com/photo-1509423350716-97f9360b4e09?q=80&w=500&auto=format&fit=crop" 
-                                     alt="Aglaonema Suksom" 
-                                     class="h-32 object-cover rounded-lg group-hover:scale-105 transition duration-300">
-                                <span class="absolute top-2.5 left-2.5 bg-white/90 backdrop-blur-md px-2 py-0.5 rounded-md text-[9px] font-bold text-planthub-green shadow-sm flex items-center gap-1">
-                                    <i data-lucide="star" class="w-3 h-3 fill-amber-400 text-amber-400"></i> 5.0
-                                </span>
-                            </div>
-                            <div class="px-1">
-                                <p class="text-[9px] font-bold text-stone-400 uppercase tracking-wider">Outdoor Plant</p>
-                                <h4 class="font-bold text-stone-800 text-xs">Aglaonema Suksom</h4>
-                                <div class="flex items-center justify-between pt-2">
-                                    <span class="text-sm font-extrabold text-planthub-green">Rp 150.000</span>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="mt-3 pt-2 border-t border-stone-100">
-                            <a href="katalog.php" class="w-full bg-planthub-green hover:bg-planthub-green-hover text-white font-bold py-2 rounded-xl text-[11px] transition flex items-center justify-center gap-1">
-                                <i data-lucide="shopping-bag" class="w-3.5 h-3.5"></i>
-                                <span>Lihat di Katalog</span>
-                            </a>
-                        </div>
-                    </div>
-
-                    <!-- Card 4 (Consultation Card) -->
-                    <a href="chat.php" class="bg-planthub-green-light p-4 rounded-2xl border border-emerald-200/60 flex flex-col justify-between group hover:bg-planthub-green hover:text-white transition duration-300">
-                        <div class="w-10 h-10 rounded-xl bg-planthub-green text-white flex items-center justify-center group-hover:bg-white group-hover:text-planthub-green transition shadow-sm">
-                            <i data-lucide="message-square" class="w-5 h-5"></i>
-                        </div>
-                        <div class="space-y-1.5 mt-4">
-                            <h4 class="font-bold text-xs">Butuh Rekomendasi?</h4>
-                            <p class="text-[11px] font-normal text-stone-600 group-hover:text-white/90 leading-relaxed">Konsultasi dengan tim botanis kami untuk memilih tanaman yang cocok.</p>
-                            <span class="inline-flex items-center gap-1 text-[11px] font-bold text-planthub-green group-hover:text-white pt-2">
-                                <span>Konsultasi Gratis</span>
-                                <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
-                            </span>
-                        </div>
-                    </a>
-
-                </div>
-            </section>
-
-            <!-- PROMO BANNER -->
-            <section class="bg-planthub-green text-white rounded-2xl p-6 flex flex-col md:flex-row items-center justify-between gap-4 shadow-sm relative overflow-hidden">
-                <div class="space-y-1.5 max-w-xl z-10">
-                    <span class="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-widest text-emerald-200">
-                        <i data-lucide="percent" class="w-3 h-3"></i>
-                        Promo Mingguan
-                    </span>
-                    <h3 class="text-lg font-extrabold">Dapatkan Penawaran Khusus Untuk Pesananmu</h3>
-                    <p class="text-white/80 text-xs leading-relaxed font-light">
-                        Pengiriman aman bergaransi dengan kemasan ekstra protektif untuk setiap pembelian minggu ini.
-                    </p>
-                </div>
-                <a href="katalog.php" class="bg-white text-planthub-green hover:bg-stone-100 font-bold px-5 py-2.5 rounded-xl text-xs shrink-0 transition shadow-sm flex items-center gap-2 z-10">
-                    <i data-lucide="shopping-bag" class="w-3.5 h-3.5"></i>
-                    <span>Belanja Sekarang</span>
-                </a>
-            </section>
-
-        </div>
-
-        <!-- FOOTER DASHBOARD -->
-        <footer class="mt-8 pt-4 border-t border-stone-100 text-center text-[11px] text-stone-400 flex flex-col sm:flex-row items-center justify-between gap-2">
-            <p>© 2026 PlantHub Store Portal. All rights reserved.</p>
+    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
+        <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
             <div class="flex items-center gap-3">
-                <a href="#" class="hover:underline">Privasi</a>
-                <span>•</span>
-                <a href="#" class="hover:underline">Bantuan</a>
+                <button onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
+                    <i data-lucide="menu" class="w-5 h-5"></i>
+                </button>
+                <a href="dashboard.php" class="flex items-center gap-2.5">
+                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white">
+                        <i data-lucide="sprout" class="w-5 h-5"></i>
+                    </div>
+                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
+                </a>
             </div>
-        </footer>
-    </main>
+
+            <form action="katalog.php" method="GET" class="hidden md:flex flex-1 max-w-md relative">
+                <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
+                <input type="text" name="search" placeholder="Cari tanaman, pot, media tanam..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] placeholder:text-stone-400">
+            </form>
+
+            <div class="flex items-center gap-3">
+                <a href="cart.php" class="relative p-2 text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-full">
+                    <i data-lucide="shopping-cart" class="w-5 h-5"></i>
+                    <?php if ($cart_count > 0): ?>
+                        <span class="absolute top-1 right-1 w-4 h-4 bg-[#2E7D32] text-white text-[9px] font-bold rounded-full flex items-center justify-center ring-2 ring-white"><?= $cart_count ?></span>
+                    <?php endif; ?>
+                </a>
+                <div class="h-6 w-px bg-stone-200 hidden sm:block"></div>
+                <div class="relative">
+                    <button onclick="toggleProfileMenu()" class="flex items-center gap-3 pl-1 focus:outline-none">
+                        <img src="https://ui-avatars.com/api/?name=<?= urlencode($nama_user) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
+                        <div class="hidden sm:block text-left">
+                            <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($nama_user) ?></p>
+                            <p class="text-xs text-stone-500">Pelanggan</p>
+                        </div>
+                        <i data-lucide="chevron-down" class="w-4 h-4 text-stone-400 hidden sm:block"></i>
+                    </button>
+                    <div id="profileDropdown" class="hidden absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-stone-100 p-2 space-y-1 z-50">
+                        <a href="profil.php" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 rounded-xl">
+                            <i data-lucide="user" class="w-4 h-4 text-stone-500"></i> Profil Saya
+                        </a>
+                        <a href="riwayat.php" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 rounded-xl">
+                            <i data-lucide="history" class="w-4 h-4 text-stone-500"></i> Riwayat Saya
+                        </a>
+                        <a href="chat.php" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 rounded-xl">
+                            <i data-lucide="message-square" class="w-4 h-4 text-stone-500"></i> Konsultasi
+                        </a>
+                        <hr class="border-stone-100 my-1">
+                        <a href="../Auth/logout.php" onclick="return confirm('Keluar dari akun?');" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 rounded-xl">
+                            <i data-lucide="log-out" class="w-4 h-4 text-rose-500"></i> Keluar
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <div class="flex flex-1">
+        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
+            <div class="space-y-6">
+                <nav class="space-y-1">
+                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MENU PELANGGAN</p>
+                    <?php
+                    $menu = [
+                        ['url' => 'dashboard.php', 'icon' => 'layout-grid',    'label' => 'Beranda',        'active' => true],
+                        ['url' => 'katalog.php',   'icon' => 'store',          'label' => 'Katalog Shop',   'active' => false],
+                        ['url' => 'cart.php',      'icon' => 'shopping-bag',   'label' => 'Keranjang',      'active' => false],
+                        ['url' => 'riwayat.php',   'icon' => 'history',        'label' => 'Riwayat Order',  'active' => false],
+                        ['url' => 'chat.php',      'icon' => 'message-square', 'label' => 'Konsultasi',     'active' => false],
+                        ['url' => 'profil.php',    'icon' => 'user',           'label' => 'Profil Saya',    'active' => false],
+                    ];
+                    foreach ($menu as $m):
+                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
+                    ?>
+                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
+                            <div class="flex items-center gap-3">
+                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                                <span><?= $m['label'] ?></span>
+                            </div>
+                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
+                        </a>
+                    <?php endforeach; ?>
+                </nav>
+            </div>
+            <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3 mt-auto">
+                <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
+                    <i data-lucide="shopping-cart" class="w-5 h-5"></i>
+                </div>
+                <div class="overflow-hidden">
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">Troli Belanja</p>
+                    <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5"><?= $cart_count ?> item siap checkout</p>
+                </div>
+            </div>
+        </aside>
+
+        <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
+
+            <div>
+                <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Selamat Datang, <?= htmlspecialchars($nama_user) ?></h1>
+                <p class="text-sm text-stone-500 mt-0.5">Ringkasan aktivitas belanja dan pesanan Anda di PlantHub.</p>
+            </div>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <a href="cart.php" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32] flex flex-col justify-between hover:shadow-md transition-shadow">
+                    <div>
+                        <div class="flex items-center justify-between mb-3">
+                            <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Troli Belanja</p>
+                            <div class="w-10 h-10 rounded-xl bg-emerald-50 text-[#2E7D32] flex items-center justify-center">
+                                <i data-lucide="shopping-bag" class="w-5 h-5"></i>
+                            </div>
+                        </div>
+                        <p class="text-2xl font-bold text-stone-800 tracking-tight mb-2"><?= $cart_count ?> Item</p>
+                    </div>
+                    <div class="pt-2 text-xs">
+                        <span class="inline-flex items-center gap-1 font-semibold text-[#2E7D32] hover:underline">
+                            Lihat Keranjang <i data-lucide="chevron-right" class="w-3 h-3"></i>
+                        </span>
+                    </div>
+                </a>
+
+                <a href="riwayat.php" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#D97706] flex flex-col justify-between hover:shadow-md transition-shadow">
+                    <div>
+                        <div class="flex items-center justify-between mb-3">
+                            <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Pesanan Diproses</p>
+                            <div class="w-10 h-10 rounded-xl bg-amber-50 text-[#D97706] flex items-center justify-center">
+                                <i data-lucide="truck" class="w-5 h-5"></i>
+                            </div>
+                        </div>
+                        <p class="text-2xl font-bold text-stone-800 tracking-tight mb-2"><?= $pending_orders ?> Pesanan</p>
+                    </div>
+                    <div class="pt-2 text-xs">
+                        <span class="inline-flex items-center gap-1 font-semibold text-[#D97706] hover:underline">
+                            Lacak Status <i data-lucide="chevron-right" class="w-3 h-3"></i>
+                        </span>
+                    </div>
+                </a>
+
+                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32] flex flex-col justify-between">
+                    <div>
+                        <div class="flex items-center justify-between mb-3">
+                            <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Total Belanja</p>
+                            <div class="w-10 h-10 rounded-xl bg-emerald-50 text-[#2E7D32] flex items-center justify-center">
+                                <i data-lucide="wallet" class="w-5 h-5"></i>
+                            </div>
+                        </div>
+                        <p class="text-2xl font-bold text-stone-800 tracking-tight mb-2">Rp <?= number_format($total_belanja, 0, ',', '.') ?></p>
+                    </div>
+                    <div class="pt-2 text-xs">
+                        <span class="font-medium text-stone-400"><?= $total_orders ?> transaksi selesai</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6">
+                <div class="flex items-center justify-between border-b border-stone-100 pb-3 mb-4">
+                    <div>
+                        <h2 class="text-base font-bold text-stone-800">Produk Terbaru</h2>
+                        <p class="text-xs text-stone-500 mt-0.5">Koleksi tanaman terbaru yang tersedia di katalog.</p>
+                    </div>
+                    <a href="katalog.php" class="text-xs font-semibold text-[#2E7D32] hover:underline flex items-center gap-1">
+                        Lihat Semua <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
+                    </a>
+                </div>
+
+                <?php if (empty($produk_terbaru)): ?>
+                    <div class="py-10 text-center text-sm text-stone-400">Belum ada produk tersedia.</div>
+                <?php else: ?>
+                    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                        <?php foreach ($produk_terbaru as $p):
+                            $imgSrc = (!empty($p['gambar']) && $p['gambar'] !== 'default.jpg' && file_exists("../assets/img/" . $p['gambar']))
+                                ? "../assets/img/" . $p['gambar']
+                                : "https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400";
+                        ?>
+                            <a href="detail.php?id=<?= (int)$p['id'] ?>" class="border border-stone-200/80 rounded-xl overflow-hidden hover:shadow-md transition-shadow group">
+                                <div class="bg-stone-100 h-32 overflow-hidden">
+                                    <img src="<?= $imgSrc ?>" alt="<?= htmlspecialchars($p['nama_tanaman']) ?>" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300">
+                                </div>
+                                <div class="p-3">
+                                    <p class="text-[10px] font-semibold uppercase text-stone-400"><?= htmlspecialchars($p['nama_kategori'] ?? 'Tanaman') ?></p>
+                                    <p class="text-xs font-semibold text-stone-800 mt-0.5 truncate"><?= htmlspecialchars($p['nama_tanaman']) ?></p>
+                                    <p class="text-sm font-bold text-[#2E7D32] mt-1">Rp <?= number_format($p['harga_jual'], 0, ',', '.') ?></p>
+                                </div>
+                            </a>
+                        <?php endforeach; ?>
+                    </div>
+                <?php endif; ?>
+            </div>
+
+        </main>
+    </div>
 
     <script>
         lucide.createIcons();
+        function toggleProfileMenu() {
+            document.getElementById('profileDropdown')?.classList.toggle('hidden');
+        }
+        function toggleMobileSidebar() {
+            const s = document.getElementById('sidebar');
+            s?.classList.toggle('hidden');
+            s?.classList.toggle('fixed');
+            s?.classList.toggle('inset-y-0');
+            s?.classList.toggle('left-0');
+            s?.classList.toggle('z-40');
+        }
+        document.addEventListener('click', (e) => {
+            const dd = document.getElementById('profileDropdown');
+            if (!e.target.closest('#profileDropdown') && !e.target.closest('button[onclick="toggleProfileMenu()"]')) {
+                dd?.classList.add('hidden');
+            }
+        });
     </script>
 </body>
 </html>

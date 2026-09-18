@@ -2,500 +2,412 @@
 session_start();
 require_once '../Config/database.php';
 
-// Menentukan halaman aktif untuk highlight menu di sidebar
-$current_page = basename($_SERVER['PHP_SELF']);
-
-// --- AUTOCREATE TABEL PELANGGAN ---
-$create_table = "CREATE TABLE IF NOT EXISTS pelanggan (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    nama_pelanggan VARCHAR(100) NOT NULL,
-    no_hp VARCHAR(20) NOT NULL,
-    email VARCHAR(100) NULL,
-    alamat TEXT NULL,
-    total_transaksi INT DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)";
-mysqli_query($conn, $create_table);
-
-// --- FITUR 1: TAMBAH PELANGGAN ---
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['tambah_pelanggan'])) {
-    $nama   = mysqli_real_escape_string($conn, $_POST['nama_pelanggan']);
-    $no_hp  = mysqli_real_escape_string($conn, $_POST['no_hp']);
-    $email  = mysqli_real_escape_string($conn, $_POST['email']);
-    $alamat = mysqli_real_escape_string($conn, $_POST['alamat']);
-
-    $query = "INSERT INTO pelanggan (nama_pelanggan, no_hp, email, alamat) VALUES ('$nama', '$no_hp', '$email', '$alamat')";
-    if (mysqli_query($conn, $query)) {
-        header("Location: pelanggan.php?status=success_add");
-        exit;
-    }
-}
-
-// --- FITUR 2: EDIT PELANGGAN ---
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_pelanggan'])) {
-    $id     = (int)$_POST['id_pelanggan'];
-    $nama   = mysqli_real_escape_string($conn, $_POST['nama_pelanggan']);
-    $no_hp  = mysqli_real_escape_string($conn, $_POST['no_hp']);
-    $email  = mysqli_real_escape_string($conn, $_POST['email']);
-    $alamat = mysqli_real_escape_string($conn, $_POST['alamat']);
-
-    $query = "UPDATE pelanggan SET nama_pelanggan='$nama', no_hp='$no_hp', email='$email', alamat='$alamat' WHERE id=$id";
-    if (mysqli_query($conn, $query)) {
-        header("Location: pelanggan.php?status=success_edit");
-        exit;
-    }
-}
-
-// --- FITUR 3: HAPUS PELANGGAN ---
-if (isset($_GET['action']) && $_GET['action'] === 'delete' && isset($_GET['id'])) {
-    $id = (int)$_GET['id'];
-    mysqli_query($conn, "DELETE FROM pelanggan WHERE id = $id");
-    header("Location: pelanggan.php?status=success_delete");
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
+    header("Location: ../Auth/login.php");
     exit;
 }
 
-// --- FITUR 4: CARI PELANGGAN ---
-$search = isset($_GET['q']) ? mysqli_real_escape_string($conn, $_GET['q']) : '';
-$where_clause = $search ? "WHERE nama_pelanggan LIKE '%$search%' OR no_hp LIKE '%$search%' OR email LIKE '%$search%'" : "";
+$admin_nama = $_SESSION['nama_user'] ?? 'Admin';
 
-$query_pelanggan = "SELECT * FROM pelanggan $where_clause ORDER BY id DESC";
-$res_pelanggan   = mysqli_query($conn, $query_pelanggan);
+// =========================================================
+// FILTER & SEARCH
+// =========================================================
+$search = isset($_GET['search']) ? mysqli_real_escape_string($conn, trim($_GET['search'])) : '';
+
+$where = "WHERE u.role = 'customer'";
+if ($search !== '') {
+    $where .= " AND (u.nama_lengkap LIKE '%$search%' OR u.email LIKE '%$search%' OR u.username LIKE '%$search%')";
+}
+
+// =========================================================
+// AMBIL DAFTAR PELANGGAN + STATISTIK
+// =========================================================
+$pelanggan = [];
+$qPel = mysqli_query($conn, "
+    SELECT 
+        u.id, u.nama_lengkap, u.username, u.email, u.no_hp, u.alamat, u.created_at,
+        COALESCE((SELECT COUNT(*) FROM transaksi t WHERE t.user_id = u.id AND t.jenis_transaksi = 'penjualan'), 0) AS total_order,
+        COALESCE((SELECT SUM(total_harga) FROM transaksi t WHERE t.user_id = u.id AND t.jenis_transaksi = 'penjualan' AND t.status = 'Selesai'), 0) AS total_belanja,
+        COALESCE((SELECT COUNT(*) FROM transaksi t WHERE t.user_id = u.id AND t.jenis_transaksi = 'penjualan' AND t.status IN ('Diproses','Dikirim')), 0) AS order_aktif
+    FROM users u
+    $where
+    ORDER BY u.created_at DESC
+");
+if ($qPel) while ($r = mysqli_fetch_assoc($qPel)) $pelanggan[] = $r;
+
+// Statistik global
+$stat = ['total' => 0, 'aktif' => 0, 'total_belanja' => 0];
+$qStat = mysqli_query($conn, "
+    SELECT 
+        COUNT(*) AS total,
+        COALESCE(SUM(CASE WHEN (SELECT COUNT(*) FROM transaksi t WHERE t.user_id = u.id AND t.jenis_transaksi = 'penjualan') > 0 THEN 1 ELSE 0 END), 0) AS aktif
+    FROM users u
+    WHERE u.role = 'customer'
+");
+if ($qStat) $stat = array_merge($stat, mysqli_fetch_assoc($qStat));
+
+$qTotalBelanja = mysqli_query($conn, "
+    SELECT COALESCE(SUM(total_harga), 0) AS total 
+    FROM transaksi 
+    WHERE jenis_transaksi = 'penjualan' AND status = 'Selesai'
+");
+if ($qTotalBelanja) $stat['total_belanja'] = (float)mysqli_fetch_assoc($qTotalBelanja)['total'];
+
+// Ambil riwayat transaksi per pelanggan untuk modal (dipanggil via JS pakai data JSON)
+// Kita generate data transaksi detail di PHP biar gampang
+$dataTransaksi = [];
+if (!empty($pelanggan)) {
+    $ids = implode(',', array_map(fn($p) => (int)$p['id'], $pelanggan));
+    if ($ids !== '') {
+        $qTrx = mysqli_query($conn, "
+            SELECT t.id, t.kode_transaksi, t.user_id, t.total_harga, t.status, t.created_at
+            FROM transaksi t
+            WHERE t.user_id IN ($ids) AND t.jenis_transaksi = 'penjualan'
+            ORDER BY t.created_at DESC
+        ");
+        if ($qTrx) {
+            while ($r = mysqli_fetch_assoc($qTrx)) {
+                $dataTransaksi[$r['user_id']][] = $r;
+            }
+        }
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlantShop - Data Pelanggan</title>
+    <title>PlantHub - Data Pelanggan</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
-        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; }
-    </style>
+    <style> body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; } </style>
 </head>
-<body class="antialiased min-h-screen flex flex-col overflow-x-hidden">
+<body class="antialiased min-h-screen flex flex-col">
 
-     <!-- TOP NAVBAR -->
     <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
         <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
             <div class="flex items-center gap-3">
-                <button id="mobile-menu-btn" onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
+                <button onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
                     <i data-lucide="menu" class="w-5 h-5"></i>
                 </button>
-                <a href="dashboard.php" class="flex items-center gap-2.5 lg:hidden">
+                <a href="dashboard.php" class="flex items-center gap-2.5">
                     <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
                         <i data-lucide="sprout" class="w-5 h-5"></i>
                     </div>
-                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Shop</span></span>
+                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
                 </a>
             </div>
 
-
-            <!-- Global Search Bar -->
             <form method="GET" action="pelanggan.php" class="hidden md:flex flex-1 max-w-md relative">
                 <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
-                <input type="text" name="q" id="globalSearch" value="<?= htmlspecialchars($search) ?>" placeholder="Cari pelanggan, kontak, atau email..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/80 border border-stone-200/50 rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] focus:ring-2 focus:ring-[#2E7D32]/20 transition-all placeholder:text-stone-400">
+                <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari nama, email, atau username..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] placeholder:text-stone-400">
             </form>
 
-            <!-- Right Utilities & Profile -->
-            <div class="flex items-center gap-3 relative">
-                <!-- Notifications Button -->
-                <div class="relative">
-                    <button onclick="toggleNotifications()" class="relative p-2 text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-full transition-colors">
-                        <i data-lucide="bell" class="w-5 h-5"></i>
-                        <span class="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-[#D97706] rounded-full ring-2 ring-white animate-pulse"></span>
-                    </button>
-
-                    <!-- Notifications Dropdown -->
-                    <div id="notificationDropdown" class="hidden absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border border-stone-200/80 p-4 space-y-3 z-50">
-                        <div class="flex items-center justify-between border-b border-stone-100 pb-2">
-                            <h4 class="font-bold text-sm text-stone-800">Notifikasi</h4>
-                            <span class="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-semibold">2 Baru</span>
-                        </div>
-                        <div class="space-y-2 max-h-60 overflow-y-auto text-xs">
-                            <div class="p-2.5 rounded-xl bg-amber-50/70 border border-amber-100">
-                                <p class="font-semibold text-amber-900">Stok Kritis: Fiddle Leaf Fig</p>
-                                <p class="text-amber-700 text-[11px] mt-0.5">Sisa stok 3 unit. Segera pesan ke supplier.</p>
-                            </div>
-                            <div class="p-2.5 rounded-xl bg-rose-50/70 border border-rose-100">
-                                <p class="font-semibold text-rose-900">Stok Habis: Calathea Orbifolia</p>
-                                <p class="text-rose-700 text-[11px] mt-0.5">Produk bernilai stok 0 dan dinonaktifkan di POS.</p>
-                            </div>
-                        </div>
-                    </div>
+            <a href="dashboard.php" class="flex items-center gap-3 pl-1">
+                <img src="https://ui-avatars.com/api/?name=<?= urlencode($admin_nama) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
+                <div class="hidden sm:block text-left">
+                    <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
+                    <p class="text-xs text-stone-500">Administrator</p>
                 </div>
-                
-                <div class="h-6 w-px bg-stone-200/80 hidden sm:block"></div>
-
-                <!-- Profile Dropdown Button -->
-                <div class="relative">
-                    <button onclick="toggleProfileMenu()" class="flex items-center gap-3 p-1 rounded-full hover:bg-stone-100 transition-colors focus:outline-none">
-                        <div class="relative">
-                            <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=120" alt="Nabila" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/30">
-                            <span class="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full ring-2 ring-white"></span>
-                        </div>
-                        <div class="hidden sm:block text-left pr-1">
-                            <p class="text-xs font-bold text-stone-800 leading-tight">Nabila</p>
-                            <p class="text-[11px] text-stone-500">Administrator</p>
-                        </div>
-                        <i data-lucide="chevron-down" class="w-4 h-4 text-stone-400 hidden sm:block pr-1"></i>
-                    </button>
-
-                    <!-- Profile Dropdown Menu -->
-                    <div id="profileDropdown" class="hidden absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-stone-200/80 p-1.5 space-y-0.5 z-50">
-                        <a href="profil.php" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
-                            <i data-lucide="user" class="w-4 h-4 text-stone-500"></i> Profil Saya
-                        </a>
-                        <a href="pengaturan.php" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
-                            <i data-lucide="settings" class="w-4 h-4 text-stone-500"></i> Pengaturan Toko
-                        </a>
-                        <hr class="border-stone-100 my-1">
-                        <a href="logout.php" onclick="event.preventDefault(); alert('Logout Berhasil');" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 rounded-xl transition-colors">
-                            <i data-lucide="log-out" class="w-4 h-4 text-rose-500"></i> Keluar
-                        </a>
-                    </div>
-                </div>
-            </div>
+            </a>
         </div>
     </header>
 
-    <div class="flex flex-1 relative">
-        <!-- BACKDROP MOBILE SIDEBAR -->
-        <div id="sidebarBackdrop" onclick="toggleMobileSidebar()" class="fixed inset-0 bg-stone-900/50 backdrop-blur-xs z-40 hidden lg:hidden"></div>
-
-        <!-- SIDEBAR NAVIGASI DINAMIS -->
+    <div class="flex flex-1">
         <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
             <div class="space-y-6">
-                <!-- Brand Logo Sidebar -->
-                <div class="px-2 pt-2">
-                    <a href="dashboard.php" class="flex items-center gap-3">
-                        <div class="w-10 h-10 rounded-2xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
-                            <i data-lucide="sprout" class="w-6 h-6"></i>
-                        </div>
-                        <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Shop</span></span>
-                    </a>
-                </div>
-
-                <!-- Navigation Menu -->
                 <nav class="space-y-1">
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
-                    
-                    <!-- Dashboard -->
-                    <a href="dashboard.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'dashboard.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="layout-grid" class="w-5 h-5 <?= $current_page == 'dashboard.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Dashboard</span>
-                        </div>
-                        <?php if($current_page == 'dashboard.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                    
-                    <!-- Kasir (POS) -->
-                    <a href="pos.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'pos.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="shopping-bag" class="w-5 h-5 <?= $current_page == 'pos.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Kasir (POS)</span>
-                        </div>
-                        <?php if($current_page == 'pos.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                    
-                    <!-- Pembelian (Restock) -->
-                    <a href="restock.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'restock.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="truck" class="w-5 h-5 <?= $current_page == 'restock.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Pembelian (Restock)</span>
-                        </div>
-                        <?php if($current_page == 'restock.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                    
-                    <!-- Stok & Produk -->
-                    <a href="stok.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'stok.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="box" class="w-5 h-5 <?= $current_page == 'stok.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Stok & Produk</span>
-                        </div>
-                        <?php if($current_page == 'stok.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-
-                    <!-- Konsultasi Chat -->
-                    <a href="chat.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'chat.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="message-square" class="w-5 h-5 <?= $current_page == 'chat.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Konsultasi Chat</span>
-                        </div>
-                        <?php if($current_page == 'chat.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                    
-                    <!-- Pelanggan -->
-                    <a href="pelanggan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'pelanggan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="users" class="w-5 h-5 <?= $current_page == 'pelanggan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Pelanggan</span>
-                        </div>
-                        <?php if($current_page == 'pelanggan.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                    
-                    <!-- Laporan -->
-                    <a href="laporan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'laporan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="bar-chart-2" class="w-5 h-5 <?= $current_page == 'laporan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Laporan</span>
-                        </div>
-                        <?php if($current_page == 'laporan.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                </nav>
-
-                <hr class="border-stone-100 my-4">
-
-                <!-- System Secondary Menu -->
-                <nav class="space-y-1">
+                    <?php
+                    $menu = [
+                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
+                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
+                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
+                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
+                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => true],
+                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
+                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
+                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
+                    ];
+                    foreach ($menu as $m):
+                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
+                    ?>
+                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
+                            <div class="flex items-center gap-3">
+                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                                <span><?= $m['label'] ?></span>
+                            </div>
+                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
+                        </a>
+                    <?php endforeach; ?>
+                    <hr class="border-stone-100 my-3">
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">PENGATURAN</p>
-                    <a href="pengaturan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'pengaturan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="settings" class="w-5 h-5 <?= $current_page == 'pengaturan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Pengaturan Toko</span>
-                        </div>
-                        <?php if($current_page == 'pengaturan.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
+                    <a href="pengaturan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-bold rounded-xl text-stone-700 hover:bg-stone-100">
+                        <i data-lucide="settings" class="w-5 h-5 text-stone-500"></i> Pengaturan Toko
+                    </a>
+                    <a href="bantuan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-bold rounded-xl text-stone-700 hover:bg-stone-100">
+                        <i data-lucide="help-circle" class="w-5 h-5 text-stone-500"></i> Bantuan
                     </a>
                 </nav>
             </div>
-                            
-            <!-- Cabang Info Badge -->
             <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3 mt-auto">
                 <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">Cabang Batu Central</p>
-                    <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online Active</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">PlantHub Admin</p>
+                    <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>
         </aside>
 
-        <!-- MAIN CONTENT -->
         <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
-            
+
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                     <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Data Pelanggan</h1>
-                    <p class="text-sm text-stone-500 mt-0.5">Kelola daftar kontak pelanggan loyal PlantShop Anda.</p>
+                    <p class="text-sm text-stone-500 mt-0.5">Daftar pelanggan terdaftar di PlantHub beserta riwayat transaksi mereka.</p>
                 </div>
-                <button type="button" onclick="openModalTambah()" class="inline-flex items-center gap-2 bg-[#2E7D32] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-emerald-800 shadow-sm shadow-emerald-900/20 transition-all cursor-pointer">
-                    <i data-lucide="user-plus" class="w-4 h-4"></i>
-                    <span>Tambah Pelanggan</span>
-                </button>
             </div>
 
-            <!-- TABEL DATA PELANGGAN -->
+            <!-- STATISTIK -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32]">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Total Pelanggan</p>
+                    <p class="text-2xl font-bold text-stone-800 mt-1"><?= (int)$stat['total'] ?></p>
+                    <p class="text-[11px] text-stone-400 mt-1">Akun terdaftar</p>
+                </div>
+                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-emerald-500">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Pelanggan Aktif</p>
+                    <p class="text-2xl font-bold text-stone-800 mt-1"><?= (int)$stat['aktif'] ?></p>
+                    <p class="text-[11px] text-stone-400 mt-1">Pernah bertransaksi</p>
+                </div>
+                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-blue-500">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Total Belanja</p>
+                    <p class="text-lg font-bold text-stone-800 mt-1">Rp <?= number_format($stat['total_belanja'], 0, ',', '.') ?></p>
+                    <p class="text-[11px] text-stone-400 mt-1">Dari transaksi selesai</p>
+                </div>
+            </div>
+
+            <!-- TABEL PELANGGAN -->
             <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse">
                         <thead>
                             <tr class="border-b border-stone-200 bg-stone-50/50 text-[11px] font-bold text-stone-500 uppercase tracking-wider">
                                 <th class="py-3.5 px-6">Pelanggan</th>
-                                <th class="py-3.5 px-6">No. Telepon</th>
-                                <th class="py-3.5 px-6">Alamat</th>
-                                <th class="py-3.5 px-6 text-center">Transaksi</th>
-                                <th class="py-3.5 px-6 text-right">Aksi</th>
+                                <th class="py-3.5 px-4">Kontak</th>
+                                <th class="py-3.5 px-4">Alamat</th>
+                                <th class="py-3.5 px-4 text-center">Transaksi</th>
+                                <th class="py-3.5 px-4 text-right">Total Belanja</th>
+                                <th class="py-3.5 px-6 text-center">Aksi</th>
                             </tr>
                         </thead>
-                        <tbody class="divide-y divide-stone-100 text-xs font-medium text-stone-700">
-                            <?php if (mysqli_num_rows($res_pelanggan) > 0): ?>
-                                <?php while ($p = mysqli_fetch_assoc($res_pelanggan)): ?>
-                                    <tr class="hover:bg-stone-50/80 transition-colors">
-                                        <td class="py-3.5 px-6 font-semibold text-stone-800">
+                        <tbody class="divide-y divide-stone-100 text-xs">
+                            <?php if (empty($pelanggan)): ?>
+                                <tr>
+                                    <td colspan="6" class="py-12 text-center">
+                                        <div class="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                                            <i data-lucide="users" class="w-6 h-6 text-stone-400"></i>
+                                        </div>
+                                        <p class="text-sm font-semibold text-stone-700">Belum ada pelanggan terdaftar</p>
+                                        <p class="text-xs text-stone-500 mt-1">Pelanggan yang mendaftar via Auth akan muncul di sini.</p>
+                                    </td>
+                                </tr>
+                            <?php else: ?>
+                                <?php foreach ($pelanggan as $p):
+                                    $initial = strtoupper(substr($p['nama_lengkap'] ?? 'P', 0, 1));
+                                ?>
+                                    <tr class="hover:bg-stone-50/60 transition-colors">
+                                        <td class="py-3.5 px-6">
                                             <div class="flex items-center gap-3">
-                                                <div class="w-8 h-8 rounded-full bg-emerald-100 text-[#2E7D32] flex items-center justify-center font-bold">
-                                                    <?= strtoupper(substr($p['nama_pelanggan'], 0, 1)) ?>
+                                                <div class="w-10 h-10 rounded-full bg-[#2E7D32] flex items-center justify-center text-white font-bold text-xs shrink-0">
+                                                    <?= htmlspecialchars($initial) ?>
                                                 </div>
-                                                <div>
-                                                    <p class="font-semibold text-stone-800"><?= htmlspecialchars($p['nama_pelanggan']) ?></p>
-                                                    <p class="text-stone-400 text-[11px]"><?= htmlspecialchars($p['email'] ?? '-') ?></p>
+                                                <div class="min-w-0">
+                                                    <p class="font-semibold text-stone-800 truncate"><?= htmlspecialchars($p['nama_lengkap'] ?? 'Pelanggan') ?></p>
+                                                    <p class="text-[11px] text-stone-400">@<?= htmlspecialchars($p['username']) ?></p>
                                                 </div>
                                             </div>
                                         </td>
-                                        <td class="py-3.5 px-6 font-semibold text-stone-700"><?= htmlspecialchars($p['no_hp']) ?></td>
-                                        <td class="py-3.5 px-6 text-stone-500 max-w-xs truncate"><?= htmlspecialchars($p['alamat'] ?? '-') ?></td>
-                                        <td class="py-3.5 px-6 text-center">
-                                            <span class="px-2.5 py-1 bg-emerald-50 text-[#2E7D32] rounded-lg font-bold border border-emerald-100">
-                                                <?= $p['total_transaksi'] ?> Order
-                                            </span>
+                                        <td class="py-3.5 px-4">
+                                            <p class="text-stone-700"><?= htmlspecialchars($p['email'] ?? '-') ?></p>
+                                            <p class="text-[11px] text-stone-400 mt-0.5"><?= htmlspecialchars($p['no_hp'] ?? '-') ?></p>
                                         </td>
-                                        <td class="py-3.5 px-6 text-right space-x-1">
-                                            <button type="button" onclick='openModalEdit(<?= json_encode($p) ?>)' class="p-2 text-stone-500 hover:text-stone-900 hover:bg-stone-100 rounded-lg transition-all">
-                                                <i data-lucide="edit-3" class="w-4 h-4"></i>
+                                        <td class="py-3.5 px-4 text-stone-500 max-w-xs truncate">
+                                            <?= htmlspecialchars($p['alamat'] ?? '-') ?>
+                                        </td>
+                                        <td class="py-3.5 px-4 text-center">
+                                            <span class="px-2.5 py-1 rounded-lg font-bold border <?= (int)$p['total_order'] > 0 ? 'bg-emerald-50 text-[#2E7D32] border-emerald-100' : 'bg-stone-100 text-stone-500 border-stone-200' ?>">
+                                                <?= (int)$p['total_order'] ?> order
+                                            </span>
+                                            <?php if ((int)$p['order_aktif'] > 0): ?>
+                                                <p class="text-[10px] text-[#D97706] font-semibold mt-1"><?= (int)$p['order_aktif'] ?> aktif</p>
+                                            <?php endif; ?>
+                                        </td>
+                                        <td class="py-3.5 px-4 text-right font-bold <?= (float)$p['total_belanja'] > 0 ? 'text-[#2E7D32]' : 'text-stone-400' ?>">
+                                            Rp <?= number_format($p['total_belanja'], 0, ',', '.') ?>
+                                        </td>
+                                        <td class="py-3.5 px-6 text-center">
+                                            <button onclick='openDetail(<?= json_encode([
+                                                "id" => $p['id'], "nama" => $p["nama_lengkap"], "username" => $p["username"],
+                                                "email" => $p["email"], "no_hp" => $p["no_hp"], "alamat" => $p["alamat"],
+                                                "created_at" => $p["created_at"], "total_order" => $p["total_order"],
+                                                "total_belanja" => $p["total_belanja"],
+                                                "transaksi" => $dataTransaksi[$p["id"]] ?? []
+                                            ]) ?>)' class="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-[#2E7D32] hover:bg-emerald-50 rounded-lg transition">
+                                                <i data-lucide="eye" class="w-3.5 h-3.5"></i> Detail
                                             </button>
-                                            <a href="pelanggan.php?action=delete&id=<?= $p['id'] ?>" onclick="return confirm('Yakin ingin menghapus pelanggan ini?')" class="p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-lg transition-all inline-block">
-                                                <i data-lucide="trash-2" class="w-4 h-4"></i>
-                                            </a>
                                         </td>
                                     </tr>
-                                <?php endwhile; ?>
-                            <?php else: ?>
-                                <tr>
-                                    <td colspan="5" class="py-8 text-center text-stone-400">Tidak ada data pelanggan ditemukan.</td>
-                                </tr>
+                                <?php endforeach; ?>
                             <?php endif; ?>
                         </tbody>
                     </table>
+                </div>
+
+                <div class="p-4 bg-stone-50/60 border-t border-stone-100 text-xs text-stone-500">
+                    Menampilkan <b class="text-stone-700"><?= count($pelanggan) ?></b> pelanggan
                 </div>
             </div>
 
         </main>
     </div>
 
-    <!-- MODAL FORM PELANGGAN (TAMBAH / EDIT) -->
-    <div id="modalPelanggan" class="fixed inset-0 bg-stone-900/40 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
-        <div class="bg-white rounded-2xl border border-stone-200 shadow-xl max-w-md w-full p-6 space-y-4">
-            <div class="flex items-center justify-between border-b border-stone-100 pb-3">
-                <h3 id="modalTitle" class="text-lg font-bold text-stone-800">Tambah Pelanggan Baru</h3>
-                <button type="button" onclick="closeModal()" class="text-stone-400 hover:text-stone-600"><i data-lucide="x" class="w-5 h-5"></i></button>
+    <!-- MODAL DETAIL PELANGGAN -->
+    <div id="modalDetail" class="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 hidden items-center justify-center p-4 overflow-y-auto">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full my-8">
+            <div class="p-5 border-b border-stone-100 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div id="dAvatar" class="w-12 h-12 rounded-full bg-[#2E7D32] flex items-center justify-center text-white font-bold text-base">?</div>
+                    <div>
+                        <h3 id="dNama" class="text-lg font-bold text-stone-800">-</h3>
+                        <p id="dUsername" class="text-xs text-stone-500">-</p>
+                    </div>
+                </div>
+                <button onclick="closeDetail()" class="text-stone-400 hover:text-stone-700 p-1.5 rounded-lg hover:bg-stone-100">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
             </div>
 
-            <form method="POST" action="pelanggan.php" class="space-y-4">
-                <input type="hidden" name="id_pelanggan" id="id_pelanggan">
-                
-                <div>
-                    <label class="block text-xs font-bold text-stone-600 uppercase mb-1">Nama Lengkap</label>
-                    <input type="text" name="nama_pelanggan" id="nama_pelanggan" required class="w-full px-3.5 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:border-[#2E7D32]">
+            <div class="p-5 space-y-5 max-h-[70vh] overflow-y-auto">
+                <!-- Info -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="bg-stone-50 border border-stone-100 rounded-xl p-3">
+                        <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Email</p>
+                        <p id="dEmail" class="text-sm font-semibold text-stone-800 mt-0.5">-</p>
+                    </div>
+                    <div class="bg-stone-50 border border-stone-100 rounded-xl p-3">
+                        <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">No. HP</p>
+                        <p id="dNoHp" class="text-sm font-semibold text-stone-800 mt-0.5">-</p>
+                    </div>
+                    <div class="bg-stone-50 border border-stone-100 rounded-xl p-3 md:col-span-2">
+                        <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Alamat</p>
+                        <p id="dAlamat" class="text-sm text-stone-700 mt-0.5">-</p>
+                    </div>
                 </div>
 
-                <div>
-                    <label class="block text-xs font-bold text-stone-600 uppercase mb-1">No. HP / WhatsApp</label>
-                    <input type="text" name="no_hp" id="no_hp" required class="w-full px-3.5 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:border-[#2E7D32]">
+                <!-- Statistik -->
+                <div class="grid grid-cols-3 gap-3">
+                    <div class="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-center">
+                        <p class="text-[10px] font-bold text-[#2E7D32] uppercase">Total Order</p>
+                        <p id="dTotalOrder" class="text-lg font-bold text-[#2E7D32] mt-0.5">0</p>
+                    </div>
+                    <div class="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-center">
+                        <p class="text-[10px] font-bold text-[#2E7D32] uppercase">Total Belanja</p>
+                        <p id="dTotalBelanja" class="text-sm font-bold text-[#2E7D32] mt-0.5">Rp 0</p>
+                    </div>
+                    <div class="bg-stone-50 border border-stone-100 rounded-xl p-3 text-center">
+                        <p class="text-[10px] font-bold text-stone-400 uppercase">Bergabung</p>
+                        <p id="dJoin" class="text-xs font-bold text-stone-700 mt-0.5">-</p>
+                    </div>
                 </div>
 
+                <!-- Riwayat transaksi -->
                 <div>
-                    <label class="block text-xs font-bold text-stone-600 uppercase mb-1">Email</label>
-                    <input type="email" name="email" id="email" class="w-full px-3.5 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:border-[#2E7D32]">
+                    <h4 class="text-xs font-bold text-stone-500 uppercase tracking-wider mb-2">Riwayat Transaksi</h4>
+                    <div id="dRiwayat" class="space-y-2 max-h-64 overflow-y-auto pr-1"></div>
                 </div>
+            </div>
 
-                <div>
-                    <label class="block text-xs font-bold text-stone-600 uppercase mb-1">Alamat</label>
-                    <textarea name="alamat" id="alamat" rows="2" class="w-full px-3.5 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:border-[#2E7D32]"></textarea>
-                </div>
-
-                <div class="pt-2 flex justify-end gap-2">
-                    <button type="button" onclick="closeModal()" class="px-4 py-2 text-xs font-semibold text-stone-600 hover:bg-stone-100 rounded-xl">Batal</button>
-                    <button type="submit" name="tambah_pelanggan" id="btnSubmit" class="px-4 py-2 text-xs font-semibold bg-[#2E7D32] text-white rounded-xl hover:bg-emerald-800">Simpan Pelanggan</button>
-                </div>
-            </form>
+            <div class="p-4 border-t border-stone-100 flex justify-end">
+                <button onclick="closeDetail()" class="px-5 py-2 text-sm font-semibold bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl">Tutup</button>
+            </div>
         </div>
     </div>
 
-    <!-- FOOTER -->
-    <footer class="mt-auto bg-white border-t border-stone-200/80 py-6 text-center text-xs text-stone-500">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div class="flex items-center gap-2">
-                <div class="w-5 h-5 rounded-md bg-[#2E7D32] flex items-center justify-center text-white">
-                    <i data-lucide="sprout" class="w-3 h-3"></i>
-                </div>
-                <span class="font-bold text-stone-700">PlantShop System</span>
-                <span>&copy; <?= date('Y') ?>. Hak Cipta Dilindungi.</span>
-            </div>
-            <div class="flex items-center gap-6">
-                <a href="bantuan.php" class="hover:text-stone-800 transition-colors">Bantuan</a>
-                <a href="#" class="hover:text-stone-800 transition-colors">Privasi & Ketentuan</a>
-                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold bg-emerald-50 text-[#2E7D32] border border-emerald-100">
-                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span> v2.4 Active
-                </span>
-            </div>
-        </div>
-    </footer>
-
-    <!-- SCRIPT INTERAKSI -->
     <script>
         lucide.createIcons();
 
-        // Toggle Sidebar Mobile
         function toggleMobileSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            const backdrop = document.getElementById('sidebarBackdrop');
-
-            sidebar?.classList.toggle('hidden');
-            sidebar?.classList.toggle('fixed');
-            sidebar?.classList.toggle('inset-y-0');
-            sidebar?.classList.toggle('left-0');
-            sidebar?.classList.toggle('z-50');
-            backdrop?.classList.toggle('hidden');
+            const s = document.getElementById('sidebar');
+            s?.classList.toggle('hidden');
+            s?.classList.toggle('fixed');
+            s?.classList.toggle('inset-y-0');
+            s?.classList.toggle('left-0');
+            s?.classList.toggle('z-40');
         }
 
-        // Toggle Dropdowns
-        function toggleNotifications() {
-            const notif = document.getElementById('notificationDropdown');
-            const profile = document.getElementById('profileDropdown');
-            profile?.classList.add('hidden');
-            notif?.classList.toggle('hidden');
+        function formatRp(v) { return 'Rp ' + Number(v).toLocaleString('id-ID'); }
+
+        function badgeStatus(status) {
+            const map = {
+                'Diproses': 'bg-amber-50 text-amber-700 border-amber-200',
+                'Dikirim':  'bg-blue-50 text-blue-700 border-blue-200',
+                'Selesai':  'bg-emerald-50 text-emerald-700 border-emerald-200',
+                'Batal':    'bg-rose-50 text-rose-700 border-rose-200'
+            };
+            return map[status] || 'bg-stone-100 text-stone-600 border-stone-200';
         }
 
-        function toggleProfileMenu() {
-            const profile = document.getElementById('profileDropdown');
-            const notif = document.getElementById('notificationDropdown');
-            notif?.classList.add('hidden');
-            profile?.classList.toggle('hidden');
-        }
+        function openDetail(data) {
+            document.getElementById('dAvatar').innerText = (data.nama || 'P').charAt(0).toUpperCase();
+            document.getElementById('dNama').innerText = data.nama || '-';
+            document.getElementById('dUsername').innerText = '@' + (data.username || '-');
+            document.getElementById('dEmail').innerText = data.email || '-';
+            document.getElementById('dNoHp').innerText = data.no_hp || '-';
+            document.getElementById('dAlamat').innerText = data.alamat || '-';
+            document.getElementById('dTotalOrder').innerText = data.total_order || 0;
+            document.getElementById('dTotalBelanja').innerText = formatRp(data.total_belanja || 0);
 
-        // Close dropdowns when clicking outside
-        document.addEventListener('click', (e) => {
-            const notifDropdown = document.getElementById('notificationDropdown');
-            const profileDropdown = document.getElementById('profileDropdown');
-            
-            if (!e.target.closest('#notificationDropdown') && !e.target.closest('button[onclick="toggleNotifications()"]')) {
-                notifDropdown?.classList.add('hidden');
+            const join = data.created_at ? new Date(data.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
+            document.getElementById('dJoin').innerText = join;
+
+            const riwayat = data.transaksi || [];
+            const container = document.getElementById('dRiwayat');
+            if (riwayat.length === 0) {
+                container.innerHTML = '<p class="text-xs text-stone-400 text-center py-4 italic">Belum ada transaksi.</p>';
+            } else {
+                container.innerHTML = riwayat.map(t => `
+                    <div class="bg-white border border-stone-200 rounded-xl p-3 flex items-center justify-between gap-3">
+                        <div class="min-w-0">
+                            <p class="text-xs font-bold font-mono text-stone-800 truncate">${t.kode_transaksi}</p>
+                            <p class="text-[10px] text-stone-400 mt-0.5">${new Date(t.created_at).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                        </div>
+                        <div class="text-right shrink-0">
+                            <p class="text-xs font-bold text-[#2E7D32]">${formatRp(t.total_harga)}</p>
+                            <span class="inline-block text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border mt-0.5 ${badgeStatus(t.status)}">${t.status}</span>
+                        </div>
+                    </div>
+                `).join('');
             }
-            if (!e.target.closest('#profileDropdown') && !e.target.closest('button[onclick="toggleProfileMenu()"]')) {
-                profileDropdown?.classList.add('hidden');
-            }
-        });
 
-        // Modal Pelanggan Functions
-        const modal = document.getElementById('modalPelanggan');
-
-        function openModalTambah() {
-            document.getElementById('modalTitle').innerText = 'Tambah Pelanggan Baru';
-            document.getElementById('id_pelanggan').value = '';
-            document.getElementById('nama_pelanggan').value = '';
-            document.getElementById('no_hp').value = '';
-            document.getElementById('email').value = '';
-            document.getElementById('alamat').value = '';
-            document.getElementById('btnSubmit').name = 'tambah_pelanggan';
+            const modal = document.getElementById('modalDetail');
             modal.classList.remove('hidden');
+            modal.classList.add('flex');
         }
 
-        function openModalEdit(data) {
-            document.getElementById('modalTitle').innerText = 'Edit Data Pelanggan';
-            document.getElementById('id_pelanggan').value = data.id;
-            document.getElementById('nama_pelanggan').value = data.nama_pelanggan;
-            document.getElementById('no_hp').value = data.no_hp;
-            document.getElementById('email').value = data.email || '';
-            document.getElementById('alamat').value = data.alamat || '';
-            document.getElementById('btnSubmit').name = 'edit_pelanggan';
-            modal.classList.remove('hidden');
-        }
-
-        function closeModal() {
+        function closeDetail() {
+            const modal = document.getElementById('modalDetail');
             modal.classList.add('hidden');
+            modal.classList.remove('flex');
         }
+
+        document.getElementById('modalDetail').addEventListener('click', (e) => {
+            if (e.target.id === 'modalDetail') closeDetail();
+        });
     </script>
 </body>
 </html>

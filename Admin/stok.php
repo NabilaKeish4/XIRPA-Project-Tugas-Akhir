@@ -1,1036 +1,645 @@
+<?php
+session_start();
+require_once '../Config/database.php';
+
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
+    header("Location: ../Auth/login.php");
+    exit;
+}
+
+$admin_nama = $_SESSION['nama_user'] ?? 'Admin';
+
+// =========================================================
+// PROSES AKSI (POST: tambah / edit / hapus)
+// =========================================================
+$pesan_sukses = '';
+$pesan_error  = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = $_POST['action'] ?? '';
+
+    // ----- FUNGSI UPLOAD GAMBAR -----
+    function uploadGambar($file, $oldFile = '') {
+        if (!isset($file) || $file['error'] !== UPLOAD_ERR_OK) return $oldFile;
+
+        $allowed = ['jpg', 'jpeg', 'png', 'webp'];
+        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+
+        if (!in_array($ext, $allowed)) return $oldFile;
+        if ($file['size'] > 2 * 1024 * 1024) return $oldFile; // max 2MB
+
+        $dir = '../assets/img/';
+        if (!is_dir($dir)) mkdir($dir, 0755, true);
+
+        $newName = 'produk_' . time() . '_' . rand(1000, 9999) . '.' . $ext;
+        if (move_uploaded_file($file['tmp_name'], $dir . $newName)) {
+            // Hapus file lama kalau bukan default
+            if ($oldFile && $oldFile !== 'default.jpg' && file_exists($dir . $oldFile)) {
+                @unlink($dir . $oldFile);
+            }
+            return $newName;
+        }
+        return $oldFile;
+    }
+
+    // ----- TAMBAH PRODUK -----
+    if ($action === 'tambah') {
+        $nama         = mysqli_real_escape_string($conn, trim($_POST['nama_tanaman'] ?? ''));
+        $kategori_id  = (int)($_POST['kategori_id'] ?? 0);
+        $harga_jual   = (float)($_POST['harga_jual'] ?? 0);
+        $harga_beli   = (float)($_POST['harga_beli'] ?? 0);
+        $stok         = (int)($_POST['stok'] ?? 0);
+        $stok_minimal = (int)($_POST['stok_minimal'] ?? 5);
+        $deskripsi    = mysqli_real_escape_string($conn, trim($_POST['deskripsi'] ?? ''));
+        $perawatan    = mysqli_real_escape_string($conn, trim($_POST['cara_perawatan'] ?? ''));
+
+        // Upload gambar
+        $gambar = 'default.jpg';
+        if (isset($_FILES['gambar']) && $_FILES['gambar']['error'] === UPLOAD_ERR_OK) {
+            $gambar = uploadGambar($_FILES['gambar'], '');
+        }
+
+        if ($nama === '') {
+            $pesan_error = "Nama produk wajib diisi.";
+        } elseif ($harga_jual <= 0) {
+            $pesan_error = "Harga jual harus lebih dari 0.";
+        } else {
+            $sql = "INSERT INTO produk 
+                    (kategori_id, nama_tanaman, deskripsi, cara_perawatan, harga_jual, harga_beli, stok, stok_minimal, gambar, created_at) 
+                    VALUES 
+                    (" . ($kategori_id > 0 ? $kategori_id : 'NULL') . ", '$nama', '$deskripsi', '$perawatan', $harga_jual, $harga_beli, $stok, $stok_minimal, '$gambar', NOW())";
+            if (mysqli_query($conn, $sql)) {
+                header("Location: stok.php?status=added");
+                exit;
+            } else {
+                $pesan_error = "Gagal menambah produk: " . mysqli_error($conn);
+            }
+        }
+    }
+
+    // ----- EDIT PRODUK -----
+    if ($action === 'edit') {
+        $id           = (int)($_POST['id'] ?? 0);
+        $nama         = mysqli_real_escape_string($conn, trim($_POST['nama_tanaman'] ?? ''));
+        $kategori_id  = (int)($_POST['kategori_id'] ?? 0);
+        $harga_jual   = (float)($_POST['harga_jual'] ?? 0);
+        $harga_beli   = (float)($_POST['harga_beli'] ?? 0);
+        $stok         = (int)($_POST['stok'] ?? 0);
+        $stok_minimal = (int)($_POST['stok_minimal'] ?? 5);
+        $deskripsi    = mysqli_real_escape_string($conn, trim($_POST['deskripsi'] ?? ''));
+        $perawatan    = mysqli_real_escape_string($conn, trim($_POST['cara_perawatan'] ?? ''));
+
+        // Ambil gambar lama
+        $oldGambar = 'default.jpg';
+        $qOld = mysqli_query($conn, "SELECT gambar FROM produk WHERE id = $id LIMIT 1");
+        if ($qOld && $r = mysqli_fetch_assoc($qOld)) $oldGambar = $r['gambar'];
+
+        $gambar = uploadGambar($_FILES['gambar'] ?? null, $oldGambar);
+
+        if ($id <= 0 || $nama === '') {
+            $pesan_error = "Data tidak lengkap.";
+        } else {
+            $sql = "UPDATE produk SET 
+                        kategori_id = " . ($kategori_id > 0 ? $kategori_id : 'NULL') . ",
+                        nama_tanaman = '$nama',
+                        deskripsi = '$deskripsi',
+                        cara_perawatan = '$perawatan',
+                        harga_jual = $harga_jual,
+                        harga_beli = $harga_beli,
+                        stok = $stok,
+                        stok_minimal = $stok_minimal,
+                        gambar = '$gambar'
+                    WHERE id = $id";
+            if (mysqli_query($conn, $sql)) {
+                header("Location: stok.php?status=edited");
+                exit;
+            } else {
+                $pesan_error = "Gagal mengedit: " . mysqli_error($conn);
+            }
+        }
+    }
+
+    // ----- HAPUS PRODUK -----
+    if ($action === 'hapus') {
+        $id = (int)($_POST['id'] ?? 0);
+        if ($id > 0) {
+            // Cek apakah produk pernah dipakai di transaksi
+            $qCek = mysqli_query($conn, "SELECT COUNT(*) AS total FROM transaksi_detail WHERE produk_id = $id");
+            $dipakai = $qCek ? (int)mysqli_fetch_assoc($qCek)['total'] : 0;
+
+            if ($dipakai > 0) {
+                $pesan_error = "Produk tidak bisa dihapus karena sudah dipakai di $dipakai transaksi.";
+            } else {
+                // Hapus gambar
+                $qImg = mysqli_query($conn, "SELECT gambar FROM produk WHERE id = $id LIMIT 1");
+                if ($qImg && $row = mysqli_fetch_assoc($qImg)) {
+                    if ($row['gambar'] && $row['gambar'] !== 'default.jpg' && file_exists("../assets/img/" . $row['gambar'])) {
+                        @unlink("../assets/img/" . $row['gambar']);
+                    }
+                }
+                if (mysqli_query($conn, "DELETE FROM produk WHERE id = $id")) {
+                    header("Location: stok.php?status=deleted");
+                    exit;
+                } else {
+                    $pesan_error = "Gagal menghapus: " . mysqli_error($conn);
+                }
+            }
+        }
+    }
+}
+
+// =========================================================
+// STATUS MESSAGE
+// =========================================================
+if (isset($_GET['status'])) {
+    if ($_GET['status'] === 'added')   $pesan_sukses = "Produk baru berhasil ditambahkan.";
+    if ($_GET['status'] === 'edited')  $pesan_sukses = "Produk berhasil diperbarui.";
+    if ($_GET['status'] === 'deleted') $pesan_sukses = "Produk berhasil dihapus.";
+}
+
+// =========================================================
+// FILTER & SEARCH
+// =========================================================
+$search        = isset($_GET['search']) ? mysqli_real_escape_string($conn, trim($_GET['search'])) : '';
+$kategori_id   = isset($_GET['kategori']) ? (int)$_GET['kategori'] : 0;
+$statusFilter  = $_GET['status_filter'] ?? 'semua';
+
+$where = "WHERE 1=1";
+if ($search !== '')      $where .= " AND p.nama_tanaman LIKE '%$search%'";
+if ($kategori_id > 0)    $where .= " AND p.kategori_id = $kategori_id";
+if ($statusFilter === 'safe')     $where .= " AND p.stok > p.stok_minimal";
+if ($statusFilter === 'critical') $where .= " AND p.stok > 0 AND p.stok <= p.stok_minimal";
+if ($statusFilter === 'empty')    $where .= " AND p.stok = 0";
+
+// =========================================================
+// AMBIL DAFTAR PRODUK
+// =========================================================
+$produk = [];
+$qProduk = mysqli_query($conn, "
+    SELECT p.*, k.nama_kategori 
+    FROM produk p 
+    LEFT JOIN kategori k ON p.kategori_id = k.id 
+    $where
+    ORDER BY p.id DESC
+");
+if ($qProduk) while ($r = mysqli_fetch_assoc($qProduk)) $produk[] = $r;
+
+// Ambil kategori untuk filter & dropdown form
+$kategoriList = [];
+$qKat = mysqli_query($conn, "SELECT * FROM kategori ORDER BY id ASC");
+if ($qKat) while ($r = mysqli_fetch_assoc($qKat)) $kategoriList[] = $r;
+
+// Statistik
+$statTotal    = 0;
+$statSafe     = 0;
+$statCritical = 0;
+$statEmpty    = 0;
+$qStat = mysqli_query($conn, "
+    SELECT 
+        COUNT(*) AS total,
+        COALESCE(SUM(CASE WHEN stok > stok_minimal THEN 1 ELSE 0 END), 0) AS safe,
+        COALESCE(SUM(CASE WHEN stok > 0 AND stok <= stok_minimal THEN 1 ELSE 0 END), 0) AS critical,
+        COALESCE(SUM(CASE WHEN stok = 0 THEN 1 ELSE 0 END), 0) AS empty
+    FROM produk
+");
+if ($qStat) {
+    $s = mysqli_fetch_assoc($qStat);
+    $statTotal    = (int)$s['total'];
+    $statSafe     = (int)$s['safe'];
+    $statCritical = (int)$s['critical'];
+    $statEmpty    = (int)$s['empty'];
+}
+
+function gambarProduk($nama) {
+    if (!$nama || $nama === 'default.jpg') {
+        return "https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400";
+    }
+    if (file_exists("../assets/img/" . $nama)) return "../assets/img/" . $nama;
+    return "https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400";
+}
+?>
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlantShop - Kelola Stok & Produk</title>
-    <!-- Tailwind CSS CDN -->
+    <title>PlantHub - Stok & Produk</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Lucide Icons CDN -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <style>
-        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
-        body {
-            font-family: 'Plus Jakarta Sans', sans-serif;
-            background-color: #F9F8F6;
-            color: #2D3748;
-        }
-        .no-scrollbar::-webkit-scrollbar { display: none; }
-        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
-    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style> body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; } </style>
 </head>
 <body class="antialiased min-h-screen flex flex-col">
 
-    <?php $current_page = 'stok.php'; ?>
-
-    <!-- TOP NAVBAR -->
     <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
         <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
             <div class="flex items-center gap-3">
-                <button id="mobile-menu-btn" onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
+                <button onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
                     <i data-lucide="menu" class="w-5 h-5"></i>
                 </button>
-                <a href="dashboard.php" class="flex items-center gap-2.5 lg:hidden">
-                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm shadow-emerald-900/20">
+                <a href="dashboard.php" class="flex items-center gap-2.5">
+                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
                         <i data-lucide="sprout" class="w-5 h-5"></i>
                     </div>
-                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Shop</span></span>
+                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
                 </a>
             </div>
 
-            <!-- Global Search Bar -->
-            <div class="hidden md:flex flex-1 max-w-md relative">
+            <form method="GET" action="stok.php" class="hidden md:flex flex-1 max-w-md relative">
                 <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
-                <input type="text" id="globalSearch" onkeyup="syncGlobalSearch(this.value)" placeholder="Cari tanaman, pot, media tanam..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] transition-all placeholder:text-stone-400">
-            </div>
+                <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari produk..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] placeholder:text-stone-400">
+            </form>
 
-            <!-- Right Utilities & Profile -->
-            <div class="flex items-center gap-3 relative">
-                <!-- Notifications Button -->
-                <div class="relative">
-                    <button onclick="toggleNotifications()" class="relative p-2 text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-full transition-colors">
-                        <i data-lucide="bell" class="w-5 h-5"></i>
-                        <span class="absolute top-1.5 right-1.5 w-2.5 h-2.5 bg-[#D97706] rounded-full ring-2 ring-white"></span>
-                    </button>
-
-                    <!-- Notifications Dropdown -->
-                    <div id="notificationDropdown" class="hidden absolute right-0 mt-2 w-80 bg-white rounded-2xl shadow-xl border border-stone-100 p-4 space-y-3 z-50">
-                        <div class="flex items-center justify-between border-b border-stone-100 pb-2">
-                            <h4 class="font-bold text-sm text-stone-800">Notifikasi</h4>
-                            <span class="text-[10px] bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full font-semibold">2 Baru</span>
-                        </div>
-                        <div class="space-y-2 max-h-60 overflow-y-auto text-xs">
-                            <div class="p-2 rounded-xl bg-amber-50/70 border border-amber-100">
-                                <p class="font-semibold text-amber-900">Stok Kritis: Fiddle Leaf Fig</p>
-                                <p class="text-amber-700 text-[11px] mt-0.5">Sisa stok 3 unit. Segera pesan ke supplier.</p>
-                            </div>
-                            <div class="p-2 rounded-xl bg-rose-50/70 border border-rose-100">
-                                <p class="font-semibold text-rose-900">Stok Habis: Calathea Orbifolia</p>
-                                <p class="text-rose-700 text-[11px] mt-0.5">Produk bernilai stok 0 dan dinonaktifkan di POS.</p>
-                            </div>
-                        </div>
-                    </div>
+            <a href="dashboard.php" class="flex items-center gap-3 pl-1">
+                <img src="https://ui-avatars.com/api/?name=<?= urlencode($admin_nama) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
+                <div class="hidden sm:block text-left">
+                    <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
+                    <p class="text-xs text-stone-500">Administrator</p>
                 </div>
-                
-                <div class="h-6 w-px bg-stone-200 hidden sm:block"></div>
-
-                <!-- Profile Dropdown Button -->
-                <div class="relative">
-                    <button onclick="toggleProfileMenu()" class="flex items-center gap-3 pl-1 focus:outline-none">
-                        <div class="relative">
-                            <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=120" alt="Nabila" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
-                            <span class="absolute bottom-0 right-0 w-2.5 h-2.5 bg-emerald-500 rounded-full ring-2 ring-white"></span>
-                        </div>
-                        <div class="hidden sm:block text-left">
-                            <p class="text-sm font-semibold text-stone-800 leading-tight">Nabila</p>
-                            <p class="text-xs text-stone-500">Administrator</p>
-                        </div>
-                        <i data-lucide="chevron-down" class="w-4 h-4 text-stone-400 hidden sm:block"></i>
-                    </button>
-
-                    <!-- Profile Dropdown Menu -->
-                    <div id="profileDropdown" class="hidden absolute right-0 mt-2 w-48 bg-white rounded-2xl shadow-xl border border-stone-100 p-2 space-y-1 z-50">
-                        <a href="profil.php" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
-                            <i data-lucide="user" class="w-4 h-4 text-stone-500"></i> Profil Saya
-                        </a>
-                        <a href="pengaturan.php" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-stone-700 hover:bg-stone-100 rounded-xl transition-colors">
-                            <i data-lucide="settings" class="w-4 h-4 text-stone-500"></i> Pengaturan Toko
-                        </a>
-                        <hr class="border-stone-100 my-1">
-                        <a href="logout.php" onclick="event.preventDefault(); alert('Logout Berhasil');" class="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 rounded-xl transition-colors">
-                            <i data-lucide="log-out" class="w-4 h-4 text-rose-500"></i> Keluar
-                        </a>
-                    </div>
-                </div>
-            </div>
+            </a>
         </div>
     </header>
 
-    <div class="flex flex-1 relative min-h-[calc(100vh-4rem)]">
-        <!-- SIDEBAR NAVIGASI DINAMIS -->
+    <div class="flex flex-1">
         <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
             <div class="space-y-6">
-                <!-- Brand Logo Sidebar -->
-                <div class="px-2 pt-2">
-                    <a href="dashboard.php" class="flex items-center gap-3">
-                        <div class="w-10 h-10 rounded-2xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
-                            <i data-lucide="sprout" class="w-6 h-6"></i>
-                        </div>
-                        <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Shop</span></span>
-                    </a>
-                </div>
-
-                <!-- Navigation Menu -->
                 <nav class="space-y-1">
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
-                    
-                    <!-- Dashboard -->
-                    <a href="dashboard.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'dashboard.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="layout-grid" class="w-5 h-5 <?= $current_page == 'dashboard.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Dashboard</span>
-                        </div>
-                        <?php if($current_page == 'dashboard.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                    
-                    <!-- Kasir (POS) -->
-                    <a href="pos.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'pos.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="shopping-bag" class="w-5 h-5 <?= $current_page == 'pos.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Kasir (POS)</span>
-                        </div>
-                        <?php if($current_page == 'pos.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                    
-                    <!-- Pembelian (Restock) -->
-                    <a href="restock.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'restock.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="truck" class="w-5 h-5 <?= $current_page == 'restock.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Pembelian (Restock)</span>
-                        </div>
-                        <?php if($current_page == 'restock.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                    
-                    <!-- Stok & Produk -->
-                    <a href="stok.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'stok.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="box" class="w-5 h-5 <?= $current_page == 'stok.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Stok & Produk</span>
-                        </div>
-                        <?php if($current_page == 'stok.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-
-                    <!-- Konsultasi Chat -->
-                    <a href="chat.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'chat.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="message-square" class="w-5 h-5 <?= $current_page == 'chat.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Konsultasi Chat</span>
-                        </div>
-                        <?php if($current_page == 'chat.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                    
-                    <!-- Pelanggan -->
-                    <a href="pelanggan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'pelanggan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="users" class="w-5 h-5 <?= $current_page == 'pelanggan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Pelanggan</span>
-                        </div>
-                        <?php if($current_page == 'pelanggan.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                    
-                    <!-- Laporan -->
-                    <a href="laporan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'laporan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="bar-chart-2" class="w-5 h-5 <?= $current_page == 'laporan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Laporan</span>
-                        </div>
-                        <?php if($current_page == 'laporan.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
-                    </a>
-                </nav>
-
-                <hr class="border-stone-100 my-4">
-
-                <!-- System Secondary Menu -->
-                <nav class="space-y-1">
+                    <?php
+                    $menu = [
+                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
+                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
+                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
+                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => true],
+                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
+                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
+                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
+                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
+                    ];
+                    foreach ($menu as $m):
+                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
+                    ?>
+                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
+                            <div class="flex items-center gap-3">
+                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                                <span><?= $m['label'] ?></span>
+                            </div>
+                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
+                        </a>
+                    <?php endforeach; ?>
+                    <hr class="border-stone-100 my-3">
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">PENGATURAN</p>
-                    <a href="pengaturan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $current_page == 'pengaturan.php' ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100' ?>">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="settings" class="w-5 h-5 <?= $current_page == 'pengaturan.php' ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                            <span>Pengaturan Toko</span>
-                        </div>
-                        <?php if($current_page == 'pengaturan.php'): ?>
-                            <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                        <?php endif; ?>
+                    <a href="pengaturan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-bold rounded-xl text-stone-700 hover:bg-stone-100">
+                        <i data-lucide="settings" class="w-5 h-5 text-stone-500"></i> Pengaturan Toko
+                    </a>
+                    <a href="bantuan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-bold rounded-xl text-stone-700 hover:bg-stone-100">
+                        <i data-lucide="help-circle" class="w-5 h-5 text-stone-500"></i> Bantuan
                     </a>
                 </nav>
             </div>
-
-            
-
-            <!-- Cabang Info Badge -->
             <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3 mt-auto">
                 <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">Cabang Batu Central</p>
-                    <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online Active</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">PlantHub Admin</p>
+                    <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>
         </aside>
 
-        <!-- MAIN CONTENT AREA -->
         <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
 
-            <!-- PAGE HEADER & ACTION BAR -->
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                     <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Kelola Stok & Produk</h1>
-                    <p class="text-sm text-stone-500 mt-0.5">Atur inventaris tanaman, pot, media tanam, serta sesuaikan harga jual POS</p>
+                    <p class="text-sm text-stone-500 mt-0.5">Atur inventaris, harga, dan gambar produk yang muncul di katalog & POS.</p>
                 </div>
-                
-                <div class="flex items-center gap-2.5 self-start sm:self-auto">
-                    <button onclick="exportDataCSV()" title="Eksport Excel/CSV" class="p-2.5 bg-white border border-stone-300 text-stone-700 hover:bg-stone-50 rounded-xl shadow-sm transition-all flex items-center justify-center">
-                        <i data-lucide="download" class="w-4 h-4"></i>
-                    </button>
-                    
-                    <button onclick="openImportModal()" class="px-4 py-2.5 bg-white border border-stone-300 text-stone-700 hover:bg-stone-50 text-sm font-semibold rounded-xl shadow-sm transition-all flex items-center gap-2">
-                        <i data-lucide="file-up" class="w-4 h-4 text-stone-500"></i>
-                        <span>Import Data</span>
-                    </button>
-                    
-                    <button onclick="openAddProductModal()" class="px-4 py-2.5 bg-[#2E7D32] hover:bg-emerald-800 text-white text-sm font-semibold rounded-xl shadow-sm shadow-emerald-900/20 transition-all flex items-center gap-2">
-                        <i data-lucide="plus" class="w-4 h-4"></i>
-                        <span>Tambah Produk Baru</span>
-                    </button>
+                <button onclick="openModalTambah()" class="inline-flex items-center gap-2 bg-[#2E7D32] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-emerald-800 shadow-sm self-start sm:self-auto">
+                    <i data-lucide="plus" class="w-4 h-4"></i> Tambah Produk
+                </button>
+            </div>
+
+            <!-- ALERT -->
+            <?php if ($pesan_sukses): ?>
+                <div class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm flex items-center gap-2">
+                    <i data-lucide="check-circle" class="w-5 h-5 text-[#2E7D32] shrink-0"></i>
+                    <span><?= htmlspecialchars($pesan_sukses) ?></span>
+                </div>
+            <?php endif; ?>
+            <?php if ($pesan_error): ?>
+                <div class="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-sm flex items-center gap-2">
+                    <i data-lucide="alert-circle" class="w-5 h-5 shrink-0"></i>
+                    <span><?= htmlspecialchars($pesan_error) ?></span>
+                </div>
+            <?php endif; ?>
+
+            <!-- 4 STATISTIK -->
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <a href="stok.php" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32] hover:shadow-md transition-shadow">
+                    <div class="flex items-center justify-between mb-2">
+                        <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Total Produk</p>
+                        <i data-lucide="package" class="w-4 h-4 text-[#2E7D32]"></i>
+                    </div>
+                    <p class="text-2xl font-bold text-stone-800"><?= $statTotal ?></p>
+                    <p class="text-[11px] text-stone-400 mt-1">Produk di katalog</p>
+                </a>
+                <a href="stok.php?status_filter=safe" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-emerald-500 hover:shadow-md transition-shadow">
+                    <div class="flex items-center justify-between mb-2">
+                        <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Stok Aman</p>
+                        <i data-lucide="check-circle" class="w-4 h-4 text-emerald-600"></i>
+                    </div>
+                    <p class="text-2xl font-bold text-stone-800"><?= $statSafe ?></p>
+                    <p class="text-[11px] text-stone-400 mt-1">Di atas minimal</p>
+                </a>
+                <a href="stok.php?status_filter=critical" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#D97706] hover:shadow-md transition-shadow">
+                    <div class="flex items-center justify-between mb-2">
+                        <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Stok Kritis</p>
+                        <i data-lucide="alert-triangle" class="w-4 h-4 text-[#D97706]"></i>
+                    </div>
+                    <p class="text-2xl font-bold text-stone-800"><?= $statCritical ?></p>
+                    <p class="text-[11px] text-stone-400 mt-1">Perlu restock</p>
+                </a>
+                <a href="stok.php?status_filter=empty" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-rose-600 hover:shadow-md transition-shadow">
+                    <div class="flex items-center justify-between mb-2">
+                        <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Stok Habis</p>
+                        <i data-lucide="x-circle" class="w-4 h-4 text-rose-600"></i>
+                    </div>
+                    <p class="text-2xl font-bold text-stone-800"><?= $statEmpty ?></p>
+                    <p class="text-[11px] text-stone-400 mt-1">Segera isi ulang</p>
+                </a>
+            </div>
+
+            <!-- FILTER -->
+            <div class="bg-white p-4 rounded-2xl border border-stone-200/80 shadow-sm space-y-3">
+                <div class="flex items-center gap-2 overflow-x-auto pb-1">
+                    <a href="stok.php<?= $search ? '?search=' . urlencode($search) : '' ?>" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $kategori_id === 0 ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">Semua Kategori</a>
+                    <?php foreach ($kategoriList as $k): ?>
+                        <a href="stok.php?kategori=<?= (int)$k['id'] ?><?= $search ? '&search=' . urlencode($search) : '' ?>" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $kategori_id === (int)$k['id'] ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">
+                            <?= htmlspecialchars($k['nama_kategori']) ?>
+                        </a>
+                    <?php endforeach; ?>
+
+                    <div class="ml-auto flex items-center gap-2">
+                        <span class="text-xs text-stone-500 whitespace-nowrap">Status:</span>
+                        <select onchange="window.location.href='stok.php?status_filter='+this.value+'<?= $kategori_id > 0 ? '&kategori=' . $kategori_id : '' ?><?= $search ? '&search=' . urlencode($search) : '' ?>'" class="px-3 py-1.5 text-xs bg-stone-50 border border-stone-200 rounded-lg focus:outline-none focus:border-[#2E7D32]">
+                            <option value="semua" <?= $statusFilter === 'semua' ? 'selected' : '' ?>>Semua</option>
+                            <option value="safe" <?= $statusFilter === 'safe' ? 'selected' : '' ?>>Aman</option>
+                            <option value="critical" <?= $statusFilter === 'critical' ? 'selected' : '' ?>>Kritis</option>
+                            <option value="empty" <?= $statusFilter === 'empty' ? 'selected' : '' ?>>Habis</option>
+                        </select>
+                    </div>
                 </div>
             </div>
 
-            <!-- METRIC CARDS -->
-            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div onclick="filterStatus('all')" class="cursor-pointer bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32] flex items-center justify-between hover:scale-[1.02] transition-transform">
-                    <div class="space-y-1">
-                        <p class="text-xs font-semibold text-stone-500 uppercase tracking-wider">Total Item POS</p>
-                        <p class="text-2xl font-bold text-stone-800">6 <span class="text-sm font-medium text-stone-500">Produk</span></p>
-                        <p class="text-xs text-emerald-600 flex items-center gap-1 font-medium"><i data-lucide="check" class="w-3.5 h-3.5"></i> Terhubung ke Kasir</p>
+            <!-- GRID PRODUK -->
+            <?php if (empty($produk)): ?>
+                <div class="bg-white rounded-2xl border border-stone-200/80 p-12 text-center">
+                    <div class="w-16 h-16 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <i data-lucide="package-search" class="w-7 h-7 text-stone-400"></i>
                     </div>
-                    <div class="w-12 h-12 rounded-xl bg-emerald-50 text-[#2E7D32] flex items-center justify-center">
-                        <i data-lucide="leaf" class="w-6 h-6"></i>
-                    </div>
+                    <p class="text-sm font-semibold text-stone-700">Belum ada produk</p>
+                    <p class="text-xs text-stone-500 mt-1">Klik "Tambah Produk" untuk mulai mengisi katalog toko.</p>
                 </div>
+            <?php else: ?>
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                    <?php foreach ($produk as $p):
+                        $stok = (int)$p['stok'];
+                        $min  = (int)$p['stok_minimal'];
+                        $status = $stok === 0 ? 'empty' : ($stok <= $min ? 'critical' : 'safe');
+                        $badgeClass = $status === 'empty' ? 'bg-rose-600' : ($status === 'critical' ? 'bg-[#D97706]' : 'bg-emerald-600');
+                        $badgeText  = $status === 'empty' ? 'HABIS' : ($status === 'critical' ? 'KRITIS' : 'AMAN');
+                        $imgSrc = gambarProduk($p['gambar']);
+                    ?>
+                        <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden flex flex-col group">
+                            <div class="relative bg-stone-100 aspect-square overflow-hidden">
+                                <img src="<?= htmlspecialchars($imgSrc) ?>" alt="<?= htmlspecialchars($p['nama_tanaman']) ?>" class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300">
+                                <span class="absolute top-2.5 left-2.5 <?= $badgeClass ?> text-white text-[10px] font-bold px-2 py-1 rounded-md shadow-sm"><?= $badgeText ?></span>
+                            </div>
 
-                <div onclick="filterStatus('safe')" class="cursor-pointer bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-emerald-500 flex items-center justify-between hover:scale-[1.02] transition-transform">
-                    <div class="space-y-1">
-                        <p class="text-xs font-semibold text-stone-500 uppercase tracking-wider">Stok Aman</p>
-                        <p class="text-2xl font-bold text-stone-800">4 <span class="text-sm font-medium text-stone-500">Produk</span></p>
-                        <p class="text-xs text-stone-400 font-medium">Melampaui batas minimum</p>
-                    </div>
-                    <div class="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                        <i data-lucide="check-circle" class="w-6 h-6"></i>
-                    </div>
-                </div>
+                            <div class="p-4 flex-1 flex flex-col">
+                                <p class="text-[10px] font-semibold uppercase text-stone-400 tracking-wider"><?= htmlspecialchars($p['nama_kategori'] ?? 'Tanpa Kategori') ?></p>
+                                <h3 class="text-sm font-bold text-stone-800 mt-0.5 leading-snug line-clamp-2 min-h-[2.5rem]"><?= htmlspecialchars($p['nama_tanaman']) ?></h3>
 
-                <div onclick="filterStatus('critical')" class="cursor-pointer bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#D97706] flex items-center justify-between hover:scale-[1.02] transition-transform">
-                    <div class="space-y-1">
-                        <p class="text-xs font-semibold text-stone-500 uppercase tracking-wider">Stok Kritis</p>
-                        <p class="text-2xl font-bold text-stone-800">1 <span class="text-sm font-medium text-stone-500">Item Kritis</span></p>
-                        <span class="text-xs text-[#D97706] font-semibold flex items-center gap-1 hover:underline">
-                            Filter Kritis <i data-lucide="arrow-right" class="w-3 h-3"></i>
-                        </span>
-                    </div>
-                    <div class="w-12 h-12 rounded-xl bg-amber-50 text-[#D97706] flex items-center justify-center">
-                        <i data-lucide="alert-triangle" class="w-6 h-6"></i>
-                    </div>
-                </div>
+                                <div class="mt-2">
+                                    <p class="text-lg font-bold text-[#2E7D32]">Rp <?= number_format($p['harga_jual'], 0, ',', '.') ?></p>
+                                    <p class="text-[10px] text-stone-400">Beli: Rp <?= number_format($p['harga_beli'], 0, ',', '.') ?></p>
+                                </div>
 
-                <div onclick="filterStatus('empty')" class="cursor-pointer bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-rose-700 flex items-center justify-between hover:scale-[1.02] transition-transform">
-                    <div class="space-y-1">
-                        <p class="text-xs font-semibold text-stone-500 uppercase tracking-wider">Stok Habis</p>
-                        <p class="text-2xl font-bold text-stone-800">1 <span class="text-sm font-medium text-stone-500">Produk</span></p>
-                        <p class="text-xs text-rose-700 font-medium">Restock secepatnya</p>
-                    </div>
-                    <div class="w-12 h-12 rounded-xl bg-rose-50 text-rose-700 flex items-center justify-center">
-                        <i data-lucide="package-x" class="w-6 h-6"></i>
-                    </div>
-                </div>
-            </div>
+                                <div class="mt-3 pt-3 border-t border-stone-100 flex items-center justify-between text-xs">
+                                    <span class="text-stone-600">Stok: <b class="<?= $status === 'empty' ? 'text-rose-600' : ($status === 'critical' ? 'text-[#D97706]' : 'text-emerald-700') ?>"><?= $stok ?></b> / min <?= $min ?></span>
+                                </div>
 
-            <!-- CONTROL TOOLBAR (FILTER & SEARCH) -->
-            <div class="bg-white p-4 rounded-2xl border border-stone-200/80 shadow-sm space-y-4">
-                <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
-                    <div class="relative flex-1">
-                        <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
-                        <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="Cari tanaman, pot, media tanam, atau SKU..." class="w-full pl-10 pr-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] transition-all placeholder:text-stone-400">
-                    </div>
-
-                    <div class="flex items-center gap-2.5 self-end lg:self-auto">
-                        <div class="relative">
-                            <select id="statusFilter" onchange="filterTable()" class="appearance-none bg-stone-50 border border-stone-200 text-stone-700 text-sm font-medium py-2.5 pl-3.5 pr-9 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] cursor-pointer">
-                                <option value="all">Semua Status</option>
-                                <option value="safe">Stok Aman</option>
-                                <option value="critical">Stok Kritis</option>
-                                <option value="empty">Stok Habis</option>
-                            </select>
-                            <i data-lucide="chevron-down" class="w-4 h-4 text-stone-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none"></i>
+                                <div class="mt-3 pt-3 border-t border-stone-100 grid grid-cols-2 gap-2">
+                                    <button onclick='openModalEdit(<?= json_encode([
+                                        "id" => $p['id'], "nama" => $p['nama_tanaman'], "kategori_id" => $p['kategori_id'],
+                                        "harga_jual" => $p['harga_jual'], "harga_beli" => $p['harga_beli'],
+                                        "stok" => $p['stok'], "stok_minimal" => $p['stok_minimal'],
+                                        "deskripsi" => $p['deskripsi'], "perawatan" => $p['cara_perawatan'],
+                                        "gambar" => $imgSrc
+                                    ]) ?>)' class="text-xs font-semibold text-stone-700 bg-stone-100 hover:bg-stone-200 py-2 rounded-lg transition inline-flex items-center justify-center gap-1">
+                                        <i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Edit
+                                    </button>
+                                    <button onclick='konfirmasiHapus(<?= (int)$p['id'] ?>, <?= json_encode($p['nama_tanaman']) ?>)' class="text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 py-2 rounded-lg transition inline-flex items-center justify-center gap-1">
+                                        <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Hapus
+                                    </button>
+                                </div>
+                            </div>
                         </div>
-                    </div>
+                    <?php endforeach; ?>
                 </div>
-
-                <!-- Quick Filter Tabs Sesuai Kategori POS -->
-                <div class="flex items-center gap-2 overflow-x-auto no-scrollbar pt-1 border-t border-stone-100" id="categoryTabs">
-                    <button onclick="setCategoryFilter('all', this)" class="category-btn px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-[#2E7D32] text-white whitespace-nowrap shadow-sm">
-                        Semua Kategori
-                    </button>
-                    <button onclick="setCategoryFilter('Indoor', this)" class="category-btn px-3.5 py-1.5 text-xs font-medium rounded-lg bg-stone-100 text-stone-600 hover:bg-stone-200/70 whitespace-nowrap transition-colors">
-                        Indoor
-                    </button>
-                    <button onclick="setCategoryFilter('Outdoor', this)" class="category-btn px-3.5 py-1.5 text-xs font-medium rounded-lg bg-stone-100 text-stone-600 hover:bg-stone-200/70 whitespace-nowrap transition-colors">
-                        Outdoor
-                    </button>
-                    <button onclick="setCategoryFilter('Pot', this)" class="category-btn px-3.5 py-1.5 text-xs font-medium rounded-lg bg-stone-100 text-stone-600 hover:bg-stone-200/70 whitespace-nowrap transition-colors">
-                        Pot
-                    </button>
-                    <button onclick="setCategoryFilter('Media Tanam', this)" class="category-btn px-3.5 py-1.5 text-xs font-medium rounded-lg bg-stone-100 text-stone-600 hover:bg-stone-200/70 whitespace-nowrap transition-colors">
-                        Media Tanam
-                    </button>
-                </div>
-            </div>
-
-            <!-- MAIN INVENTORY TABLE CONTAINER -->
-            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left border-collapse" id="inventoryTable">
-                        <thead>
-                            <tr class="bg-stone-50/80 border-b border-stone-200 text-[11px] font-bold text-stone-500 uppercase tracking-wider">
-                                <th class="p-4 w-10 text-center"><input type="checkbox" id="selectAll" onclick="toggleSelectAll()" class="rounded border-stone-300 text-[#2E7D32] focus:ring-[#2E7D32] cursor-pointer"></th>
-                                <th class="py-4 px-4">Produk POS</th>
-                                <th class="py-4 px-4">Kategori</th>
-                                <th class="py-4 px-4">Harga Jual</th>
-                                <th class="py-4 px-4 min-w-[190px]">Stok Saat Ini (Klik Ubah)</th>
-                                <th class="py-4 px-4">Stok Min.</th>
-                                <th class="py-4 px-4 text-center">Aksi</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-stone-100 text-sm">
-
-                            <!-- Item 1: Monstera Deliciosa -->
-                            <tr class="hover:bg-stone-50/60 transition-colors product-row" data-category="Indoor" data-status="safe">
-                                <td class="p-4 text-center"><input type="checkbox" onclick="updateBulkBar()" class="row-checkbox rounded border-stone-300 text-[#2E7D32]"></td>
-                                <td class="py-3.5 px-4">
-                                    <div class="flex items-center gap-3">
-                                        <img src="https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400" alt="Monstera" class="w-11 h-11 rounded-xl object-cover bg-stone-100 border border-stone-200">
-                                        <div>
-                                            <p class="font-semibold text-stone-800 product-name">Monstera Deliciosa</p>
-                                            <p class="text-xs text-stone-400 font-mono product-sku">SKU: PLN-MNS-001</p>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="py-3.5 px-4">
-                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200/60">Indoor</span>
-                                </td>
-                                <td class="py-3.5 px-4 font-semibold text-stone-800">Rp 125.000</td>
-                                <td class="py-3.5 px-4 cursor-pointer hover:bg-emerald-50/60 p-2 rounded-xl transition-all group" onclick="openStockModal('PLN-MNS-001', 'Monstera Deliciosa', 8, 5)">
-                                    <div class="space-y-1.5">
-                                        <div class="flex items-center justify-between text-xs">
-                                            <span class="font-bold text-emerald-700 group-hover:underline flex items-center gap-1">
-                                                <span class="stock-val">8</span> Unit <i data-lucide="edit-2" class="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity"></i>
-                                            </span>
-                                            <span class="text-[10px] text-stone-400 font-medium">Aman</span>
-                                        </div>
-                                        <div class="w-full bg-stone-100 h-2 rounded-full overflow-hidden">
-                                            <div class="bg-emerald-600 h-full rounded-full" style="width: 80%"></div>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="py-3.5 px-4 text-stone-500 font-medium">5 Unit</td>
-                                <td class="py-3.5 px-4">
-                                    <div class="flex items-center justify-center gap-1">
-                                        <button onclick="openEditProductModal('PLN-MNS-001', 'Monstera Deliciosa', 'Indoor', '125000', 5)" title="Edit Detail Produk" class="p-1.5 text-stone-500 hover:text-[#2E7D32] hover:bg-stone-100 rounded-lg">
-                                            <i data-lucide="edit-3" class="w-4 h-4"></i>
-                                        </button>
-                                        <button onclick="openStockModal('PLN-MNS-001', 'Monstera Deliciosa', 8, 5)" title="Adjustment Stok" class="p-1.5 text-stone-500 hover:text-emerald-700 hover:bg-stone-100 rounded-lg">
-                                            <i data-lucide="plus-circle" class="w-4 h-4"></i>
-                                        </button>
-                                        <button onclick="deleteProduct(this)" title="Hapus Produk" class="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg">
-                                            <i data-lucide="trash-2" class="w-4 h-4"></i>
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-
-                            <!-- Item 2: Snake Plant (Sansevieria) -->
-                            <tr class="hover:bg-stone-50/60 transition-colors product-row" data-category="Indoor" data-status="safe">
-                                <td class="p-4 text-center"><input type="checkbox" onclick="updateBulkBar()" class="row-checkbox rounded border-stone-300 text-[#2E7D32]"></td>
-                                <td class="py-3.5 px-4">
-                                    <div class="flex items-center gap-3">
-                                        <img src="https://images.unsplash.com/photo-1509423350716-97f9360b4e09?auto=format&fit=crop&q=80&w=400" alt="Snake Plant" class="w-11 h-11 rounded-xl object-cover bg-stone-100 border border-stone-200">
-                                        <div>
-                                            <p class="font-semibold text-stone-800 product-name">Snake Plant (Sansevieria)</p>
-                                            <p class="text-xs text-stone-400 font-mono product-sku">SKU: PLN-SNK-002</p>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="py-3.5 px-4">
-                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200/60">Indoor</span>
-                                </td>
-                                <td class="py-3.5 px-4 font-semibold text-stone-800">Rp 45.000</td>
-                                <td class="py-3.5 px-4 cursor-pointer hover:bg-emerald-50/60 p-2 rounded-xl transition-all group" onclick="openStockModal('PLN-SNK-002', 'Snake Plant (Sansevieria)', 15, 5)">
-                                    <div class="space-y-1.5">
-                                        <div class="flex items-center justify-between text-xs">
-                                            <span class="font-bold text-emerald-700 group-hover:underline flex items-center gap-1">
-                                                <span class="stock-val">15</span> Unit <i data-lucide="edit-2" class="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity"></i>
-                                            </span>
-                                            <span class="text-[10px] text-stone-400 font-medium">Aman</span>
-                                        </div>
-                                        <div class="w-full bg-stone-100 h-2 rounded-full overflow-hidden">
-                                            <div class="bg-emerald-600 h-full rounded-full" style="width: 90%"></div>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="py-3.5 px-4 text-stone-500 font-medium">5 Unit</td>
-                                <td class="py-3.5 px-4">
-                                    <div class="flex items-center justify-center gap-1">
-                                        <button onclick="openEditProductModal('PLN-SNK-002', 'Snake Plant (Sansevieria)', 'Indoor', '45000', 5)" title="Edit Detail Produk" class="p-1.5 text-stone-500 hover:text-[#2E7D32] hover:bg-stone-100 rounded-lg">
-                                            <i data-lucide="edit-3" class="w-4 h-4"></i>
-                                        </button>
-                                        <button onclick="openStockModal('PLN-SNK-002', 'Snake Plant (Sansevieria)', 15, 5)" title="Adjustment Stok" class="p-1.5 text-stone-500 hover:text-emerald-700 hover:bg-stone-100 rounded-lg">
-                                            <i data-lucide="plus-circle" class="w-4 h-4"></i>
-                                        </button>
-                                        <button onclick="deleteProduct(this)" title="Hapus Produk" class="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg">
-                                            <i data-lucide="trash-2" class="w-4 h-4"></i>
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-
-                            <!-- Item 3: Fiddle Leaf Fig -->
-                            <tr class="bg-amber-50/50 hover:bg-amber-50/80 transition-colors border-l-4 border-l-[#D97706] product-row" data-category="Indoor" data-status="critical">
-                                <td class="p-4 text-center"><input type="checkbox" onclick="updateBulkBar()" class="row-checkbox rounded border-stone-300 text-[#2E7D32]"></td>
-                                <td class="py-3.5 px-4">
-                                    <div class="flex items-center gap-3">
-                                        <img src="https://images.unsplash.com/photo-1545241047-6083a3684587?auto=format&fit=crop&q=80&w=400" alt="Fiddle Leaf" class="w-11 h-11 rounded-xl object-cover bg-stone-100 border border-stone-200">
-                                        <div>
-                                            <p class="font-semibold text-stone-800 product-name">Fiddle Leaf Fig</p>
-                                            <p class="text-xs text-stone-400 font-mono product-sku">SKU: PLN-FLF-003</p>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="py-3.5 px-4">
-                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200/60">Indoor</span>
-                                </td>
-                                <td class="py-3.5 px-4 font-semibold text-stone-800">Rp 210.000</td>
-                                <td class="py-3.5 px-4 cursor-pointer hover:bg-amber-100/60 p-2 rounded-xl transition-all group" onclick="openStockModal('PLN-FLF-003', 'Fiddle Leaf Fig', 3, 5)">
-                                    <div class="space-y-1.5">
-                                        <div class="flex items-center justify-between text-xs">
-                                            <span class="font-bold text-[#D97706] group-hover:underline flex items-center gap-1">
-                                                <span class="stock-val">3</span> Unit <i data-lucide="alert-circle" class="w-3 h-3"></i>
-                                            </span>
-                                            <span class="text-[10px] text-[#D97706] font-medium">Kritis</span>
-                                        </div>
-                                        <div class="w-full bg-stone-200 h-2 rounded-full overflow-hidden">
-                                            <div class="bg-[#D97706] h-full rounded-full" style="width: 35%"></div>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="py-3.5 px-4 text-stone-600 font-semibold">5 Unit</td>
-                                <td class="py-3.5 px-4">
-                                    <div class="flex items-center justify-center gap-1">
-                                        <button onclick="openEditProductModal('PLN-FLF-003', 'Fiddle Leaf Fig', 'Indoor', '210000', 5)" title="Edit Detail Produk" class="p-1.5 text-stone-500 hover:text-[#2E7D32] hover:bg-stone-100 rounded-lg">
-                                            <i data-lucide="edit-3" class="w-4 h-4"></i>
-                                        </button>
-                                        <button onclick="openStockModal('PLN-FLF-003', 'Fiddle Leaf Fig', 3, 5)" title="Adjustment Stok" class="p-1.5 text-[#D97706] hover:bg-amber-100 rounded-lg">
-                                            <i data-lucide="plus-circle" class="w-4 h-4"></i>
-                                        </button>
-                                        <button onclick="deleteProduct(this)" title="Hapus Produk" class="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg">
-                                            <i data-lucide="trash-2" class="w-4 h-4"></i>
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-
-                            <!-- Item 4: Calathea Orbifolia -->
-                            <tr class="hover:bg-stone-50/60 transition-colors product-row" data-category="Indoor" data-status="empty">
-                                <td class="p-4 text-center"><input type="checkbox" onclick="updateBulkBar()" class="row-checkbox rounded border-stone-300 text-[#2E7D32]"></td>
-                                <td class="py-3.5 px-4">
-                                    <div class="flex items-center gap-3">
-                                        <img src="https://images.unsplash.com/photo-1599598425947-320f323c683b?auto=format&fit=crop&q=80&w=400" alt="Calathea" class="w-11 h-11 rounded-xl object-cover bg-stone-100 border border-stone-200 grayscale opacity-75">
-                                        <div>
-                                            <p class="font-semibold text-stone-800 product-name">Calathea Orbifolia</p>
-                                            <p class="text-xs text-stone-400 font-mono product-sku">SKU: PLN-CLT-004</p>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="py-3.5 px-4">
-                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-200/60">Indoor</span>
-                                </td>
-                                <td class="py-3.5 px-4 font-semibold text-stone-800">Rp 85.000</td>
-                                <td class="py-3.5 px-4 cursor-pointer hover:bg-rose-50/60 p-2 rounded-xl transition-all group" onclick="openStockModal('PLN-CLT-004', 'Calathea Orbifolia', 0, 5)">
-                                    <div class="space-y-1.5">
-                                        <div class="flex items-center justify-between text-xs">
-                                            <span class="font-bold text-rose-700 group-hover:underline flex items-center gap-1">
-                                                <span class="stock-val">0</span> Unit <i data-lucide="edit-2" class="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity"></i>
-                                            </span>
-                                            <span class="text-[10px] text-rose-700 font-semibold">Habis</span>
-                                        </div>
-                                        <div class="w-full bg-stone-100 h-2 rounded-full overflow-hidden">
-                                            <div class="bg-rose-600 h-full rounded-full" style="width: 0%"></div>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="py-3.5 px-4 text-stone-500 font-medium">5 Unit</td>
-                                <td class="py-3.5 px-4">
-                                    <div class="flex items-center justify-center gap-1">
-                                        <button onclick="openEditProductModal('PLN-CLT-004', 'Calathea Orbifolia', 'Indoor', '85000', 5)" title="Edit Detail Produk" class="p-1.5 text-stone-500 hover:text-[#2E7D32] hover:bg-stone-100 rounded-lg">
-                                            <i data-lucide="edit-3" class="w-4 h-4"></i>
-                                        </button>
-                                        <button onclick="openStockModal('PLN-CLT-004', 'Calathea Orbifolia', 0, 5)" title="Adjustment Stok" class="p-1.5 text-rose-600 hover:bg-rose-50 rounded-lg">
-                                            <i data-lucide="plus-circle" class="w-4 h-4"></i>
-                                        </button>
-                                        <button onclick="deleteProduct(this)" title="Hapus Produk" class="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg">
-                                            <i data-lucide="trash-2" class="w-4 h-4"></i>
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-
-                            <!-- Item 5: Pot Terakota Minimalis 20cm -->
-                            <tr class="hover:bg-stone-50/60 transition-colors product-row" data-category="Pot" data-status="safe">
-                                <td class="p-4 text-center"><input type="checkbox" onclick="updateBulkBar()" class="row-checkbox rounded border-stone-300 text-[#2E7D32]"></td>
-                                <td class="py-3.5 px-4">
-                                    <div class="flex items-center gap-3">
-                                        <img src="https://images.unsplash.com/photo-1485955900006-10f4d324d411?auto=format&fit=crop&q=80&w=400" alt="Pot Terakota" class="w-11 h-11 rounded-xl object-cover bg-stone-100 border border-stone-200">
-                                        <div>
-                                            <p class="font-semibold text-stone-800 product-name">Pot Terakota Minimalis 20cm</p>
-                                            <p class="text-xs text-stone-400 font-mono product-sku">SKU: POT-TRK-005</p>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="py-3.5 px-4">
-                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200/60">Pot</span>
-                                </td>
-                                <td class="py-3.5 px-4 font-semibold text-stone-800">Rp 35.000</td>
-                                <td class="py-3.5 px-4 cursor-pointer hover:bg-emerald-50/60 p-2 rounded-xl transition-all group" onclick="openStockModal('POT-TRK-005', 'Pot Terakota Minimalis 20cm', 24, 10)">
-                                    <div class="space-y-1.5">
-                                        <div class="flex items-center justify-between text-xs">
-                                            <span class="font-bold text-emerald-700 group-hover:underline flex items-center gap-1">
-                                                <span class="stock-val">24</span> Unit <i data-lucide="edit-2" class="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity"></i>
-                                            </span>
-                                            <span class="text-[10px] text-stone-400 font-medium">Aman</span>
-                                        </div>
-                                        <div class="w-full bg-stone-100 h-2 rounded-full overflow-hidden">
-                                            <div class="bg-emerald-600 h-full rounded-full" style="width: 85%"></div>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="py-3.5 px-4 text-stone-500 font-medium">10 Unit</td>
-                                <td class="py-3.5 px-4">
-                                    <div class="flex items-center justify-center gap-1">
-                                        <button onclick="openEditProductModal('POT-TRK-005', 'Pot Terakota Minimalis 20cm', 'Pot', '35000', 10)" title="Edit Detail Produk" class="p-1.5 text-stone-500 hover:text-[#2E7D32] hover:bg-stone-100 rounded-lg">
-                                            <i data-lucide="edit-3" class="w-4 h-4"></i>
-                                        </button>
-                                        <button onclick="openStockModal('POT-TRK-005', 'Pot Terakota Minimalis 20cm', 24, 10)" title="Adjustment Stok" class="p-1.5 text-stone-500 hover:text-emerald-700 hover:bg-stone-100 rounded-lg">
-                                            <i data-lucide="plus-circle" class="w-4 h-4"></i>
-                                        </button>
-                                        <button onclick="deleteProduct(this)" title="Hapus Produk" class="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg">
-                                            <i data-lucide="trash-2" class="w-4 h-4"></i>
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-
-                            <!-- Item 6: Media Tanam Organik Premium 5kg -->
-                            <tr class="hover:bg-stone-50/60 transition-colors product-row" data-category="Media Tanam" data-status="safe">
-                                <td class="p-4 text-center"><input type="checkbox" onclick="updateBulkBar()" class="row-checkbox rounded border-stone-300 text-[#2E7D32]"></td>
-                                <td class="py-3.5 px-4">
-                                    <div class="flex items-center gap-3">
-                                        <img src="https://images.unsplash.com/photo-1416879595882-3373a0480b5b?auto=format&fit=crop&q=80&w=400" alt="Media Tanam" class="w-11 h-11 rounded-xl object-cover bg-stone-100 border border-stone-200">
-                                        <div>
-                                            <p class="font-semibold text-stone-800 product-name">Media Tanam Organik Premium 5kg</p>
-                                            <p class="text-xs text-stone-400 font-mono product-sku">SKU: MDT-ORG-006</p>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="py-3.5 px-4">
-                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-50 text-blue-800 border border-blue-200/60">Media Tanam</span>
-                                </td>
-                                <td class="py-3.5 px-4 font-semibold text-stone-800">Rp 28.000</td>
-                                <td class="py-3.5 px-4 cursor-pointer hover:bg-emerald-50/60 p-2 rounded-xl transition-all group" onclick="openStockModal('MDT-ORG-006', 'Media Tanam Organik Premium 5kg', 40, 15)">
-                                    <div class="space-y-1.5">
-                                        <div class="flex items-center justify-between text-xs">
-                                            <span class="font-bold text-emerald-700 group-hover:underline flex items-center gap-1">
-                                                <span class="stock-val">40</span> Unit <i data-lucide="edit-2" class="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity"></i>
-                                            </span>
-                                            <span class="text-[10px] text-stone-400 font-medium">Aman</span>
-                                        </div>
-                                        <div class="w-full bg-stone-100 h-2 rounded-full overflow-hidden">
-                                            <div class="bg-emerald-600 h-full rounded-full" style="width: 95%"></div>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td class="py-3.5 px-4 text-stone-500 font-medium">15 Unit</td>
-                                <td class="py-3.5 px-4">
-                                    <div class="flex items-center justify-center gap-1">
-                                        <button onclick="openEditProductModal('MDT-ORG-006', 'Media Tanam Organik Premium 5kg', 'Media Tanam', '28000', 15)" title="Edit Detail Produk" class="p-1.5 text-stone-500 hover:text-[#2E7D32] hover:bg-stone-100 rounded-lg">
-                                            <i data-lucide="edit-3" class="w-4 h-4"></i>
-                                        </button>
-                                        <button onclick="openStockModal('MDT-ORG-006', 'Media Tanam Organik Premium 5kg', 40, 15)" title="Adjustment Stok" class="p-1.5 text-stone-500 hover:text-emerald-700 hover:bg-stone-100 rounded-lg">
-                                            <i data-lucide="plus-circle" class="w-4 h-4"></i>
-                                        </button>
-                                        <button onclick="deleteProduct(this)" title="Hapus Produk" class="p-1.5 text-stone-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg">
-                                            <i data-lucide="trash-2" class="w-4 h-4"></i>
-                                        </button>
-                                    </div>
-                                </td>
-                            </tr>
-
-                        </tbody>
-                    </table>
-                </div>
-
-                <!-- BOTTOM PAGINATION BAR -->
-                <div class="p-4 bg-stone-50/80 border-t border-stone-200 flex flex-col sm:flex-row items-center justify-between gap-4">
-                    <p class="text-xs text-stone-500 font-medium">
-                        Menampilkan <span class="font-bold text-stone-700">1-6</span> dari <span class="font-bold text-stone-700">6</span> Produk POS
-                    </p>
-
-                    <div class="flex items-center gap-1.5">
-                        <button onclick="showToast('Halaman Pertama')" class="px-3 py-1.5 text-xs font-semibold text-stone-500 bg-white border border-stone-200 rounded-lg hover:bg-stone-100 transition-colors flex items-center gap-1">
-                            <i data-lucide="chevron-left" class="w-3.5 h-3.5"></i> Sebelumnya
-                        </button>
-                        <div class="flex items-center gap-1">
-                            <button class="w-8 h-8 text-xs font-bold bg-[#2E7D32] text-white rounded-lg shadow-sm">1</button>
-                        </div>
-                        <button onclick="showToast('Sudah di halaman terakhir')" class="px-3 py-1.5 text-xs font-semibold text-stone-700 bg-white border border-stone-200 rounded-lg hover:bg-stone-100 transition-colors flex items-center gap-1">
-                            Selanjutnya <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
-                        </button>
-                    </div>
-                </div>
-            </div>
+            <?php endif; ?>
 
         </main>
     </div>
 
-    <!-- BULK ACTION FLOATING BAR -->
-    <div id="bulkBar" class="fixed bottom-6 left-1/2 -translate-x-1/2 bg-stone-900 text-white px-5 py-3 rounded-2xl shadow-2xl flex items-center gap-4 hidden z-40 transition-all">
-        <span class="text-xs font-semibold" id="bulkCount">0 Item Dipilih</span>
-        <div class="h-4 w-px bg-stone-700"></div>
-        <button onclick="bulkDelete()" class="text-xs font-medium text-rose-400 hover:text-rose-300 flex items-center gap-1.5">
-            <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Hapus Terpilih
-        </button>
-    </div>
-
-    <!-- MODAL POPUP UPDATE STOK -->
-    <div id="stockModal" class="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-200">
-        <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-stone-100 space-y-4">
-            <div class="flex items-center justify-between border-b border-stone-100 pb-3">
-                <h3 class="text-lg font-bold text-stone-800 flex items-center gap-2">
-                    <i data-lucide="layers" class="w-5 h-5 text-[#2E7D32]"></i> Update Stok Produk
-                </h3>
-                <button onclick="closeStockModal()" class="text-stone-400 hover:text-stone-600 p-1 rounded-lg">
+    <!-- MODAL TAMBAH / EDIT -->
+    <div id="modalProduk" class="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 hidden items-center justify-center p-4 overflow-y-auto">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full my-8">
+            <div class="p-5 border-b border-stone-100 flex items-center justify-between">
+                <div>
+                    <h3 id="modalTitle" class="text-lg font-bold text-stone-800">Tambah Produk Baru</h3>
+                    <p class="text-xs text-stone-500 mt-0.5">Lengkapi detail produk di bawah ini.</p>
+                </div>
+                <button onclick="closeModal()" class="text-stone-400 hover:text-stone-700 p-1.5 rounded-lg hover:bg-stone-100">
                     <i data-lucide="x" class="w-5 h-5"></i>
                 </button>
             </div>
 
-            <div class="space-y-4">
-                <div class="bg-stone-50 p-3 rounded-xl border border-stone-100">
-                    <p class="text-xs text-stone-400">Nama Produk</p>
-                    <p id="modalProductName" class="text-base font-bold text-stone-800">-</p>
-                    <div class="flex items-center justify-between mt-1">
-                        <p id="modalProductSKU" class="text-xs font-mono text-stone-500">-</p>
-                        <p id="modalMinStock" class="text-xs text-amber-700 font-medium">Batas Min: -</p>
+            <form id="formProduk" method="POST" action="stok.php" enctype="multipart/form-data" class="p-5 space-y-4">
+                <input type="hidden" name="action" id="formAction" value="tambah">
+                <input type="hidden" name="id" id="formId" value="">
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <!-- KIRI: FORM -->
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-xs font-bold text-stone-600 uppercase mb-1">Nama Produk <span class="text-rose-500">*</span></label>
+                            <input type="text" name="nama_tanaman" id="inNama" required class="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-bold text-stone-600 uppercase mb-1">Kategori</label>
+                            <select name="kategori_id" id="inKategori" class="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                                <option value="0">-- Tanpa Kategori --</option>
+                                <?php foreach ($kategoriList as $k): ?>
+                                    <option value="<?= (int)$k['id'] ?>"><?= htmlspecialchars($k['nama_kategori']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-bold text-stone-600 uppercase mb-1">Harga Jual <span class="text-rose-500">*</span></label>
+                                <input type="number" name="harga_jual" id="inHargaJual" min="0" step="500" required class="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-stone-600 uppercase mb-1">Harga Beli</label>
+                                <input type="number" name="harga_beli" id="inHargaBeli" min="0" step="500" value="0" class="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                            </div>
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <label class="block text-xs font-bold text-stone-600 uppercase mb-1">Stok Awal</label>
+                                <input type="number" name="stok" id="inStok" min="0" value="0" class="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                            </div>
+                            <div>
+                                <label class="block text-xs font-bold text-stone-600 uppercase mb-1">Stok Minimal</label>
+                                <input type="number" name="stok_minimal" id="inStokMin" min="0" value="5" class="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                            </div>
+                        </div>
                     </div>
-                </div>
 
-                <div class="space-y-1.5">
-                    <label class="text-xs font-semibold text-stone-600">Jumlah Stok Baru</label>
-                    <div class="flex items-center gap-2">
-                        <button type="button" onclick="adjustStock(-10)" class="px-3 py-2 bg-stone-100 hover:bg-stone-200 rounded-xl font-bold text-xs text-stone-700">-10</button>
-                        <button type="button" onclick="adjustStock(-1)" class="w-10 h-10 bg-stone-100 hover:bg-stone-200 rounded-xl font-bold text-stone-700 flex items-center justify-center">-</button>
-                        <input type="number" id="newStockInput" min="0" class="w-full text-center py-2 text-xl font-bold bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:border-[#2E7D32]">
-                        <button type="button" onclick="adjustStock(1)" class="w-10 h-10 bg-stone-100 hover:bg-stone-200 rounded-xl font-bold text-stone-700 flex items-center justify-center">+</button>
-                        <button type="button" onclick="adjustStock(10)" class="px-3 py-2 bg-stone-100 hover:bg-stone-200 rounded-xl font-bold text-xs text-stone-700">+10</button>
-                    </div>
-                </div>
-
-                <div class="space-y-1">
-                    <label for="stockReason" class="text-xs font-semibold text-stone-600">Alasan Penyesuaian</label>
-                    <select id="stockReason" class="w-full text-sm bg-stone-50 border border-stone-200 rounded-xl p-2.5 text-stone-700 focus:outline-none focus:border-[#2E7D32]">
-                        <option value="Restock Masuk">Restock Barang Masuk</option>
-                        <option value="Hasil Opname">Hasil Inventaris Opname</option>
-                        <option value="Tanaman Layu/Mati">Tanaman Rusak / Layu / Mati</option>
-                        <option value="Retur Pelanggan">Retur Penjualan</option>
-                    </select>
-                </div>
-            </div>
-
-            <div class="flex items-center justify-end gap-2 pt-3 border-t border-stone-100">
-                <button type="button" onclick="closeStockModal()" class="px-4 py-2 text-sm font-semibold text-stone-600 hover:bg-stone-100 rounded-xl">Batal</button>
-                <button type="button" onclick="saveStockUpdate()" class="px-4 py-2 text-sm font-semibold bg-[#2E7D32] hover:bg-emerald-800 text-white rounded-xl shadow-sm">Simpan Stok</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- MODAL TAMBAH / EDIT PRODUK -->
-    <div id="productFormModal" class="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-200">
-        <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-xl border border-stone-100 space-y-4">
-            <div class="flex items-center justify-between border-b border-stone-100 pb-3">
-                <h3 class="text-lg font-bold text-stone-800" id="productModalTitle">Tambah Produk Baru</h3>
-                <button onclick="closeProductModal()" class="text-stone-400 hover:text-stone-600 p-1 rounded-lg">
-                    <i data-lucide="x" class="w-5 h-5"></i>
-                </button>
-            </div>
-
-            <form id="productForm" onsubmit="handleProductSubmit(event)" class="space-y-3 text-xs">
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="font-semibold text-stone-600 block mb-1">Kode SKU</label>
-                        <input type="text" id="prodSku" required placeholder="PLN-XXX-000" class="w-full p-2.5 bg-stone-50 border border-stone-200 rounded-xl focus:border-[#2E7D32] focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="font-semibold text-stone-600 block mb-1">Kategori</label>
-                        <select id="prodCategory" class="w-full p-2.5 bg-stone-50 border border-stone-200 rounded-xl focus:border-[#2E7D32] focus:outline-none">
-                            <option value="Indoor">Indoor</option>
-                            <option value="Outdoor">Outdoor</option>
-                            <option value="Pot">Pot</option>
-                            <option value="Media Tanam">Media Tanam</option>
-                        </select>
+                    <!-- KANAN: GAMBAR + DESKRIPSI -->
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-xs font-bold text-stone-600 uppercase mb-1">Gambar Produk</label>
+                            <div class="border-2 border-dashed border-stone-200 hover:border-[#2E7D32] rounded-xl overflow-hidden bg-stone-50 aspect-square flex flex-col items-center justify-center relative transition-colors cursor-pointer" onclick="document.getElementById('inGambar').click()">
+                                <img id="previewGambar" src="https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400" class="w-full h-full object-cover absolute inset-0" />
+                                <div class="relative z-10 bg-white/90 backdrop-blur-sm rounded-lg px-3 py-2 flex items-center gap-2 shadow-sm">
+                                    <i data-lucide="camera" class="w-4 h-4 text-[#2E7D32]"></i>
+                                    <span class="text-xs font-bold text-stone-700">Pilih Gambar</span>
+                                </div>
+                                <input type="file" name="gambar" id="inGambar" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="previewImg(event)">
+                            </div>
+                            <p class="text-[10px] text-stone-400 mt-1">JPG, PNG, WEBP. Maks 2MB.</p>
+                        </div>
                     </div>
                 </div>
 
                 <div>
-                    <label class="font-semibold text-stone-600 block mb-1">Nama Produk</label>
-                    <input type="text" id="prodName" required placeholder="Contoh: Aglaonema Red Anjamani" class="w-full p-2.5 bg-stone-50 border border-stone-200 rounded-xl focus:border-[#2E7D32] focus:outline-none">
+                    <label class="block text-xs font-bold text-stone-600 uppercase mb-1">Deskripsi</label>
+                    <textarea name="deskripsi" id="inDeskripsi" rows="2" class="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] resize-none"></textarea>
                 </div>
 
-                <div class="grid grid-cols-2 gap-3">
-                    <div>
-                        <label class="font-semibold text-stone-600 block mb-1">Harga Jual (Rp)</label>
-                        <input type="number" id="prodPrice" required placeholder="125000" class="w-full p-2.5 bg-stone-50 border border-stone-200 rounded-xl focus:border-[#2E7D32] focus:outline-none">
-                    </div>
-                    <div>
-                        <label class="font-semibold text-stone-600 block mb-1">Batas Minimum Stok</label>
-                        <input type="number" id="prodMin" required placeholder="5" class="w-full p-2.5 bg-stone-50 border border-stone-200 rounded-xl focus:border-[#2E7D32] focus:outline-none">
-                    </div>
+                <div>
+                    <label class="block text-xs font-bold text-stone-600 uppercase mb-1">Cara Perawatan</label>
+                    <textarea name="cara_perawatan" id="inPerawatan" rows="2" class="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] resize-none"></textarea>
                 </div>
 
-                <div class="flex items-center justify-end gap-2 pt-3 border-t border-stone-100">
-                    <button type="button" onclick="closeProductModal()" class="px-4 py-2 text-sm font-semibold text-stone-600 hover:bg-stone-100 rounded-xl">Batal</button>
-                    <button type="submit" class="px-4 py-2 text-sm font-semibold bg-[#2E7D32] hover:bg-emerald-800 text-white rounded-xl shadow-sm">Simpan Produk</button>
+                <div class="flex items-center justify-end gap-2 pt-2 border-t border-stone-100">
+                    <button type="button" onclick="closeModal()" class="px-4 py-2 text-sm font-semibold text-stone-600 hover:bg-stone-100 rounded-xl">Batal</button>
+                    <button type="submit" class="px-5 py-2 text-sm font-semibold bg-[#2E7D32] text-white rounded-xl hover:bg-emerald-800 shadow-sm inline-flex items-center gap-2">
+                        <i data-lucide="save" class="w-4 h-4"></i> Simpan
+                    </button>
                 </div>
             </form>
         </div>
     </div>
 
-    <!-- MODAL IMPORT FILE -->
-    <div id="importModal" class="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 flex items-center justify-center hidden opacity-0 transition-opacity duration-200">
-        <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl border border-stone-100 space-y-4">
-            <div class="flex items-center justify-between border-b border-stone-100 pb-3">
-                <h3 class="text-lg font-bold text-stone-800">Import Data Produk</h3>
-                <button onclick="closeImportModal()" class="text-stone-400 hover:text-stone-600 p-1 rounded-lg">
-                    <i data-lucide="x" class="w-5 h-5"></i>
-                </button>
+    <!-- MODAL HAPUS -->
+    <form id="formHapus" method="POST" action="stok.php" class="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <input type="hidden" name="action" value="hapus">
+        <input type="hidden" name="id" id="hapusId" value="">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4">
+            <div class="w-12 h-12 rounded-full bg-rose-100 flex items-center justify-center mx-auto">
+                <i data-lucide="alert-triangle" class="w-6 h-6 text-rose-600"></i>
             </div>
-
-            <div class="border-2 border-dashed border-stone-200 rounded-2xl p-6 text-center space-y-2 bg-stone-50">
-                <i data-lucide="upload-cloud" class="w-10 h-10 text-[#2E7D32] mx-auto"></i>
-                <p class="text-xs font-semibold text-stone-700">Pilih file CSV atau Excel (.xlsx)</p>
-                <p class="text-[11px] text-stone-400">Maksimal ukuran file 5MB</p>
-                <input type="file" id="importFile" class="hidden" onchange="processImportFile(this)">
-                <button onclick="document.getElementById('importFile').click()" class="px-3.5 py-1.5 bg-white border border-stone-300 text-stone-700 text-xs font-semibold rounded-xl shadow-sm hover:bg-stone-100 transition-colors">Pilih File</button>
+            <div class="text-center">
+                <h3 class="text-lg font-bold text-stone-800">Hapus Produk?</h3>
+                <p class="text-sm text-stone-500 mt-1">Produk <b id="hapusNama" class="text-stone-800"></b> akan dihapus permanen.</p>
             </div>
-
-            <div class="flex items-center justify-end gap-2 pt-2 border-t border-stone-100">
-                <button type="button" onclick="closeImportModal()" class="px-4 py-2 text-sm font-semibold text-stone-600 hover:bg-stone-100 rounded-xl">Tutup</button>
+            <div class="flex gap-2">
+                <button type="button" onclick="closeHapus()" class="flex-1 px-4 py-2 text-sm font-semibold text-stone-600 hover:bg-stone-100 rounded-xl">Batal</button>
+                <button type="submit" class="flex-1 px-4 py-2 text-sm font-semibold bg-rose-600 text-white rounded-xl hover:bg-rose-700">Ya, Hapus</button>
             </div>
         </div>
-    </div>
+    </form>
 
-    <!-- TOAST NOTIFICATION -->
-    <div id="toast" class="fixed bottom-5 right-5 z-50 bg-stone-900 text-white px-4 py-3 rounded-xl shadow-lg flex items-center gap-3 hidden opacity-0 transition-opacity">
-        <i data-lucide="check-circle" class="w-5 h-5 text-emerald-400"></i>
-        <span id="toastMsg" class="text-sm font-medium">Berhasil disimpan</span>
-    </div>
-
-    <!-- JAVASCRIPT HANDLERS -->
     <script>
         lucide.createIcons();
 
-        let activeSku = null;
-        let selectedCategory = 'all';
-
-        // Toggle Sidebar Mobile
         function toggleMobileSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            sidebar.classList.toggle('hidden');
+            const s = document.getElementById('sidebar');
+            s?.classList.toggle('hidden');
+            s?.classList.toggle('fixed');
+            s?.classList.toggle('inset-y-0');
+            s?.classList.toggle('left-0');
+            s?.classList.toggle('z-40');
         }
 
-        // Toggle Dropdowns Header
-        function toggleNotifications() {
-            document.getElementById('notificationDropdown').classList.toggle('hidden');
-            document.getElementById('profileDropdown').classList.add('hidden');
-        }
+        const modal = document.getElementById('modalProduk');
+        const formProduk = document.getElementById('formProduk');
 
-        function toggleProfileMenu() {
-            document.getElementById('profileDropdown').classList.toggle('hidden');
-            document.getElementById('notificationDropdown').classList.add('hidden');
-        }
-
-        // Toast Handler
-        function showToast(msg) {
-            const toast = document.getElementById('toast');
-            document.getElementById('toastMsg').innerText = msg;
-            toast.classList.remove('hidden');
-            setTimeout(() => toast.classList.remove('opacity-0'), 10);
-            setTimeout(() => {
-                toast.classList.add('opacity-0');
-                setTimeout(() => toast.classList.add('hidden'), 200);
-            }, 3000);
-        }
-
-        // Modal Stock Update
-        function openStockModal(sku, name, currentStock, minStock) {
-            activeSku = sku;
-            document.getElementById('modalProductName').innerText = name;
-            document.getElementById('modalProductSKU').innerText = 'SKU: ' + sku;
-            document.getElementById('modalMinStock').innerText = 'Min. Stok: ' + minStock + ' Unit';
-            document.getElementById('newStockInput').value = currentStock;
-
-            const modal = document.getElementById('stockModal');
+        function openModalTambah() {
+            document.getElementById('modalTitle').innerText = 'Tambah Produk Baru';
+            document.getElementById('formAction').value = 'tambah';
+            document.getElementById('formId').value = '';
+            formProduk.reset();
+            document.getElementById('previewGambar').src = 'https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400';
             modal.classList.remove('hidden');
-            setTimeout(() => modal.classList.remove('opacity-0'), 10);
+            modal.classList.add('flex');
         }
 
-        function closeStockModal() {
-            const modal = document.getElementById('stockModal');
-            modal.classList.add('opacity-0');
-            setTimeout(() => modal.classList.add('hidden'), 200);
-        }
-
-        function adjustStock(amount) {
-            const input = document.getElementById('newStockInput');
-            let val = parseInt(input.value) || 0;
-            val = Math.max(0, val + amount);
-            input.value = val;
-        }
-
-        function saveStockUpdate() {
-            const newStock = document.getElementById('newStockInput').value;
-            const reason = document.getElementById('stockReason').value;
-            
-            const rows = document.querySelectorAll('.product-row');
-            rows.forEach(row => {
-                if (row.querySelector('.product-sku').innerText.includes(activeSku)) {
-                    const stockValElem = row.querySelector('.stock-val');
-                    if (stockValElem) stockValElem.innerText = newStock;
-                }
-            });
-
-            showToast(`Stok ${activeSku} berhasil diperbarui ke ${newStock} unit (${reason})`);
-            closeStockModal();
-        }
-
-        // Modal Tambah / Edit Produk
-        function openAddProductModal() {
-            document.getElementById('productModalTitle').innerText = 'Tambah Produk Baru';
-            document.getElementById('productForm').reset();
-            const modal = document.getElementById('productFormModal');
+        function openModalEdit(data) {
+            document.getElementById('modalTitle').innerText = 'Edit Produk';
+            document.getElementById('formAction').value = 'edit';
+            document.getElementById('formId').value = data.id;
+            document.getElementById('inNama').value = data.nama || '';
+            document.getElementById('inKategori').value = data.kategori_id || 0;
+            document.getElementById('inHargaJual').value = data.harga_jual || 0;
+            document.getElementById('inHargaBeli').value = data.harga_beli || 0;
+            document.getElementById('inStok').value = data.stok || 0;
+            document.getElementById('inStokMin').value = data.stok_minimal || 5;
+            document.getElementById('inDeskripsi').value = data.deskripsi || '';
+            document.getElementById('inPerawatan').value = data.perawatan || '';
+            document.getElementById('previewGambar').src = data.gambar || 'https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400';
             modal.classList.remove('hidden');
-            setTimeout(() => modal.classList.remove('opacity-0'), 10);
+            modal.classList.add('flex');
         }
 
-        function openEditProductModal(sku, name, category, price, minStock) {
-            document.getElementById('productModalTitle').innerText = 'Edit Detail Produk';
-            document.getElementById('prodSku').value = sku;
-            document.getElementById('prodName').value = name;
-            document.getElementById('prodCategory').value = category;
-            document.getElementById('prodPrice').value = price;
-            document.getElementById('prodMin').value = minStock;
-
-            const modal = document.getElementById('productFormModal');
-            modal.classList.remove('hidden');
-            setTimeout(() => modal.classList.remove('opacity-0'), 10);
+        function closeModal() {
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
         }
 
-        function closeProductModal() {
-            const modal = document.getElementById('productFormModal');
-            modal.classList.add('opacity-0');
-            setTimeout(() => modal.classList.add('hidden'), 200);
-        }
-
-        function handleProductSubmit(e) {
-            e.preventDefault();
-            const name = document.getElementById('prodName').value;
-            showToast(`Produk "${name}" berhasil disimpan`);
-            closeProductModal();
-        }
-
-        // Modal Import
-        function openImportModal() {
-            const modal = document.getElementById('importModal');
-            modal.classList.remove('hidden');
-            setTimeout(() => modal.classList.remove('opacity-0'), 10);
-        }
-
-        function closeImportModal() {
-            const modal = document.getElementById('importModal');
-            modal.classList.add('opacity-0');
-            setTimeout(() => modal.classList.add('hidden'), 200);
-        }
-
-        function processImportFile(input) {
-            if (input.files.length > 0) {
-                showToast(`File "${input.files[0].name}" berhasil diunggah`);
-                closeImportModal();
+        function previewImg(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    document.getElementById('previewGambar').src = ev.target.result;
+                };
+                reader.readAsDataURL(file);
             }
         }
 
-        // Download CSV
-        function exportDataCSV() {
-            const csvContent = "data:text/csv;charset=utf-8,SKU,Nama Produk,Kategori,Harga,Stok\nPLN-MNS-001,Monstera Deliciosa,Indoor,125000,8\nPLN-SNK-002,Snake Plant (Sansevieria),Indoor,45000,15\nPLN-FLF-003,Fiddle Leaf Fig,Indoor,210000,3\nPLN-CLT-004,Calathea Orbifolia,Indoor,85000,0\nPOT-TRK-005,Pot Terakota Minimalis 20cm,Pot,35000,24\nMDT-ORG-006,Media Tanam Organik Premium 5kg,Media Tanam,28000,40";
-            const encodedUri = encodeURI(csvContent);
-            const link = document.createElement("a");
-            link.setAttribute("href", encodedUri);
-            link.setAttribute("download", "stok_pos_plantshop.csv");
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            showToast("Mengunduh data stok CSV...");
+        const modalHapus = document.getElementById('formHapus');
+        function konfirmasiHapus(id, nama) {
+            document.getElementById('hapusId').value = id;
+            document.getElementById('hapusNama').innerText = nama;
+            modalHapus.classList.remove('hidden');
+            modalHapus.classList.add('flex');
+        }
+        function closeHapus() {
+            modalHapus.classList.add('hidden');
+            modalHapus.classList.remove('flex');
         }
 
-        // Filter Functionality
-        function filterTable() {
-            const searchVal = document.getElementById('searchInput').value.toLowerCase();
-            const statusVal = document.getElementById('statusFilter').value;
-            const rows = document.querySelectorAll('.product-row');
-
-            rows.forEach(row => {
-                const name = row.querySelector('.product-name').innerText.toLowerCase();
-                const sku = row.querySelector('.product-sku').innerText.toLowerCase();
-                const category = row.dataset.category;
-                const status = row.dataset.status;
-
-                const matchSearch = name.includes(searchVal) || sku.includes(searchVal);
-                const matchCategory = (selectedCategory === 'all' || category === selectedCategory);
-                const matchStatus = (statusVal === 'all' || status === statusVal);
-
-                if (matchSearch && matchCategory && matchStatus) {
-                    row.style.display = '';
-                } else {
-                    row.style.display = 'none';
-                }
-            });
-        }
-
-        function setCategoryFilter(category, btn) {
-            selectedCategory = category;
-            document.querySelectorAll('.category-btn').forEach(b => {
-                b.className = 'category-btn px-3.5 py-1.5 text-xs font-medium rounded-lg bg-stone-100 text-stone-600 hover:bg-stone-200/70 whitespace-nowrap transition-colors';
-            });
-            btn.className = 'category-btn px-3.5 py-1.5 text-xs font-semibold rounded-lg bg-[#2E7D32] text-white whitespace-nowrap shadow-sm';
-            filterTable();
-        }
-
-        function filterStatus(status) {
-            document.getElementById('statusFilter').value = status;
-            filterTable();
-        }
-
-        function syncGlobalSearch(val) {
-            document.getElementById('searchInput').value = val;
-            filterTable();
-        }
-
-        // Delete Row
-        function deleteProduct(btn) {
-            if (confirm("Apakah Anda yakin ingin menghapus produk ini?")) {
-                const row = btn.closest('tr');
-                row.remove();
-                showToast("Produk berhasil dihapus");
-            }
-        }
-
-        // Bulk Actions
-        function toggleSelectAll() {
-            const master = document.getElementById('selectAll');
-            const checkboxes = document.querySelectorAll('.row-checkbox');
-            checkboxes.forEach(cb => cb.checked = master.checked);
-            updateBulkBar();
-        }
-
-        function updateBulkBar() {
-            const checkedCount = document.querySelectorAll('.row-checkbox:checked').length;
-            const bulkBar = document.getElementById('bulkBar');
-            if (checkedCount > 0) {
-                document.getElementById('bulkCount').innerText = `${checkedCount} Item Dipilih`;
-                bulkBar.classList.remove('hidden');
-            } else {
-                bulkBar.classList.add('hidden');
-            }
-        }
-
-        function bulkDelete() {
-            if (confirm("Hapus seluruh produk yang dipilih?")) {
-                document.querySelectorAll('.row-checkbox:checked').forEach(cb => {
-                    cb.closest('tr').remove();
-                });
-                updateBulkBar();
-                showToast("Item terpilih berhasil dihapus");
-            }
-        }
+        // Klik overlay untuk close
+        modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
+        modalHapus.addEventListener('click', (e) => { if (e.target === modalHapus) closeHapus(); });
     </script>
 </body>
 </html>

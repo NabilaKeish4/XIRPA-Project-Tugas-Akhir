@@ -2,277 +2,419 @@
 session_start();
 require_once '../Config/database.php';
 
-// Ambil list pelanggan yang pernah berkirim pesan
-// Menggunakan query fleksibel agar aman jika kolom nama/username berbeda
-$customersQuery = "SELECT DISTINCT u.id, 
-                  COALESCE(u.username, u.email, CONCAT('Pelanggan #', u.id)) AS nama_tampil, 
-                  u.email 
-                  FROM users u 
-                  JOIN chats c ON u.id = c.user_id 
-                  ORDER BY c.created_at DESC";
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
+    header("Location: ../Auth/login.php");
+    exit;
+}
 
+$admin_id   = (int)$_SESSION['user_id'];
+$admin_nama = $_SESSION['nama_user'] ?? 'Admin';
+
+// =========================================================
+// AMBIL DAFTAR PELANGGAN YANG PERNAH CHAT
+// =========================================================
 $customers = [];
-if (isset($conn) && $conn) {
-    $cResult = mysqli_query($conn, $customersQuery);
-    if ($cResult && mysqli_num_rows($cResult) > 0) {
-        while ($row = mysqli_fetch_assoc($cResult)) {
-            $customers[] = $row;
-        }
-    }
+$qCust = mysqli_query($conn, "
+    SELECT 
+        u.id, 
+        u.nama_lengkap, 
+        u.email, 
+        u.username,
+        (SELECT message FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0 ORDER BY c.created_at DESC LIMIT 1) AS last_message,
+        (SELECT created_at FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0 ORDER BY c.created_at DESC LIMIT 1) AS last_time,
+        (SELECT COUNT(*) FROM chats c WHERE c.user_id = u.id AND c.sender_type = 'customer' AND c.is_read = 0 AND c.is_deleted = 0) AS unread_count,
+        (SELECT COUNT(*) FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0) AS total_messages
+    FROM users u
+    WHERE u.role = 'customer'
+      AND EXISTS (SELECT 1 FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0)
+    ORDER BY last_time DESC
+");
+if ($qCust) while ($r = mysqli_fetch_assoc($qCust)) $customers[] = $r;
+
+$filterMode = $_GET['filter'] ?? 'semua';
+
+$displayCustomers = $customers;
+if ($filterMode === 'unread') {
+    $displayCustomers = array_values(array_filter($customers, fn($c) => (int)$c['unread_count'] > 0));
 }
 
-// Tentukan pelanggan mana yang sedang dipilih oleh Admin
-$selected_user_id = $_GET['user_id'] ?? ($customers[0]['id'] ?? 1);
-
-// Handle Kirim Pesan Balasan dari Admin
-$error_msg = '';
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['message'])) {
-    $msg = trim($_POST['message']);
-    
-    if (!empty($msg) && isset($conn) && $conn) {
-        $clean_msg = mysqli_real_escape_string($conn, $msg);
-        
-        // Simpan pesan dengan sender_type = 'admin'
-        $insertQuery = "INSERT INTO chats (user_id, sender_type, message, created_at) 
-                        VALUES ('$selected_user_id', 'admin', '$clean_msg', NOW())";
-        
-        if (mysqli_query($conn, $insertQuery)) {
-            header("Location: chat.php?user_id=$selected_user_id");
-            exit;
-        } else {
-            $error_msg = "Gagal mengirim pesan: " . mysqli_error($conn);
-        }
-    }
+$selected_id = (int)($_GET['user_id'] ?? 0);
+if ($selected_id === 0 && !empty($displayCustomers)) {
+    $selected_id = (int)$displayCustomers[0]['id'];
 }
 
-// Fetch Riwayat Pesan dengan Pelanggan Terpilih
-$chatMessages = [];
-if (isset($conn) && $conn) {
-    $chatQuery = "SELECT * FROM chats WHERE user_id = '$selected_user_id' ORDER BY created_at ASC";
-    $chatResult = mysqli_query($conn, $chatQuery);
-
-    if ($chatResult && mysqli_num_rows($chatResult) > 0) {
-        while ($row = mysqli_fetch_assoc($chatResult)) {
-            $chatMessages[] = $row;
-        }
-    }
-}
-
-// Ambil detail nama pelanggan terpilih
-$selectedCustomerName = 'Pelanggan #' . $selected_user_id;
+$selectedCustomer = null;
 foreach ($customers as $c) {
-    if ($c['id'] == $selected_user_id) {
-        $selectedCustomerName = $c['nama_tampil'] ?? $c['email'];
+    if ((int)$c['id'] === $selected_id) {
+        $selectedCustomer = $c;
         break;
     }
 }
-?>
 
+$pesan_error = '';
+$pesan_sukses = '';
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selected_id > 0) {
+    $action = $_POST['action'] ?? '';
+
+    if ($action === 'kirim') {
+        $msg = trim($_POST['message'] ?? '');
+        if ($msg !== '') {
+            $clean = mysqli_real_escape_string($conn, $msg);
+            $sql = "INSERT INTO chats (user_id, sender_type, message, is_read, created_at) 
+                    VALUES ($selected_id, 'admin', '$clean', 1, NOW())";
+            if (mysqli_query($conn, $sql)) {
+                header("Location: chat.php?user_id=$selected_id&status=sent");
+                exit;
+            } else {
+                $pesan_error = "Gagal mengirim: " . mysqli_error($conn);
+            }
+        } else {
+            $pesan_error = "Pesan tidak boleh kosong.";
+        }
+    }
+
+    if ($action === 'edit') {
+        $id     = (int)($_POST['id'] ?? 0);
+        $newMsg = trim($_POST['new_message'] ?? '');
+        if ($id > 0 && $newMsg !== '') {
+            $clean = mysqli_real_escape_string($conn, $newMsg);
+            $sql = "UPDATE chats SET message = '$clean', edited_at = NOW() 
+                    WHERE id = $id AND sender_type = 'admin'";
+            if (mysqli_query($conn, $sql)) {
+                header("Location: chat.php?user_id=$selected_id&status=edited");
+                exit;
+            } else {
+                $pesan_error = "Gagal mengedit: " . mysqli_error($conn);
+            }
+        }
+    }
+
+    if ($action === 'hapus') {
+        $id = (int)($_POST['id'] ?? 0);
+        if ($id > 0) {
+            $sql = "UPDATE chats SET is_deleted = 1 WHERE id = $id AND sender_type = 'admin'";
+            if (mysqli_query($conn, $sql)) {
+                header("Location: chat.php?user_id=$selected_id&status=deleted");
+                exit;
+            } else {
+                $pesan_error = "Gagal menghapus: " . mysqli_error($conn);
+            }
+        }
+    }
+}
+
+if (isset($_GET['status'])) {
+    if ($_GET['status'] === 'sent')    $pesan_sukses = "Balasan berhasil dikirim.";
+    if ($_GET['status'] === 'edited')  $pesan_sukses = "Pesan berhasil diperbarui.";
+    if ($_GET['status'] === 'deleted') $pesan_sukses = "Pesan berhasil dihapus.";
+}
+
+// Tandai dibaca
+if ($selected_id > 0) {
+    mysqli_query($conn, "UPDATE chats SET is_read = 1 WHERE user_id = $selected_id AND sender_type = 'customer' AND is_read = 0");
+}
+
+$chatMessages = [];
+if ($selected_id > 0) {
+    $qChat = mysqli_query($conn, "
+        SELECT * FROM chats 
+        WHERE user_id = $selected_id AND is_deleted = 0 
+        ORDER BY created_at ASC
+    ");
+    if ($qChat) while ($r = mysqli_fetch_assoc($qChat)) $chatMessages[] = $r;
+}
+
+$editId = (int)($_GET['edit'] ?? 0);
+?>
 <!DOCTYPE html>
 <html lang="id">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlantShop Admin - Chat Pelanggan</title>
-    <!-- Tailwind CSS CDN -->
+    <title>PlantHub - Konsultasi Pelanggan</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Lucide Icons CDN -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Google Fonts: Plus Jakarta Sans -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    colors: {
-                        admin: {
-                            green: '#2E7D32',
-                            'green-light': '#E8F5E9',
-                            dark: '#1E291E',
-                            muted: '#6B7280',
-                        }
-                    },
-                    fontFamily: {
-                        sans: ['"Plus Jakarta Sans"', 'sans-serif'],
-                    }
-                }
-            }
-        }
-    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
-        body {
-            background-color: #F8F9FA;
-            color: #1E291E;
-            font-family: 'Plus Jakarta Sans', sans-serif;
-        }
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 5px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: rgba(0, 0, 0, 0.02);
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: rgba(0, 0, 0, 0.1);
-            border-radius: 9999px;
-        }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 9999px; }
     </style>
 </head>
-<body class="antialiased h-screen flex overflow-hidden bg-gray-50">
+<body class="antialiased min-h-screen flex flex-col">
 
-    <!-- SIDEBAR ADMIN -->
-    <aside class="w-64 bg-white border-r border-gray-200/80 p-5 flex flex-col justify-between shrink-0 h-screen">
-        <div>
-            <!-- LOGO PLANTSHOP -->
-            <a href="dashboard.php" class="flex items-center gap-3 mb-8 px-1">
-                <div class="w-10 h-10 rounded-2xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
-                    <i data-lucide="sprout" class="w-6 h-6"></i>
+    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
+        <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <button onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
+                    <i data-lucide="menu" class="w-5 h-5"></i>
+                </button>
+                <a href="dashboard.php" class="flex items-center gap-2.5">
+                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
+                        <i data-lucide="sprout" class="w-5 h-5"></i>
+                    </div>
+                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
+                </a>
+            </div>
+
+            <div class="hidden md:flex flex-1 max-w-md">
+                <span class="text-xs text-stone-500 self-center">Konsultasi Pelanggan</span>
+            </div>
+
+            <a href="dashboard.php" class="flex items-center gap-3 pl-1">
+                <img src="https://ui-avatars.com/api/?name=<?= urlencode($admin_nama) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
+                <div class="hidden sm:block text-left">
+                    <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
+                    <p class="text-xs text-stone-500">Administrator</p>
                 </div>
-                <span class="text-xl font-bold tracking-tight text-gray-900">Plant<span class="text-[#2E7D32]">Shop</span></span>
             </a>
+        </div>
+    </header>
 
-            <!-- NAVIGASI MAIN MENU -->
+    <div class="flex flex-1">
+        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
             <div class="space-y-6">
-                <div>
-                    <p class="text-[10px] font-extrabold tracking-wider text-gray-400 uppercase mb-3 px-3">MAIN MENU</p>
-                    <nav class="flex flex-col space-y-1 text-sm font-semibold text-gray-600">
-                        <a href="dashboard.php" class="px-3.5 py-2.5 rounded-xl hover:bg-gray-50 flex items-center gap-3 transition">
-                            <i data-lucide="layout-grid" class="w-5 h-5 text-gray-500"></i> Dashboard
-                        </a>
-                        <a href="pos.php" class="px-3.5 py-2.5 rounded-xl hover:bg-gray-50 flex items-center gap-3 transition">
-                            <i data-lucide="shopping-bag" class="w-5 h-5 text-gray-500"></i> Kasir (POS)
-                        </a>
-                        <a href="restock.php" class="px-3.5 py-2.5 rounded-xl hover:bg-gray-50 flex items-center gap-3 transition">
-                            <i data-lucide="truck" class="w-5 h-5 text-gray-500"></i> Pembelian (Restock)
-                        </a>
-                        <a href="stok.php" class="px-3.5 py-2.5 rounded-xl hover:bg-gray-50 flex items-center gap-3 transition">
-                            <i data-lucide="box" class="w-5 h-5 text-gray-500"></i> Stok & Produk
-                        </a>
-                        <a href="chat.php" class="bg-[#E8F5E9] text-[#2E7D32] font-bold px-3.5 py-2.5 rounded-xl flex items-center justify-between transition">
-                            <span class="flex items-center gap-3"><i data-lucide="message-square" class="w-5 h-5 text-[#2E7D32]"></i> Konsultasi Chat</span>
-                            <span class="w-2 h-2 bg-[#2E7D32] rounded-full"></span>
-                        </a>
-                        <a href="pelanggan.php" class="px-3.5 py-2.5 rounded-xl hover:bg-gray-50 flex items-center gap-3 transition">
-                            <i data-lucide="users" class="w-5 h-5 text-gray-500"></i> Pelanggan
-                        </a>
-                        <a href="laporan.php" class="px-3.5 py-2.5 rounded-xl hover:bg-gray-50 flex items-center gap-3 transition">
-                            <i data-lucide="bar-chart-3" class="w-5 h-5 text-gray-500"></i> Laporan
-                        </a>
-                    </nav>
-                </div>
-
-                <!-- NAVIGASI PENGATURAN -->
-                <div class="pt-4 border-t border-gray-100">
-                    <p class="text-[10px] font-extrabold tracking-wider text-gray-400 uppercase mb-3 px-3">PENGATURAN</p>
-                    <nav class="flex flex-col space-y-1 text-sm font-semibold text-gray-600">
-                        <a href="pengaturan.php" class="px-3.5 py-2.5 rounded-xl hover:bg-gray-50 flex items-center gap-3 transition">
-                            <i data-lucide="settings" class="w-5 h-5 text-gray-500"></i> Pengaturan Toko
-                        </a>
-                    </nav>
-                </div>
-            </div>
-        </div>
-
-        <!-- WIDGET LOKASI CABANG -->
-        <div class="bg-[#F8F9FA] border border-gray-200/60 p-3.5 rounded-2xl flex items-center gap-3">
-            <div class="w-9 h-9 rounded-xl bg-[#E8F5E9] text-[#2E7D32] flex items-center justify-center shrink-0">
-                <i data-lucide="store" class="w-5 h-5"></i>
-            </div>
-            <div class="min-w-0">
-                <h4 class="text-xs font-bold text-gray-900 truncate">Cabang Batu Central</h4>
-                <p class="text-[10px] text-gray-400 font-medium">Sistem Online Active</p>
-            </div>
-        </div>
-    </aside>
-
-    <!-- KONTEN UTAMA CHAT ADMIN -->
-    <main class="flex-1 flex h-screen overflow-hidden">
-        
-        <!-- SIDEBAR DAFTAR PELANGGAN -->
-        <div class="w-72 bg-white border-r border-gray-200/80 flex flex-col h-full">
-            <div class="p-4 border-b border-gray-100">
-                <h3 class="text-sm font-bold text-gray-800">Daftar Percakapan</h3>
-                <p class="text-[11px] text-gray-400">Pilih pelanggan untuk membalas pesan</p>
-            </div>
-            
-            <div class="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
-                <?php if (empty($customers)): ?>
-                    <div class="p-4 text-center text-xs text-gray-400">Belum ada obrolan pelanggan</div>
-                <?php else: ?>
-                    <?php foreach ($customers as $cust): ?>
-                        <a href="chat.php?user_id=<?= $cust['id'] ?>" class="flex items-center gap-3 p-3 rounded-xl transition <?= $selected_user_id == $cust['id'] ? 'bg-[#E8F5E9] text-[#2E7D32]' : 'hover:bg-gray-50 text-gray-700' ?>">
-                            <div class="w-8 h-8 rounded-full bg-stone-200 flex items-center justify-center font-bold text-xs uppercase text-stone-600 shrink-0">
-                                <?= substr($cust['nama_tampil'] ?? 'P', 0, 1) ?>
+                <nav class="space-y-1">
+                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
+                    <?php
+                    $menu = [
+                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
+                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
+                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
+                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
+                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
+                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => true],
+                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
+                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
+                    ];
+                    foreach ($menu as $m):
+                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
+                    ?>
+                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
+                            <div class="flex items-center gap-3">
+                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
+                                <span><?= $m['label'] ?></span>
                             </div>
-                            <div class="min-w-0 flex-1">
-                                <h4 class="text-xs font-bold truncate"><?= htmlspecialchars($cust['nama_tampil']) ?></h4>
-                                <p class="text-[10px] opacity-70 truncate"><?= htmlspecialchars($cust['email'] ?? 'Pelanggan Online') ?></p>
-                            </div>
+                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
                         </a>
                     <?php endforeach; ?>
-                <?php endif; ?>
+                    <hr class="border-stone-100 my-3">
+                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">PENGATURAN</p>
+                    <a href="pengaturan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-bold rounded-xl text-stone-700 hover:bg-stone-100">
+                        <i data-lucide="settings" class="w-5 h-5 text-stone-500"></i> Pengaturan Toko
+                    </a>
+                    <a href="bantuan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-bold rounded-xl text-stone-700 hover:bg-stone-100">
+                        <i data-lucide="help-circle" class="w-5 h-5 text-stone-500"></i> Bantuan
+                    </a>
+                </nav>
             </div>
-        </div>
-
-        <!-- AREA CHAT BOX -->
-        <div class="flex-1 bg-white flex flex-col h-full">
-            
-            <!-- CHAT HEADER -->
-            <div class="p-4 border-b border-gray-100 flex items-center justify-between bg-white shrink-0">
-                <div class="flex items-center gap-3">
-                    <div class="w-9 h-9 rounded-full bg-[#E8F5E9] text-[#2E7D32] flex items-center justify-center font-bold text-xs">
-                        <i data-lucide="user" class="w-5 h-5"></i>
-                    </div>
-                    <div>
-                        <h3 class="text-sm font-bold text-gray-900"><?= htmlspecialchars($selectedCustomerName) ?></h3>
-                        <p class="text-[10px] text-emerald-600 font-semibold flex items-center gap-1">
-                            <span class="w-2 h-2 bg-emerald-500 rounded-full"></span> Pelanggan Aktif
-                        </p>
-                    </div>
+            <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3 mt-auto">
+                <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
+                    <i data-lucide="store" class="w-5 h-5"></i>
+                </div>
+                <div class="overflow-hidden">
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">PlantHub Admin</p>
+                    <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>
+        </aside>
 
-            <!-- MESSAGES CONTAINER -->
-            <div id="admin-chat-box" class="flex-1 p-6 overflow-y-auto space-y-4 bg-gray-50/50 custom-scrollbar">
-                <?php if (!empty($error_msg)): ?>
-                    <div class="p-3 bg-red-50 border border-red-200 text-red-600 rounded-xl text-xs font-medium">
-                        <?= htmlspecialchars($error_msg) ?>
+        <main class="flex-1 p-4 sm:p-6 lg:p-8 w-full">
+            <div class="flex flex-col h-[calc(100vh-8rem)] space-y-4">
+
+                <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
+                    <div>
+                        <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Konsultasi Pelanggan</h1>
+                        <p class="text-sm text-stone-500 mt-0.5">Balas pertanyaan pelanggan tentang produk & perawatan tanaman.</p>
                     </div>
+                    <div class="flex items-center gap-1 bg-stone-100 rounded-xl p-1">
+                        <a href="chat.php?filter=semua<?= $selected_id ? '&user_id=' . $selected_id : '' ?>" class="px-3 py-1.5 text-xs font-bold rounded-lg transition <?= $filterMode === 'semua' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-800' ?>">Semua</a>
+                        <a href="chat.php?filter=unread<?= $selected_id ? '&user_id=' . $selected_id : '' ?>" class="px-3 py-1.5 text-xs font-bold rounded-lg transition <?= $filterMode === 'unread' ? 'bg-white text-stone-800 shadow-sm' : 'text-stone-500 hover:text-stone-800' ?>">Belum Dibaca</a>
+                    </div>
+                </div>
+
+                <?php if (!empty($pesan_error)): ?>
+                    <div class="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs shrink-0"><?= htmlspecialchars($pesan_error) ?></div>
+                <?php endif; ?>
+                <?php if (!empty($pesan_sukses)): ?>
+                    <div class="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs shrink-0"><?= htmlspecialchars($pesan_sukses) ?></div>
                 <?php endif; ?>
 
-                <?php foreach ($chatMessages as $msg): ?>
-                    <?php $isAdmin = ($msg['sender_type'] === 'admin'); ?>
-                    <div class="flex <?= $isAdmin ? 'justify-end' : 'justify-start' ?>">
-                        <div class="max-w-xs md:max-w-md p-3.5 rounded-2xl text-xs <?= $isAdmin ? 'bg-[#2E7D32] text-white rounded-tr-none shadow-sm' : 'bg-white text-gray-800 rounded-tl-none border border-gray-200/70 shadow-sm' ?>">
-                            <p class="leading-relaxed"><?= htmlspecialchars($msg['message']) ?></p>
-                            <span class="block text-[9px] mt-1.5 text-right <?= $isAdmin ? 'text-emerald-100' : 'text-gray-400' ?>">
-                                <?= date('H:i', strtotime($msg['created_at'])) ?>
-                            </span>
+                <div class="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-4 overflow-hidden">
+
+                    <aside class="lg:col-span-1 bg-white rounded-2xl border border-stone-200/80 shadow-sm flex flex-col overflow-hidden">
+                        <div class="px-5 py-4 border-b border-stone-100">
+                            <h2 class="text-sm font-bold text-stone-800">Daftar Percakapan</h2>
+                            <p class="text-[11px] text-stone-500 mt-0.5"><?= count($displayCustomers) ?> pelanggan</p>
                         </div>
-                    </div>
-                <?php endforeach; ?>
+                        <div class="flex-1 overflow-y-auto custom-scrollbar divide-y divide-stone-100">
+                            <?php if (empty($displayCustomers)): ?>
+                                <div class="p-6 text-center">
+                                    <div class="w-12 h-12 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-2">
+                                        <i data-lucide="message-square" class="w-5 h-5 text-stone-400"></i>
+                                    </div>
+                                    <p class="text-xs font-semibold text-stone-600">Belum ada percakapan</p>
+                                    <p class="text-[11px] text-stone-400 mt-0.5">Chat pelanggan akan muncul di sini.</p>
+                                </div>
+                            <?php else: ?>
+                                <?php foreach ($displayCustomers as $c):
+                                    $isActive = ((int)$c['id'] === $selected_id);
+                                    $initial = strtoupper(substr($c['nama_lengkap'] ?? 'P', 0, 1));
+                                    $unread = (int)$c['unread_count'];
+                                ?>
+                                    <a href="chat.php?user_id=<?= (int)$c['id'] ?><?= $filterMode !== 'semua' ? '&filter=' . $filterMode : '' ?>"
+                                       class="block p-4 transition-colors <?= $isActive ? 'bg-[#E8F5E9]' : 'hover:bg-stone-50' ?>">
+                                        <div class="flex items-start gap-3">
+                                            <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs shrink-0 <?= $isActive ? 'bg-[#2E7D32] text-white' : 'bg-stone-200 text-stone-600' ?>">
+                                                <?= htmlspecialchars($initial) ?>
+                                            </div>
+                                            <div class="flex-1 min-w-0">
+                                                <div class="flex items-center justify-between gap-2">
+                                                    <p class="text-xs font-bold truncate <?= $isActive ? 'text-[#1E7D32]' : 'text-stone-800' ?>">
+                                                        <?= htmlspecialchars($c['nama_lengkap'] ?? $c['username'] ?? 'Pelanggan') ?>
+                                                    </p>
+                                                    <?php if ($unread > 0): ?>
+                                                        <span class="bg-[#D97706] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0"><?= $unread ?></span>
+                                                    <?php endif; ?>
+                                                </div>
+                                                <p class="text-[11px] text-stone-500 truncate mt-0.5">
+                                                    <?= htmlspecialchars($c['last_message'] ?? 'Belum ada pesan') ?>
+                                                </p>
+                                                <p class="text-[10px] text-stone-400 mt-1">
+                                                    <?= !empty($c['last_time']) ? date('d M H:i', strtotime($c['last_time'])) : '' ?>
+                                                    &middot; <?= (int)$c['total_messages'] ?> pesan
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </a>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </div>
+                    </aside>
+
+                    <section class="lg:col-span-2 bg-white rounded-2xl border border-stone-200/80 shadow-sm flex flex-col overflow-hidden">
+
+                        <?php if (!$selectedCustomer): ?>
+                            <div class="flex-1 flex flex-col items-center justify-center p-8 text-center">
+                                <div class="w-16 h-16 bg-stone-100 rounded-full flex items-center justify-center mb-3">
+                                    <i data-lucide="inbox" class="w-7 h-7 text-stone-400"></i>
+                                </div>
+                                <p class="text-sm font-bold text-stone-700">Pilih percakapan</p>
+                                <p class="text-xs text-stone-500 mt-1">Pilih pelanggan dari daftar di sebelah kiri untuk mulai membalas.</p>
+                            </div>
+                        <?php else: ?>
+
+                            <div class="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-10 h-10 rounded-full bg-[#2E7D32] flex items-center justify-center text-white font-bold text-xs">
+                                        <?= htmlspecialchars(strtoupper(substr($selectedCustomer['nama_lengkap'] ?? 'P', 0, 1))) ?>
+                                    </div>
+                                    <div>
+                                        <p class="text-sm font-bold text-stone-800"><?= htmlspecialchars($selectedCustomer['nama_lengkap'] ?? $selectedCustomer['username']) ?></p>
+                                        <p class="text-[11px] text-emerald-600 font-medium flex items-center gap-1.5">
+                                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full inline-block"></span> Pelanggan Aktif
+                                        </p>
+                                    </div>
+                                </div>
+                                <div class="hidden sm:block text-right">
+                                    <p class="text-[10px] text-stone-400 uppercase tracking-wider font-bold">Email</p>
+                                    <p class="text-[11px] text-stone-600"><?= htmlspecialchars($selectedCustomer['email'] ?? '-') ?></p>
+                                </div>
+                            </div>
+
+                            <div id="chat-box" class="flex-1 p-5 overflow-y-auto space-y-4 bg-stone-50/40 custom-scrollbar">
+
+                                <?php if (empty($chatMessages)): ?>
+                                    <div class="text-center py-12">
+                                        <p class="text-sm font-semibold text-stone-700">Belum ada pesan</p>
+                                        <p class="text-xs text-stone-500 mt-1">Kirim balasan pertama Anda.</p>
+                                    </div>
+                                <?php else: ?>
+                                    <?php foreach ($chatMessages as $msg):
+                                        $isAdmin = ($msg['sender_type'] === 'admin');
+                                        $msgId   = (int)$msg['id'];
+                                        $isEdit  = ($editId === $msgId && $isAdmin);
+                                    ?>
+                                        <div class="flex <?= $isAdmin ? 'justify-end' : 'justify-start' ?>" id="msg-<?= $msgId ?>">
+                                            <div class="max-w-xs sm:max-w-md md:max-w-lg">
+                                                <?php if ($isEdit): ?>
+                                                    <form method="POST" action="chat.php?user_id=<?= $selected_id ?>" class="bg-white border-2 border-[#2E7D32] rounded-2xl p-3 shadow-sm space-y-2 w-full sm:w-96">
+                                                        <input type="hidden" name="action" value="edit">
+                                                        <input type="hidden" name="id" value="<?= $msgId ?>">
+                                                        <textarea name="new_message" rows="3" required class="w-full text-xs bg-stone-50 border border-stone-200 rounded-lg p-2.5 focus:outline-none focus:border-[#2E7D32] resize-none"><?= htmlspecialchars($msg['message']) ?></textarea>
+                                                        <div class="flex items-center justify-end gap-2">
+                                                            <a href="chat.php?user_id=<?= $selected_id ?>" class="px-3 py-1.5 text-[11px] font-semibold text-stone-600 hover:bg-stone-100 rounded-lg">Batal</a>
+                                                            <button type="submit" class="px-3 py-1.5 text-[11px] font-bold bg-[#2E7D32] text-white rounded-lg hover:bg-emerald-800">Simpan</button>
+                                                        </div>
+                                                    </form>
+                                                <?php else: ?>
+                                                    <div class="p-3 rounded-2xl text-xs relative <?= $isAdmin 
+                                                        ? 'bg-[#2E7D32] text-white rounded-tr-none shadow-sm' 
+                                                        : 'bg-white text-stone-800 rounded-tl-none border border-stone-200/80 shadow-sm' ?>">
+                                                        <p class="leading-relaxed whitespace-pre-wrap"><?= htmlspecialchars($msg['message']) ?></p>
+                                                        <div class="flex items-center justify-end gap-2 mt-1.5">
+                                                            <?php if (!empty($msg['edited_at'])): ?>
+                                                                <span class="text-[9px] italic <?= $isAdmin ? 'text-emerald-100' : 'text-stone-400' ?>">(diedit)</span>
+                                                            <?php endif; ?>
+                                                            <span class="text-[9px] <?= $isAdmin ? 'text-emerald-100' : 'text-stone-400' ?>">
+                                                                <?= date('d/m H:i', strtotime($msg['created_at'])) ?>
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    <?php if ($isAdmin): ?>
+                                                        <div class="flex items-center justify-end gap-1 mt-1.5">
+                                                            <a href="chat.php?user_id=<?= $selected_id ?>&edit=<?= $msgId ?>" class="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-md border border-stone-200">
+                                                                <i data-lucide="edit-3" class="w-3 h-3"></i> Edit
+                                                            </a>
+                                                            <form method="POST" action="chat.php?user_id=<?= $selected_id ?>" onsubmit="return confirm('Hapus pesan ini?');" class="inline">
+                                                                <input type="hidden" name="action" value="hapus">
+                                                                <input type="hidden" name="id" value="<?= $msgId ?>">
+                                                                <button type="submit" class="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-rose-600 hover:text-white hover:bg-rose-500 rounded-md border border-rose-200">
+                                                                    <i data-lucide="trash-2" class="w-3 h-3"></i> Hapus
+                                                                </button>
+                                                            </form>
+                                                        </div>
+                                                    <?php endif; ?>
+                                                <?php endif; ?>
+                                            </div>
+                                        </div>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+
+                            </div>
+
+                            <form method="POST" action="chat.php?user_id=<?= $selected_id ?>" class="p-3 bg-white border-t border-stone-100 flex gap-2 shrink-0" autocomplete="off">
+                                <input type="hidden" name="action" value="kirim">
+                                <input type="text" name="message" placeholder="Ketik balasan untuk pelanggan..." required 
+                                       class="flex-1 px-4 py-2.5 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] transition">
+                                <button type="submit" class="bg-[#2E7D32] hover:bg-emerald-800 text-white px-5 py-2.5 rounded-xl text-xs font-bold transition inline-flex items-center gap-2">
+                                    <span>Kirim</span>
+                                    <i data-lucide="send" class="w-3.5 h-3.5"></i>
+                                </button>
+                            </form>
+
+                        <?php endif; ?>
+                    </section>
+
+                </div>
+
             </div>
-
-            <!-- FORM INPUT CHAT ADMIN -->
-            <form method="POST" action="chat.php?user_id=<?= $selected_user_id ?>" class="p-4 bg-white border-t border-gray-100 flex gap-2 shrink-0">
-                <input type="text" name="message" placeholder="Tulis balasan untuk pelanggan..." required autocomplete="off" class="flex-1 px-4 py-2.5 text-xs bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:border-[#2E7D32] focus:bg-white transition">
-                <button type="submit" class="bg-[#2E7D32] hover:bg-[#256628] text-white px-5 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 shadow-sm">
-                    <span>Kirim Balasan</span>
-                    <i data-lucide="send" class="w-3.5 h-3.5"></i>
-                </button>
-            </form>
-
-        </div>
-
-    </main>
+        </main>
+    </div>
 
     <script>
         lucide.createIcons();
-        const chatBox = document.getElementById('admin-chat-box');
-        if (chatBox) {
-            chatBox.scrollTop = chatBox.scrollHeight;
+        const chatBox = document.getElementById('chat-box');
+        if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
+        function toggleMobileSidebar() {
+            const s = document.getElementById('sidebar');
+            s?.classList.toggle('hidden');
+            s?.classList.toggle('fixed');
+            s?.classList.toggle('inset-y-0');
+            s?.classList.toggle('left-0');
+            s?.classList.toggle('z-40');
         }
     </script>
 </body>
