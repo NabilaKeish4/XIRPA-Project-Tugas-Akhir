@@ -80,6 +80,9 @@ $qChat = mysqli_query($conn, "
 ");
 if ($qChat) while ($row = mysqli_fetch_assoc($qChat)) $chatMessages[] = $row;
 
+// Tandai pesan dari admin sudah dibaca oleh pelanggan (biar unread count di admin reset)
+mysqli_query($conn, "UPDATE chats SET is_read = 1 WHERE user_id = $user_id AND sender_type = 'admin' AND is_read = 0");
+
 $editId = (int)($_GET['edit'] ?? 0);
 ?>
 <!DOCTYPE html>
@@ -96,6 +99,12 @@ $editId = (int)($_GET['edit'] ?? 0);
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 9999px; }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
     </style>
 </head>
 <body class="antialiased min-h-screen flex flex-col">
@@ -114,8 +123,13 @@ $editId = (int)($_GET['edit'] ?? 0);
                 </a>
             </div>
 
-            <div class="hidden md:flex flex-1 max-w-md">
-                <span class="text-xs text-stone-500 self-center">Konsultasi dengan admin PlantHub</span>
+            <div class="hidden md:flex flex-1 max-w-md items-center gap-3">
+                <span class="text-xs text-stone-500">Konsultasi dengan admin PlantHub</span>
+                <!-- Indikator Auto-refresh -->
+                <button onclick="toggleAutoRefresh()" id="btnAutoRefresh" class="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border border-emerald-200 bg-emerald-50 text-[#2E7D32] hover:bg-emerald-100 transition">
+                    <span class="pulse-dot w-1.5 h-1.5 rounded-full bg-[#2E7D32]"></span>
+                    <span id="autoRefreshLabel">Auto 10s</span>
+                </button>
             </div>
 
             <div class="flex items-center gap-3">
@@ -178,9 +192,16 @@ $editId = (int)($_GET['edit'] ?? 0);
         <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full">
             <div class="flex flex-col h-[calc(100vh-8rem)] space-y-4">
 
-                <div>
-                    <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Konsultasi</h1>
-                    <p class="text-sm text-stone-500 mt-0.5">Tanyakan masalah perawatan tanaman atau produk ke admin.</p>
+                <div class="flex items-center justify-between gap-3">
+                    <div>
+                        <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Konsultasi</h1>
+                        <p class="text-sm text-stone-500 mt-0.5">Tanyakan masalah perawatan tanaman atau produk ke admin.</p>
+                    </div>
+                    <!-- Toggle auto-refresh versi mobile -->
+                    <button onclick="toggleAutoRefresh()" id="btnAutoRefreshMobile" class="md:hidden inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border border-emerald-200 bg-emerald-50 text-[#2E7D32]">
+                        <span class="pulse-dot w-1.5 h-1.5 rounded-full bg-[#2E7D32]"></span>
+                        <span>Auto 10s</span>
+                    </button>
                 </div>
 
                 <?php if (!empty($pesan_error)): ?>
@@ -190,7 +211,7 @@ $editId = (int)($_GET['edit'] ?? 0);
                     </div>
                 <?php endif; ?>
                 <?php if (!empty($pesan_sukses)): ?>
-                    <div class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm flex items-center gap-2">
+                    <div id="alertSukses" class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm flex items-center gap-2 transition-opacity duration-500">
                         <i data-lucide="check-circle" class="w-5 h-5 text-[#2E7D32] shrink-0"></i>
                         <span><?= htmlspecialchars($pesan_sukses) ?></span>
                     </div>
@@ -278,7 +299,7 @@ $editId = (int)($_GET['edit'] ?? 0);
 
                     <form method="POST" action="chat.php" class="p-3 bg-white border-t border-stone-100 flex gap-2" autocomplete="off">
                         <input type="hidden" name="action" value="kirim">
-                        <input type="text" name="message" placeholder="Ketik pesan..." required 
+                        <input type="text" name="message" id="inPesan" placeholder="Ketik pesan..." required 
                                class="flex-1 px-4 py-2.5 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] transition">
                         <button type="submit" class="bg-[#2E7D32] hover:bg-emerald-800 text-white px-5 py-2.5 rounded-xl text-xs font-bold transition inline-flex items-center gap-2">
                             <span>Kirim</span>
@@ -294,8 +315,119 @@ $editId = (int)($_GET['edit'] ?? 0);
 
     <script>
         lucide.createIcons();
+
+        // ========================================================
+        // AUTO-REFRESH 10 DETIK (sisi pelanggan)
+        // ========================================================
+        const REFRESH_INTERVAL = 10000; // 10 detik
+        let autoRefreshTimer = null;
+        let isAutoRefreshOn = true;
+        const editIdAktif = <?= (int)$editId ?>;
+
+        function startAutoRefresh() {
+            if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+            autoRefreshTimer = setInterval(() => {
+                // Skip kalau user sedang edit pesan
+                if (editIdAktif > 0) return;
+
+                // Skip kalau user sedang mengetik
+                if (document.activeElement && document.activeElement.id === 'inPesan') return;
+
+                refreshChat();
+            }, REFRESH_INTERVAL);
+        }
+
+        function stopAutoRefresh() {
+            if (autoRefreshTimer) {
+                clearInterval(autoRefreshTimer);
+                autoRefreshTimer = null;
+            }
+        }
+
+        function toggleAutoRefresh() {
+            isAutoRefreshOn = !isAutoRefreshOn;
+            const btns = [document.getElementById('btnAutoRefresh'), document.getElementById('btnAutoRefreshMobile')];
+
+            if (isAutoRefreshOn) {
+                startAutoRefresh();
+                btns.forEach(btn => {
+                    if (!btn) return;
+                    btn.className = 'inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border border-emerald-200 bg-emerald-50 text-[#2E7D32] hover:bg-emerald-100 transition';
+                    const dot = btn.querySelector('span:first-child');
+                    if (dot) dot.classList.add('pulse-dot');
+                    const label = btn.querySelector('span:last-child');
+                    if (label) label.innerText = 'Auto 10s';
+                });
+            } else {
+                stopAutoRefresh();
+                btns.forEach(btn => {
+                    if (!btn) return;
+                    btn.className = 'inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border border-stone-200 bg-stone-100 text-stone-500 hover:bg-stone-200 transition';
+                    const dot = btn.querySelector('span:first-child');
+                    if (dot) dot.classList.remove('pulse-dot');
+                    const label = btn.querySelector('span:last-child');
+                    if (label) label.innerText = 'Auto OFF';
+                });
+            }
+        }
+
+        function refreshChat() {
+            const chatBox = document.getElementById('chat-box');
+            if (!chatBox) return;
+
+            const isAtBottom = (chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight) < 50;
+            const oldScrollTop = chatBox.scrollTop;
+
+            const url = new URL(window.location.href);
+            url.searchParams.set('ajax', '1');
+
+            fetch(url.toString(), { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                .then(r => r.text())
+                .then(html => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+
+                    const newChatBox = doc.getElementById('chat-box');
+                    if (newChatBox) {
+                        chatBox.innerHTML = newChatBox.innerHTML;
+                    }
+
+                    lucide.createIcons();
+
+                    if (isAtBottom) {
+                        chatBox.scrollTop = chatBox.scrollHeight;
+                    } else {
+                        chatBox.scrollTop = oldScrollTop;
+                    }
+                })
+                .catch(err => console.warn('Auto-refresh gagal:', err));
+        }
+
+        // Auto scroll ke bawah saat pertama load
         const chatBox = document.getElementById('chat-box');
         if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
+
+        // Mulai auto-refresh
+        startAutoRefresh();
+
+        // Pause saat tab tidak aktif
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                stopAutoRefresh();
+            } else if (isAutoRefreshOn) {
+                startAutoRefresh();
+                refreshChat();
+            }
+        });
+
+        // Auto-hide alert sukses
+        const alertSukses = document.getElementById('alertSukses');
+        if (alertSukses) {
+            setTimeout(() => {
+                alertSukses.style.opacity = '0';
+                setTimeout(() => alertSukses.remove(), 500);
+            }, 4000);
+        }
 
         function toggleMobileSidebar() {
             const s = document.getElementById('sidebar');

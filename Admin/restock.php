@@ -30,7 +30,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'simpa
         exit;
     }
 
-    // Hitung total
     $total = 0;
     foreach ($items as $it) {
         $total += (int)$it['qty'] * (float)$it['harga'];
@@ -41,7 +40,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'simpa
         $kode = 'RST-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -5));
         $catatanEsc = mysqli_real_escape_string($conn, $catatan);
 
-        // 1. INSERT ke transaksi (jenis = pembelian)
         $sqlTx = "INSERT INTO transaksi 
                   (kode_transaksi, user_id, supplier_id, jenis_transaksi, total_harga, metode_pembayaran, status, catatan, created_at) 
                   VALUES 
@@ -50,7 +48,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'simpa
 
         $transaksi_id = mysqli_insert_id($conn);
 
-        // 2. INSERT detail + UPDATE stok
         foreach ($items as $it) {
             $pid   = (int)$it['id'];
             $qty   = (int)$it['qty'];
@@ -61,7 +58,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'simpa
                        VALUES ($transaksi_id, $pid, $qty, $harga, $sub)";
             if (!mysqli_query($conn, $sqlDet)) throw new Exception(mysqli_error($conn));
 
-            // UPDATE stok + harga_beli produk
             $sqlStok = "UPDATE produk SET stok = stok + $qty, harga_beli = $harga WHERE id = $pid";
             if (!mysqli_query($conn, $sqlStok)) throw new Exception(mysqli_error($conn));
         }
@@ -85,14 +81,54 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'simpa
 }
 
 // =========================================================
+// AMBIL DETAIL RESTOCK (untuk modal)
+// =========================================================
+if (isset($_GET['detail_id']) && (int)$_GET['detail_id'] > 0) {
+    header('Content-Type: application/json');
+    $id = (int)$_GET['detail_id'];
+
+    $qTx = mysqli_query($conn, "
+        SELECT t.*, s.nama_supplier, s.kontak AS supplier_kontak, s.alamat AS supplier_alamat
+        FROM transaksi t
+        LEFT JOIN supplier s ON t.supplier_id = s.id
+        WHERE t.id = $id AND t.jenis_transaksi = 'pembelian'
+        LIMIT 1
+    ");
+    if (!$qTx || mysqli_num_rows($qTx) === 0) {
+        echo json_encode(['success' => false, 'message' => 'Transaksi tidak ditemukan.']);
+        exit;
+    }
+    $tx = mysqli_fetch_assoc($qTx);
+
+    $items = [];
+    $qDet = mysqli_query($conn, "
+        SELECT td.*, p.nama_tanaman, k.nama_kategori
+        FROM transaksi_detail td
+        LEFT JOIN produk p ON td.produk_id = p.id
+        LEFT JOIN kategori k ON p.kategori_id = k.id
+        WHERE td.transaksi_id = $id
+        ORDER BY td.id ASC
+    ");
+    if ($qDet) while ($r = mysqli_fetch_assoc($qDet)) $items[] = $r;
+
+    echo json_encode([
+        'success' => true,
+        'tx' => $tx,
+        'items' => $items,
+    ]);
+    exit;
+}
+
+// =========================================================
 // AMBIL SUPPLIER
 // =========================================================
 $supplierList = [];
 $qSup = mysqli_query($conn, "SELECT * FROM supplier ORDER BY nama_supplier ASC");
 if ($qSup) while ($r = mysqli_fetch_assoc($qSup)) $supplierList[] = $r;
+$supplierKosong = empty($supplierList);
 
 // =========================================================
-// AMBIL PRODUK (semua, termasuk yang stok 0 karena restock)
+// AMBIL PRODUK
 // =========================================================
 $produkList = [];
 $qProduk = mysqli_query($conn, "
@@ -131,7 +167,6 @@ if ($qStat) {
     $statTotal   = (float)$r['nilai'];
 }
 
-// Invoice nomor (preview saja)
 $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
 ?>
 <!DOCTYPE html>
@@ -148,6 +183,23 @@ $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 9999px; }
+
+        /* Print invoice */
+        @media print {
+            body * { visibility: hidden !important; }
+            #areaCetakInvoice, #areaCetakInvoice * { visibility: visible !important; }
+            #areaCetakInvoice {
+                position: absolute !important;
+                left: 0; top: 0;
+                width: 100% !important;
+                padding: 10mm !important;
+                margin: 0 !important;
+                background: #fff !important;
+                color: #000 !important;
+                font-family: 'Plus Jakarta Sans', sans-serif !important;
+            }
+            @page { size: A4; margin: 10mm; }
+        }
     </style>
 </head>
 <body class="antialiased min-h-screen flex flex-col">
@@ -187,17 +239,17 @@ $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
                     <?php
                     $menu = [
-    ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
-    ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
-    ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
-    ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
-    ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],  // ← BARU
-    ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],  // ← BARU
-    ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
-    ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
-    ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
-    ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
-];
+                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
+                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
+                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => true],
+                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
+                        ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],
+                        ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],
+                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
+                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
+                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
+                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
+                    ];
                     foreach ($menu as $m):
                         $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
                     ?>
@@ -244,6 +296,23 @@ $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
                 </div>
             </div>
 
+            <!-- WARNING SUPPLIER KOSONG -->
+            <?php if ($supplierKosong): ?>
+                <div class="p-5 bg-amber-50 border-2 border-amber-200 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                    <div class="w-12 h-12 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                        <i data-lucide="alert-triangle" class="w-6 h-6"></i>
+                    </div>
+                    <div class="flex-1">
+                        <p class="text-sm font-bold text-amber-900">Belum ada supplier terdaftar</p>
+                        <p class="text-xs text-amber-700 mt-0.5">Kamu harus menambahkan supplier dulu sebelum bisa melakukan restock.</p>
+                    </div>
+                    <a href="supplier.php" class="inline-flex items-center gap-2 bg-amber-600 hover:bg-amber-700 text-white px-4 py-2.5 rounded-xl text-xs font-bold shadow-sm transition shrink-0">
+                        <i data-lucide="plus" class="w-4 h-4"></i>
+                        Tambah Supplier
+                    </a>
+                </div>
+            <?php endif; ?>
+
             <!-- STATISTIK -->
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32]">
@@ -264,7 +333,7 @@ $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
             </div>
 
             <!-- FORM RESTOCK -->
-            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-5">
+            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-5 <?= $supplierKosong ? 'opacity-60 pointer-events-none' : '' ?>">
                 <div class="border-b border-stone-100 pb-3">
                     <h2 class="text-base font-bold text-stone-800">Form Pembelian Baru</h2>
                     <p class="text-xs text-stone-500 mt-0.5">Pilih supplier, tambah item, lalu simpan.</p>
@@ -373,9 +442,14 @@ $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
 
             <!-- RIWAYAT RESTOCK -->
             <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
-                <div class="p-5 border-b border-stone-100">
-                    <h2 class="text-base font-bold text-stone-800">Riwayat Restock Terakhir</h2>
-                    <p class="text-xs text-stone-500 mt-0.5">10 transaksi pembelian terbaru.</p>
+                <div class="p-5 border-b border-stone-100 flex items-center justify-between">
+                    <div>
+                        <h2 class="text-base font-bold text-stone-800">Riwayat Restock Terakhir</h2>
+                        <p class="text-xs text-stone-500 mt-0.5">10 transaksi pembelian terbaru. Klik row untuk lihat detail.</p>
+                    </div>
+                    <span class="p-2 bg-stone-100 rounded-lg text-stone-500">
+                        <i data-lucide="history" class="w-4 h-4"></i>
+                    </span>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse">
@@ -385,20 +459,26 @@ $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
                                 <th class="py-3 px-4">Supplier</th>
                                 <th class="py-3 px-4">Tanggal</th>
                                 <th class="py-3 px-4 text-center">Item</th>
-                                <th class="py-3 px-6 text-right">Total</th>
+                                <th class="py-3 px-4 text-right">Total</th>
+                                <th class="py-3 px-6 text-center">Aksi</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-stone-100 text-xs">
                             <?php if (empty($riwayat)): ?>
-                                <tr><td colspan="5" class="py-8 text-center text-stone-400">Belum ada riwayat restock.</td></tr>
+                                <tr><td colspan="6" class="py-8 text-center text-stone-400">Belum ada riwayat restock.</td></tr>
                             <?php else: ?>
                                 <?php foreach ($riwayat as $r): ?>
-                                    <tr class="hover:bg-stone-50/60">
+                                    <tr class="hover:bg-stone-50/60 cursor-pointer" onclick="openDetail(<?= (int)$r['id'] ?>)">
                                         <td class="py-3 px-6 font-mono text-[11px] font-semibold text-stone-700"><?= htmlspecialchars($r['kode_transaksi']) ?></td>
                                         <td class="py-3 px-4 font-semibold text-stone-800"><?= htmlspecialchars($r['nama_supplier'] ?? 'Tanpa Supplier') ?></td>
                                         <td class="py-3 px-4 text-stone-500"><?= date('d M Y, H:i', strtotime($r['created_at'])) ?></td>
                                         <td class="py-3 px-4 text-center font-semibold text-stone-700"><?= (int)$r['jml_item'] ?></td>
-                                        <td class="py-3 px-6 text-right font-bold text-[#D97706]">Rp <?= number_format($r['total_harga'], 0, ',', '.') ?></td>
+                                        <td class="py-3 px-4 text-right font-bold text-[#D97706]">Rp <?= number_format($r['total_harga'], 0, ',', '.') ?></td>
+                                        <td class="py-3 px-6 text-center">
+                                            <button onclick="event.stopPropagation(); openDetail(<?= (int)$r['id'] ?>)" class="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-[#2E7D32] hover:bg-emerald-50 rounded-lg transition">
+                                                <i data-lucide="eye" class="w-3.5 h-3.5"></i> Detail
+                                            </button>
+                                        </td>
                                     </tr>
                                 <?php endforeach; ?>
                             <?php endif; ?>
@@ -427,6 +507,107 @@ $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
             <button onclick="closeModalSukses()" class="w-full bg-[#2E7D32] hover:bg-emerald-800 text-white font-bold py-2.5 rounded-xl text-sm transition">
                 Selesai
             </button>
+        </div>
+    </div>
+
+    <!-- MODAL DETAIL RIWAYAT -->
+    <div id="modalDetail" class="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 hidden items-center justify-center p-4 overflow-y-auto">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full my-8">
+            <div class="p-5 border-b border-stone-100 flex items-center justify-between">
+                <div>
+                    <h3 class="text-base font-bold text-stone-800">Detail Pembelian</h3>
+                    <p class="text-[11px] text-stone-500 mt-0.5" id="dKode">-</p>
+                </div>
+                <button onclick="closeDetail()" class="text-stone-400 hover:text-stone-700 p-1.5 rounded-lg hover:bg-stone-100">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div id="dLoading" class="p-12 text-center">
+                <div class="w-8 h-8 border-3 border-stone-200 border-t-[#2E7D32] rounded-full animate-spin mx-auto"></div>
+                <p class="text-xs text-stone-500 mt-3">Memuat detail...</p>
+            </div>
+
+            <div id="dContent" class="hidden">
+                <div id="areaCetakInvoice" class="p-6 space-y-5">
+
+                    <!-- Header invoice -->
+                    <div class="flex items-start justify-between border-b-2 border-[#2E7D32] pb-4">
+                        <div>
+                            <div class="flex items-center gap-2 mb-1">
+                                <div class="w-8 h-8 rounded-lg bg-[#2E7D32] flex items-center justify-center text-white">
+                                    <i data-lucide="sprout" class="w-4 h-4"></i>
+                                </div>
+                                <span class="text-lg font-bold text-stone-800">PlantHub</span>
+                            </div>
+                            <p class="text-[10px] text-stone-500">Sistem Manajemen Toko Tanaman</p>
+                        </div>
+                        <div class="text-right">
+                            <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Invoice Pembelian</p>
+                            <p class="text-sm font-bold font-mono text-stone-800" id="invKode">-</p>
+                            <p class="text-[10px] text-stone-500" id="invTanggal">-</p>
+                        </div>
+                    </div>
+
+                    <!-- Info supplier -->
+                    <div class="grid grid-cols-2 gap-4 text-xs">
+                        <div>
+                            <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-1">Supplier</p>
+                            <p class="font-bold text-stone-800" id="dSupplier">-</p>
+                            <p class="text-stone-500 text-[11px] mt-0.5" id="dSupplierKontak">-</p>
+                            <p class="text-stone-500 text-[11px]" id="dSupplierAlamat">-</p>
+                        </div>
+                        <div>
+                            <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-1">Info Transaksi</p>
+                            <p class="text-stone-600"><b>Status:</b> <span id="dStatus">-</span></p>
+                            <p class="text-stone-600 mt-0.5"><b>Metode:</b> <span id="dMetode">-</span></p>
+                            <p class="text-stone-600 mt-0.5"><b>Kasir:</b> <?= htmlspecialchars($admin_nama) ?></p>
+                        </div>
+                    </div>
+
+                    <!-- Tabel item -->
+                    <div class="border border-stone-200 rounded-lg overflow-hidden">
+                        <table class="w-full text-left border-collapse">
+                            <thead>
+                                <tr class="bg-stone-50 text-[10px] font-bold text-stone-500 uppercase tracking-wider">
+                                    <th class="py-2.5 px-3">Produk</th>
+                                    <th class="py-2.5 px-3 text-center">Qty</th>
+                                    <th class="py-2.5 px-3 text-right">Harga Beli</th>
+                                    <th class="py-2.5 px-3 text-right">Subtotal</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dItems" class="divide-y divide-stone-100 text-xs">
+                                <!-- Diisi JS -->
+                            </tbody>
+                            <tfoot>
+                                <tr class="bg-stone-50 border-t-2 border-stone-200">
+                                    <td colspan="3" class="py-2.5 px-3 text-right font-bold text-stone-700">Total</td>
+                                    <td class="py-2.5 px-3 text-right font-bold text-[#2E7D32] text-sm" id="dTotal">Rp 0</td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+
+                    <!-- Catatan -->
+                    <div id="dCatatanWrap" class="hidden">
+                        <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-1">Catatan</p>
+                        <p class="text-xs text-stone-600 italic" id="dCatatan">-</p>
+                    </div>
+
+                    <div class="text-center text-[10px] text-stone-400 pt-3 border-t border-dashed border-stone-200">
+                        Dokumen ini dicetak dari sistem PlantHub
+                    </div>
+                </div>
+
+                <div class="p-4 border-t border-stone-100 flex gap-2">
+                    <button onclick="window.print()" class="flex-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold py-2.5 rounded-xl text-xs inline-flex items-center justify-center gap-2">
+                        <i data-lucide="printer" class="w-4 h-4"></i> Cetak Invoice
+                    </button>
+                    <button onclick="closeDetail()" class="flex-1 bg-[#2E7D32] hover:bg-emerald-800 text-white font-bold py-2.5 rounded-xl text-xs">
+                        Tutup
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -581,6 +762,91 @@ $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
         function closeModalSukses() {
             window.location.href = 'restock.php';
         }
+
+        // ========================================================
+        // DETAIL VIEW
+        // ========================================================
+        function openDetail(id) {
+            const modal = document.getElementById('modalDetail');
+            const loading = document.getElementById('dLoading');
+            const content = document.getElementById('dContent');
+
+            loading.classList.remove('hidden');
+            content.classList.add('hidden');
+
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+
+            fetch('restock.php?detail_id=' + id)
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.success) {
+                        alert('Gagal memuat detail: ' + data.message);
+                        closeDetail();
+                        return;
+                    }
+
+                    const tx = data.tx;
+
+                    document.getElementById('dKode').innerText = tx.kode_transaksi;
+                    document.getElementById('invKode').innerText = tx.kode_transaksi;
+                    document.getElementById('invTanggal').innerText = new Date(tx.created_at).toLocaleString('id-ID', {
+                        day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
+                    });
+
+                    document.getElementById('dSupplier').innerText = tx.nama_supplier || 'Tanpa Supplier';
+                    document.getElementById('dSupplierKontak').innerText = tx.supplier_kontak || '-';
+                    document.getElementById('dSupplierAlamat').innerText = tx.supplier_alamat || '-';
+                    document.getElementById('dStatus').innerText = tx.status;
+                    document.getElementById('dMetode').innerText = (tx.metode_pembayaran || '-').toUpperCase();
+
+                    const itemsBody = document.getElementById('dItems');
+                    itemsBody.innerHTML = '';
+                    data.items.forEach(it => {
+                        const tr = document.createElement('tr');
+                        tr.className = 'hover:bg-stone-50/60';
+                        tr.innerHTML = `
+                            <td class="py-2.5 px-3">
+                                <p class="font-semibold text-stone-800">${it.nama_tanaman || 'Produk'}</p>
+                                <p class="text-[10px] text-stone-400">${it.nama_kategori || '-'}</p>
+                            </td>
+                            <td class="py-2.5 px-3 text-center font-semibold">${it.jumlah}</td>
+                            <td class="py-2.5 px-3 text-right">${formatRp(it.harga_satuan)}</td>
+                            <td class="py-2.5 px-3 text-right font-bold text-stone-800">${formatRp(it.subtotal)}</td>
+                        `;
+                        itemsBody.appendChild(tr);
+                    });
+
+                    document.getElementById('dTotal').innerText = formatRp(tx.total_harga);
+
+                    // Catatan
+                    const catatanWrap = document.getElementById('dCatatanWrap');
+                    if (tx.catatan && tx.catatan.trim() !== '') {
+                        document.getElementById('dCatatan').innerText = tx.catatan;
+                        catatanWrap.classList.remove('hidden');
+                    } else {
+                        catatanWrap.classList.add('hidden');
+                    }
+
+                    loading.classList.add('hidden');
+                    content.classList.remove('hidden');
+                    lucide.createIcons();
+                })
+                .catch(err => {
+                    alert('Error: ' + err.message);
+                    closeDetail();
+                });
+        }
+
+        function closeDetail() {
+            const modal = document.getElementById('modalDetail');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        document.getElementById('modalDetail').addEventListener('click', (e) => {
+            if (e.target.id === 'modalDetail') closeDetail();
+        });
 
         renderItems();
     </script>

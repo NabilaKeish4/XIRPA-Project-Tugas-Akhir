@@ -11,7 +11,31 @@ $user_id    = (int)$_SESSION['user_id'];
 $nama_user  = $_SESSION['nama_user'] ?? 'Pelanggan';
 $cart_count = isset($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
 
+// =========================================================
+// HELPER FUNCTIONS (dideklarasikan 1x saja di atas)
+// =========================================================
+if (!function_exists('badgeStatus')) {
+    function badgeStatus($status) {
+        switch ($status) {
+            case 'Diproses': return 'bg-amber-50 text-amber-700 border-amber-200';
+            case 'Dikirim':  return 'bg-blue-50 text-blue-700 border-blue-200';
+            case 'Selesai':  return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+            case 'Batal':    return 'bg-rose-50 text-rose-700 border-rose-200';
+            default:         return 'bg-stone-100 text-stone-600 border-stone-200';
+        }
+    }
+}
+
+if (!function_exists('buildRiwayatUrl')) {
+    function buildRiwayatUrl($overrides = []) {
+        $params = array_merge($_GET, $overrides);
+        return 'riwayat.php?' . http_build_query($params);
+    }
+}
+
+// =========================================================
 // HANDLE BATALKAN PESANAN
+// =========================================================
 $batalMsg = '';
 $batalErr = '';
 
@@ -54,37 +78,123 @@ if (isset($_GET['status']) && $_GET['status'] === 'batal') {
     $batalMsg = "Pesanan berhasil dibatalkan. Stok produk telah dikembalikan.";
 }
 
-$successMsg = '';
-if (isset($_GET['success']) && $_GET['success'] == 1) {
-    $kode = htmlspecialchars($_GET['kode'] ?? '');
-    $successMsg = "Pesanan berhasil dibuat" . ($kode ? " dengan kode <b>$kode</b>" : "") . ". Silakan tunggu konfirmasi admin.";
+// =========================================================
+// HANDLE BELI LAGI
+// =========================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'beli_lagi') {
+    $trx_id = (int)($_POST['trx_id'] ?? 0);
+    if ($trx_id > 0) {
+        $qCek = mysqli_query($conn, "SELECT id FROM transaksi WHERE id = $trx_id AND user_id = $user_id AND jenis_transaksi = 'penjualan' LIMIT 1");
+        if ($qCek && mysqli_num_rows($qCek) > 0) {
+            $added = 0;
+            $skipped = [];
+
+            $qDet = mysqli_query($conn, "
+                SELECT td.produk_id, td.jumlah, p.nama_tanaman, p.stok 
+                FROM transaksi_detail td
+                LEFT JOIN produk p ON td.produk_id = p.id
+                WHERE td.transaksi_id = $trx_id
+            ");
+            if ($qDet) {
+                while ($d = mysqli_fetch_assoc($qDet)) {
+                    $pid  = (int)$d['produk_id'];
+                    $qty  = (int)$d['jumlah'];
+                    $stok = (int)($d['stok'] ?? 0);
+                    $nama = $d['nama_tanaman'] ?? 'Produk';
+
+                    if ($pid <= 0) continue;
+
+                    if ($stok <= 0) {
+                        $skipped[] = "$nama (habis)";
+                        continue;
+                    }
+
+                    $qtyFinal = min($qty, $stok);
+                    if ($qtyFinal < $qty) {
+                        $skipped[] = "$nama (stok kurang, dapat $qtyFinal dari $qty)";
+                    }
+
+                    $qtySekarang = isset($_SESSION['cart'][$pid]) ? (int)$_SESSION['cart'][$pid] : 0;
+                    $_SESSION['cart'][$pid] = min($qtySekarang + $qtyFinal, $stok);
+                    $added++;
+                }
+            }
+
+            $_SESSION['beli_lagi_result'] = [
+                'added'   => $added,
+                'skipped' => $skipped,
+            ];
+            header("Location: cart.php?msg=beli_lagi");
+            exit;
+        }
+    }
+    header("Location: riwayat.php");
+    exit;
 }
 
-// FILTER STATUS
-$statusFilter  = $_GET['status_filter'] ?? 'semua';
+// =========================================================
+// PARAMETER FILTER
+// =========================================================
+$statusFilter = $_GET['status_filter'] ?? 'semua';
 $allowedStatus = ['semua', 'Diproses', 'Dikirim', 'Selesai', 'Batal'];
 if (!in_array($statusFilter, $allowedStatus)) $statusFilter = 'semua';
 
-$whereStatus = "";
-if ($statusFilter !== 'semua') {
-    $statusEsc = mysqli_real_escape_string($conn, $statusFilter);
-    $whereStatus = " AND t.status = '$statusEsc'";
+$search = isset($_GET['search']) ? mysqli_real_escape_string($conn, trim($_GET['search'])) : '';
+
+// Filter tanggal
+$range       = $_GET['range'] ?? 'all';
+$tgl_mulai   = $_GET['tgl_mulai']   ?? date('Y-m-01');
+$tgl_selesai = $_GET['tgl_selesai'] ?? date('Y-m-d');
+
+if ($range === 'today') {
+    $tgl_mulai = $tgl_selesai = date('Y-m-d');
+} elseif ($range === '7days') {
+    $tgl_mulai   = date('Y-m-d', strtotime('-7 days'));
+    $tgl_selesai = date('Y-m-d');
+} elseif ($range === '30days') {
+    $tgl_mulai   = date('Y-m-d', strtotime('-30 days'));
+    $tgl_selesai = date('Y-m-d');
+} elseif ($range === 'all') {
+    $tgl_mulai = $tgl_selesai = null;
+} elseif ($range === 'custom') {
+    // pakai input dari user
 }
 
+// =========================================================
+// BUILD WHERE
+// =========================================================
+$where = "WHERE t.user_id = $user_id AND t.jenis_transaksi = 'penjualan'";
+
+if ($statusFilter !== 'semua') {
+    $statusEsc = mysqli_real_escape_string($conn, $statusFilter);
+    $where .= " AND t.status = '$statusEsc'";
+}
+if ($search !== '') {
+    $where .= " AND t.kode_transaksi LIKE '%$search%'";
+}
+if ($tgl_mulai !== null && $tgl_selesai !== null) {
+    $mulaiEsc   = mysqli_real_escape_string($conn, $tgl_mulai);
+    $selesaiEsc = mysqli_real_escape_string($conn, $tgl_selesai);
+    $where .= " AND DATE(t.created_at) BETWEEN '$mulaiEsc' AND '$selesaiEsc'";
+}
+
+// =========================================================
 // QUERY TRANSAKSI
+// =========================================================
 $orders = [];
 $qOrders = mysqli_query($conn, "
     SELECT t.*, 
-           (SELECT COUNT(*) FROM transaksi_detail td WHERE td.transaksi_id = t.id) AS jml_item
+           (SELECT COUNT(*) FROM transaksi_detail td WHERE td.transaksi_id = t.id) AS jml_item,
+           (SELECT COALESCE(SUM(jumlah), 0) FROM transaksi_detail td WHERE td.transaksi_id = t.id) AS total_qty
     FROM transaksi t
-    WHERE t.user_id = $user_id 
-      AND t.jenis_transaksi = 'penjualan'
-      $whereStatus
+    $where
     ORDER BY t.created_at DESC
 ");
 if ($qOrders) while ($row = mysqli_fetch_assoc($qOrders)) $orders[] = $row;
 
-// STATISTIK
+// =========================================================
+// STATISTIK GLOBAL
+// =========================================================
 $statTotal   = 0;
 $statPending = 0;
 $statSelesai = 0;
@@ -107,14 +217,10 @@ if ($qStat) {
     $statBelanja = (float)$s['total_belanja'];
 }
 
-function badgeStatus($status) {
-    switch ($status) {
-        case 'Diproses': return 'bg-amber-50 text-amber-700 border-amber-200';
-        case 'Dikirim':  return 'bg-blue-50 text-blue-700 border-blue-200';
-        case 'Selesai':  return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-        case 'Batal':    return 'bg-rose-50 text-rose-700 border-rose-200';
-        default:         return 'bg-stone-100 text-stone-600 border-stone-200';
-    }
+$successMsg = '';
+if (isset($_GET['success']) && $_GET['success'] == 1) {
+    $kode = htmlspecialchars($_GET['kode'] ?? '');
+    $successMsg = "Pesanan berhasil dibuat" . ($kode ? " dengan kode <b>$kode</b>" : "") . ". Silakan tunggu konfirmasi admin.";
 }
 ?>
 <!DOCTYPE html>
@@ -232,6 +338,7 @@ function badgeStatus($status) {
                 </div>
             <?php endif; ?>
 
+            <!-- STATISTIK -->
             <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32]">
                     <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Total Pesanan</p>
@@ -255,36 +362,115 @@ function badgeStatus($status) {
                 </div>
             </div>
 
-            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-4">
-                <div class="flex items-center gap-2 overflow-x-auto">
+            <!-- TAB STATUS + SEARCH + FILTER TANGGAL -->
+            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-4 space-y-3">
+
+                <!-- Tab Status -->
+                <div class="flex items-center gap-2 overflow-x-auto pb-1">
                     <?php
                     $tabs = ['semua' => 'Semua', 'Diproses' => 'Diproses', 'Dikirim' => 'Dikirim', 'Selesai' => 'Selesai', 'Batal' => 'Batal'];
                     foreach ($tabs as $key => $label):
                         $active = ($statusFilter === $key);
                         $cls = $active ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200';
                     ?>
-                        <a href="riwayat.php?status_filter=<?= urlencode($key) ?>" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $cls ?>">
+                        <a href="<?= buildRiwayatUrl(['status_filter' => $key]) ?>" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $cls ?>">
                             <?= $label ?>
                         </a>
                     <?php endforeach; ?>
                 </div>
+
+                <!-- Search + Filter Tanggal -->
+                <form method="GET" action="riwayat.php" class="grid grid-cols-1 md:grid-cols-12 gap-3 pt-3 border-t border-stone-100">
+                    <input type="hidden" name="status_filter" value="<?= htmlspecialchars($statusFilter) ?>">
+
+                    <div class="md:col-span-5 relative">
+                        <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Cari Kode</label>
+                        <div class="relative">
+                            <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
+                            <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="INV-20240101-XXXXX" class="w-full pl-10 pr-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                        </div>
+                    </div>
+
+                    <div class="md:col-span-2">
+                        <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Mulai</label>
+                        <input type="date" name="tgl_mulai" value="<?= htmlspecialchars($tgl_mulai ?? '') ?>" class="w-full px-3 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                    </div>
+
+                    <div class="md:col-span-2">
+                        <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Sampai</label>
+                        <input type="date" name="tgl_selesai" value="<?= htmlspecialchars($tgl_selesai ?? '') ?>" class="w-full px-3 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                    </div>
+
+                    <div class="md:col-span-3 flex gap-2 items-end">
+                        <button type="submit" name="range" value="custom" class="flex-1 bg-[#2E7D32] hover:bg-emerald-800 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition inline-flex items-center justify-center gap-1.5">
+                            <i data-lucide="filter" class="w-4 h-4"></i> Terapkan
+                        </button>
+                        <?php if ($search || $range === 'custom'): ?>
+                            <a href="<?= buildRiwayatUrl(['search' => null, 'range' => 'all']) ?>" class="px-3 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-600 rounded-xl text-sm font-semibold transition" title="Reset">
+                                <i data-lucide="x" class="w-4 h-4"></i>
+                            </a>
+                        <?php endif; ?>
+                    </div>
+                </form>
+
+                <!-- Filter Tanggal Cepat -->
+                <div class="flex items-center gap-2 flex-wrap pt-2 border-t border-stone-100">
+                    <span class="text-xs font-bold text-stone-400 uppercase tracking-wider">Filter cepat:</span>
+                    <a href="<?= buildRiwayatUrl(['range' => 'today', 'search' => $search ?: null]) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range==='today' ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>">Hari Ini</a>
+                    <a href="<?= buildRiwayatUrl(['range' => '7days', 'search' => $search ?: null]) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range==='7days' ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>">7 Hari</a>
+                    <a href="<?= buildRiwayatUrl(['range' => '30days', 'search' => $search ?: null]) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range==='30days' ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>">30 Hari</a>
+                    <a href="<?= buildRiwayatUrl(['range' => 'all', 'search' => $search ?: null]) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range==='all' ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>">Semua</a>
+                </div>
+
+                <!-- Info hasil filter -->
+                <?php if ($search || $range !== 'all'): ?>
+                    <div class="flex items-center gap-2 flex-wrap text-xs pt-2 border-t border-stone-100">
+                        <span class="text-stone-500">Filter aktif:</span>
+                        <?php if ($search): ?>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 bg-stone-100 text-stone-700 rounded-md">
+                                <i data-lucide="search" class="w-3 h-3"></i>
+                                "<?= htmlspecialchars($search) ?>"
+                            </span>
+                        <?php endif; ?>
+                        <?php if ($range !== 'all'): ?>
+                            <span class="inline-flex items-center gap-1 px-2 py-1 bg-stone-100 text-stone-700 rounded-md">
+                                <i data-lucide="calendar" class="w-3 h-3"></i>
+                                <?= $range==='today' ? 'Hari Ini' : ($range==='7days' ? '7 Hari Terakhir' : ($range==='30days' ? '30 Hari Terakhir' : date('d/m/y', strtotime($tgl_mulai)).' - '.date('d/m/y', strtotime($tgl_selesai)))) ?>
+                            </span>
+                        <?php endif; ?>
+                        <span class="text-stone-500">→ <b class="text-stone-700"><?= count($orders) ?></b> pesanan</span>
+                    </div>
+                <?php endif; ?>
             </div>
 
+            <!-- HASIL -->
             <?php if (empty($orders)): ?>
                 <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-12 text-center">
                     <div class="w-16 h-16 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-4 text-stone-400">
-                        <i data-lucide="receipt" class="w-8 h-8"></i>
+                        <i data-lucide="<?= ($search || $range !== 'all') ? 'search-x' : 'receipt' ?>" class="w-8 h-8"></i>
                     </div>
-                    <h3 class="text-base font-bold text-stone-800">Belum ada pesanan</h3>
-                    <p class="text-sm text-stone-500 mt-1">Anda belum melakukan transaksi apapun.</p>
-                    <a href="katalog.php" class="inline-flex items-center gap-2 mt-5 bg-[#2E7D32] hover:bg-emerald-800 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition">
-                        <i data-lucide="store" class="w-4 h-4"></i>
-                        <span>Mulai Belanja</span>
-                    </a>
+                    <h3 class="text-base font-bold text-stone-800">
+                        <?= ($search || $range !== 'all') ? 'Tidak ada pesanan yang cocok' : 'Belum ada pesanan' ?>
+                    </h3>
+                    <p class="text-sm text-stone-500 mt-1">
+                        <?php if ($search || $range !== 'all'): ?>
+                            Coba ubah filter atau <a href="riwayat.php" class="text-[#2E7D32] font-bold hover:underline">reset</a>.
+                        <?php else: ?>
+                            Anda belum melakukan transaksi apapun.
+                        <?php endif; ?>
+                    </p>
+                    <?php if (!$search && $range === 'all'): ?>
+                        <a href="katalog.php" class="inline-flex items-center gap-2 mt-5 bg-[#2E7D32] hover:bg-emerald-800 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition">
+                            <i data-lucide="store" class="w-4 h-4"></i>
+                            <span>Mulai Belanja</span>
+                        </a>
+                    <?php endif; ?>
                 </div>
             <?php else: ?>
                 <div class="space-y-3">
-                    <?php foreach ($orders as $o): ?>
+                    <?php foreach ($orders as $o): 
+                        $bisaBatal = ($o['status'] === 'Diproses');
+                    ?>
                         <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
                             <div class="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                                 <div class="flex-1 min-w-0 space-y-1.5">
@@ -300,7 +486,7 @@ function badgeStatus($status) {
                                     </p>
                                     <p class="text-xs text-stone-500">
                                         <i data-lucide="package" class="w-3 h-3 inline-block mr-1"></i>
-                                        <?= (int)$o['jml_item'] ?> jenis produk &middot;
+                                        <?= (int)$o['jml_item'] ?> jenis produk &middot; <?= (int)$o['total_qty'] ?> item &middot;
                                         Metode: <span class="font-semibold text-stone-700"><?= htmlspecialchars(ucfirst($o['metode_pembayaran'])) ?></span>
                                     </p>
                                 </div>
@@ -313,8 +499,8 @@ function badgeStatus($status) {
                                 </div>
                             </div>
 
-                            <div class="px-5 pb-4 pt-1 bg-stone-50/60 border-t border-stone-100 flex items-center justify-end gap-2 flex-wrap">
-                                <?php if ($o['status'] === 'Diproses'): ?>
+                            <div class="px-5 pb-4 pt-3 bg-stone-50/60 border-t border-stone-100 flex items-center justify-end gap-2 flex-wrap">
+                                <?php if ($bisaBatal): ?>
                                     <form method="POST" action="riwayat.php" onsubmit="return confirm('Batalkan pesanan ini? Stok produk akan dikembalikan.');" class="inline">
                                         <input type="hidden" name="action" value="batalkan">
                                         <input type="hidden" name="trx_id" value="<?= (int)$o['id'] ?>">
@@ -323,9 +509,18 @@ function badgeStatus($status) {
                                         </button>
                                     </form>
                                 <?php endif; ?>
+
                                 <a href="note.php?id=<?= (int)$o['id'] ?>" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-stone-700 bg-white hover:bg-stone-100 border border-stone-200 rounded-lg transition">
                                     <i data-lucide="file-text" class="w-3.5 h-3.5"></i> Lihat Nota
                                 </a>
+
+                                <form method="POST" action="riwayat.php" class="inline">
+                                    <input type="hidden" name="action" value="beli_lagi">
+                                    <input type="hidden" name="trx_id" value="<?= (int)$o['id'] ?>">
+                                    <button type="submit" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#2E7D32] hover:bg-emerald-800 rounded-lg transition">
+                                        <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Beli Lagi
+                                    </button>
+                                </form>
                             </div>
                         </div>
                     <?php endforeach; ?>

@@ -59,7 +59,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'hapus') {
         $id = (int)($_POST['id'] ?? 0);
         if ($id > 0) {
-            // Cek apakah supplier masih dipakai transaksi pembelian
             $qCek = mysqli_query($conn, "SELECT COUNT(*) AS total FROM transaksi WHERE supplier_id = $id");
             $dipakai = $qCek ? (int)mysqli_fetch_assoc($qCek)['total'] : 0;
 
@@ -83,20 +82,40 @@ if (isset($_GET['status'])) {
     if ($_GET['status'] === 'deleted') $sukses = "Supplier berhasil dihapus.";
 }
 
+// =========================================================
+// SEARCH
+// =========================================================
+$search = isset($_GET['search']) ? mysqli_real_escape_string($conn, trim($_GET['search'])) : '';
+
+$where = "WHERE 1=1";
+if ($search !== '') {
+    $where .= " AND (s.nama_supplier LIKE '%$search%' OR s.kontak LIKE '%$search%' OR s.alamat LIKE '%$search%')";
+}
+
 // AMBIL DATA
 $supplierList = [];
 $qSupplier = mysqli_query($conn, "
     SELECT s.*,
            (SELECT COUNT(*) FROM transaksi t WHERE t.supplier_id = s.id) AS total_transaksi
     FROM supplier s
+    $where
     ORDER BY s.id ASC
 ");
 if ($qSupplier) while ($r = mysqli_fetch_assoc($qSupplier)) $supplierList[] = $r;
 
-$statTotal = count($supplierList);
+// Statistik (global)
+$statTotal = 0;
 $statAktif = 0;
-foreach ($supplierList as $s) {
-    if ((int)$s['total_transaksi'] > 0) $statAktif++;
+$qStat = mysqli_query($conn, "
+    SELECT 
+        COUNT(*) AS total,
+        COALESCE(SUM(CASE WHEN (SELECT COUNT(*) FROM transaksi t WHERE t.supplier_id = s.id) > 0 THEN 1 ELSE 0 END), 0) AS aktif
+    FROM supplier s
+");
+if ($qStat) {
+    $s = mysqli_fetch_assoc($qStat);
+    $statTotal = (int)$s['total'];
+    $statAktif = (int)$s['aktif'];
 }
 ?>
 <!DOCTYPE html>
@@ -126,9 +145,10 @@ foreach ($supplierList as $s) {
                 </a>
             </div>
 
-            <div class="hidden md:flex flex-1 max-w-md">
-                <span class="text-xs text-stone-500 self-center">Kelola Data Supplier</span>
-            </div>
+            <form method="GET" action="supplier.php" class="hidden md:flex flex-1 max-w-md relative">
+                <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
+                <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari supplier, kontak, alamat..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] placeholder:text-stone-400">
+            </form>
 
             <a href="dashboard.php" class="flex items-center gap-3 pl-1">
                 <img src="https://ui-avatars.com/api/?name=<?= urlencode($admin_nama) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
@@ -232,6 +252,14 @@ foreach ($supplierList as $s) {
                 </div>
             </div>
 
+            <!-- SEARCH BAR (mobile) -->
+            <form method="GET" action="supplier.php" class="md:hidden bg-white p-3 rounded-2xl border border-stone-200/80 shadow-sm">
+                <div class="relative">
+                    <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
+                    <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari supplier, kontak, alamat..." class="w-full pl-10 pr-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                </div>
+            </form>
+
             <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse">
@@ -250,10 +278,18 @@ foreach ($supplierList as $s) {
                                 <tr>
                                     <td colspan="6" class="py-12 text-center">
                                         <div class="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                                            <i data-lucide="building-2" class="w-6 h-6 text-stone-400"></i>
+                                            <i data-lucide="<?= $search ? 'search-x' : 'building-2' ?>" class="w-6 h-6 text-stone-400"></i>
                                         </div>
-                                        <p class="text-sm font-semibold text-stone-700">Belum ada supplier</p>
-                                        <p class="text-xs text-stone-500 mt-1">Klik "Tambah Supplier" untuk mulai.</p>
+                                        <p class="text-sm font-semibold text-stone-700">
+                                            <?= $search ? 'Tidak ada supplier yang cocok' : 'Belum ada supplier' ?>
+                                        </p>
+                                        <p class="text-xs text-stone-500 mt-1">
+                                            <?php if ($search): ?>
+                                                Coba kata kunci lain atau <a href="supplier.php" class="text-[#2E7D32] font-bold hover:underline">reset pencarian</a>.
+                                            <?php else: ?>
+                                                Klik "Tambah Supplier" untuk mulai.
+                                            <?php endif; ?>
+                                        </p>
                                     </td>
                                 </tr>
                             <?php else: ?>
@@ -292,6 +328,13 @@ foreach ($supplierList as $s) {
                         </tbody>
                     </table>
                 </div>
+
+                <?php if ($search && !empty($supplierList)): ?>
+                    <div class="p-4 bg-stone-50/60 border-t border-stone-100 flex items-center justify-between text-xs text-stone-500">
+                        <span>Hasil pencarian: <b class="text-stone-700"><?= count($supplierList) ?></b> supplier</span>
+                        <a href="supplier.php" class="text-[#2E7D32] font-semibold hover:underline">Reset pencarian</a>
+                    </div>
+                <?php endif; ?>
             </div>
 
         </main>

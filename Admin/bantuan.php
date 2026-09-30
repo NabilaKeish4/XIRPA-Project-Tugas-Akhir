@@ -18,37 +18,45 @@ $nama_toko   = $data_toko['nama_toko']   ?? 'PlantHub';
 $no_telepon  = $data_toko['no_telepon']  ?? '081234567890';
 $email_toko  = $data_toko['email_toko']  ?? 'admin@planthub.com';
 
-// FAQ Data
+// FAQ Data (dengan ID unik untuk feedback)
 $faqs = [
     [
+        'id' => 'faq_tambah_produk',
         'q' => 'Bagaimana cara menambah produk baru?',
         'a' => 'Buka menu <b>Stok & Produk</b> dari sidebar, klik tombol <b>Tambah Produk</b> di kanan atas. Isi form lengkap (nama, kategori, harga, stok, gambar), lalu klik <b>Simpan</b>. Produk akan otomatis muncul di katalog pelanggan dan di kasir POS.'
     ],
     [
+        'id' => 'faq_pos',
         'q' => 'Bagaimana cara memproses transaksi penjualan langsung (walk-in)?',
         'a' => 'Buka menu <b>Kasir (POS)</b>. Klik produk untuk menambah ke keranjang, atur qty, pilih metode pembayaran (Tunai/QRIS/Debit), masukkan jumlah bayar, lalu klik <b>Proses Bayar</b>. Struk akan muncul dan bisa langsung dicetak.'
     ],
     [
+        'id' => 'faq_restock',
         'q' => 'Bagaimana cara melakukan restock dari supplier?',
         'a' => 'Buka menu <b>Pembelian (Restock)</b>. Pilih supplier, tambahkan item yang dibeli beserta qty dan harga beli, lalu klik <b>Simpan Pembelian</b>. Stok produk akan otomatis bertambah dan tercatat di laporan pembelian.'
     ],
     [
+        'id' => 'faq_laporan',
         'q' => 'Bagaimana cara melihat laporan penjualan?',
         'a' => 'Buka menu <b>Laporan</b>. Anda bisa memfilter rentang tanggal (hari ini, 7 hari, 30 hari, atau custom). Laporan menampilkan total omset, pengeluaran restock, estimasi laba, chart tren omzet, dan 5 produk terlaris.'
     ],
     [
+        'id' => 'faq_chat',
         'q' => 'Bagaimana cara membalas chat pelanggan?',
         'a' => 'Buka menu <b>Konsultasi Chat</b>. Daftar pelanggan yang pernah chat muncul di kolom kiri. Klik salah satu pelanggan, lalu ketik balasan di form bawah dan klik <b>Kirim</b>. Anda juga bisa edit atau hapus pesan Anda sendiri.'
     ],
     [
+        'id' => 'faq_status_pesanan',
         'q' => 'Bagaimana cara mengubah status pesanan pelanggan?',
         'a' => 'Buka menu <b>Riwayat Transaksi</b>, klik tombol <b>Detail</b> pada transaksi penjualan. Di bagian bawah, ubah status (Diproses → Dikirim → Selesai), lalu klik <b>Simpan Status</b>. Pelanggan akan melihat update status ini di halaman riwayat mereka.'
     ],
     [
+        'id' => 'faq_stok_habis',
         'q' => 'Bagaimana jika ada produk yang stoknya habis?',
         'a' => 'Sistem akan otomatis menandai produk sebagai <b>Stok Habis</b> (badge merah). Produk dengan stok 0 tidak akan bisa dibeli pelanggan di katalog. Segera lakukan restock via menu <b>Pembelian</b> untuk mengisi ulang stok.'
     ],
     [
+        'id' => 'faq_ubah_toko',
         'q' => 'Bagaimana cara mengubah logo atau nama toko?',
         'a' => 'Buka menu <b>Pengaturan Toko</b> di bagian PENGATURAN. Ubah nama toko, cabang, kontak, alamat, dan upload logo/foto profil. Klik <b>Simpan Pengaturan</b>. Perubahan akan otomatis tampil di seluruh halaman termasuk struk nota pelanggan.'
     ],
@@ -103,17 +111,17 @@ $faqs = [
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
                     <?php
                     $menu = [
-    ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
-    ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
-    ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
-    ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
-    ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],  // ← BARU
-    ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],  // ← BARU
-    ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
-    ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
-    ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
-    ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
-];
+                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
+                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
+                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
+                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
+                        ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],
+                        ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],
+                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
+                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
+                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
+                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
+                    ];
                     foreach ($menu as $m):
                         $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
                     ?>
@@ -185,8 +193,11 @@ $faqs = [
 
             <!-- FAQ -->
             <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6">
-                <div class="flex items-center justify-between border-b border-stone-100 pb-3 mb-4">
-                    <h2 class="text-base font-bold text-stone-800">Pertanyaan Sering Diajukan</h2>
+                <div class="flex items-center justify-between border-b border-stone-100 pb-3 mb-4 flex-wrap gap-3">
+                    <div>
+                        <h2 class="text-base font-bold text-stone-800">Pertanyaan Sering Diajukan</h2>
+                        <p class="text-[11px] text-stone-500 mt-0.5" id="statistikFeedback">Memuat statistik...</p>
+                    </div>
                     <div class="relative">
                         <i data-lucide="search" class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-stone-400"></i>
                         <input type="text" id="faqSearch" onkeyup="filterFAQ()" placeholder="Cari pertanyaan..." class="pl-9 pr-3 py-1.5 text-xs bg-stone-50 border border-stone-200 rounded-lg focus:outline-none focus:border-[#2E7D32] w-44">
@@ -195,16 +206,42 @@ $faqs = [
 
                 <div id="faqList" class="space-y-2">
                     <?php foreach ($faqs as $i => $faq): ?>
-                        <div class="faq-item border border-stone-200/80 rounded-xl overflow-hidden">
+                        <div class="faq-item border border-stone-200/80 rounded-xl overflow-hidden" data-faq-id="<?= htmlspecialchars($faq['id']) ?>">
                             <button onclick="toggleFAQ(this)" class="w-full flex items-center justify-between p-4 text-left hover:bg-stone-50 transition">
                                 <span class="faq-question text-sm font-semibold text-stone-800 pr-4"><?= htmlspecialchars($faq['q']) ?></span>
                                 <i data-lucide="chevron-down" class="w-4 h-4 text-stone-400 shrink-0 transition-transform duration-200"></i>
                             </button>
                             <div class="faq-answer hidden p-4 pt-0 text-xs text-stone-600 leading-relaxed bg-stone-50/50 border-t border-stone-100">
-                                <?= $faq['a'] ?>
+                                <div class="mb-4"><?= $faq['a'] ?></div>
+
+                                <!-- FEEDBACK -->
+                                <div class="pt-3 border-t border-stone-200/60">
+                                    <div class="feedback-section" data-faq-id="<?= htmlspecialchars($faq['id']) ?>">
+                                        <p class="text-[11px] font-semibold text-stone-500 mb-2">Apakah artikel ini membantu?</p>
+                                        <div class="flex items-center gap-2">
+                                            <button onclick="kirimFeedback('<?= htmlspecialchars($faq['id']) ?>', 'up', this)" 
+                                                    class="fb-btn-up inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded-lg border border-stone-200 bg-white text-stone-600 hover:bg-emerald-50 hover:border-emerald-200 hover:text-[#2E7D32] transition">
+                                                <i data-lucide="thumbs-up" class="w-3.5 h-3.5"></i> Ya
+                                            </button>
+                                            <button onclick="kirimFeedback('<?= htmlspecialchars($faq['id']) ?>', 'down', this)" 
+                                                    class="fb-btn-down inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded-lg border border-stone-200 bg-white text-stone-600 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600 transition">
+                                                <i data-lucide="thumbs-down" class="w-3.5 h-3.5"></i> Tidak
+                                            </button>
+                                            <span class="fb-result hidden text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100 ml-2"></span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     <?php endforeach; ?>
+                </div>
+
+                <div id="faqEmpty" class="hidden text-center py-8">
+                    <div class="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                        <i data-lucide="search-x" class="w-6 h-6 text-stone-400"></i>
+                    </div>
+                    <p class="text-sm font-semibold text-stone-700">Tidak ada pertanyaan yang cocok</p>
+                    <p class="text-xs text-stone-500 mt-1">Coba kata kunci lain.</p>
                 </div>
             </div>
 
@@ -212,7 +249,7 @@ $faqs = [
             <div class="bg-[#2E7D32] text-white rounded-2xl p-6 flex flex-col sm:flex-row items-center justify-between gap-4">
                 <div class="text-center sm:text-left">
                     <h3 class="text-base font-bold">Butuh bantuan tambahan?</h3>
-                    <p class="text-xs text-emerald-100 mt-1">Hubungi tim teknis PlantHub untuk kendala sistem.</p>
+                    <p class="text-xs text-emerald-100 mt-1">Hubungi tim teknis <?= htmlspecialchars($nama_toko) ?> untuk kendala sistem.</p>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
                     <a href="mailto:<?= htmlspecialchars($email_toko) ?>" class="inline-flex items-center gap-2 bg-white/10 hover:bg-white/20 border border-white/20 text-white px-4 py-2.5 rounded-xl text-xs font-semibold transition">
@@ -230,21 +267,132 @@ $faqs = [
     <script>
         lucide.createIcons();
 
-        function toggleMobileSidebar() {
-            const s = document.getElementById('sidebar');
-            s?.classList.toggle('hidden');
-            s?.classList.toggle('fixed');
-            s?.classList.toggle('inset-y-0');
-            s?.classList.toggle('left-0');
-            s?.classList.toggle('z-40');
+        // ========================================================
+        // STORAGE: feedback disimpan di localStorage
+        // Format: { "faq_tambah_produk": "up", "faq_pos": "down", ... }
+        // ========================================================
+        const STORAGE_KEY = 'planthub_faq_feedback';
+
+        function getFeedbackData() {
+            try {
+                return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+            } catch (e) {
+                return {};
+            }
         }
 
+        function saveFeedbackData(data) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        }
+
+        // ========================================================
+        // KIRIM FEEDBACK
+        // ========================================================
+        function kirimFeedback(faqId, type, btn) {
+            const section = btn.closest('.feedback-section');
+            const upBtn = section.querySelector('.fb-btn-up');
+            const downBtn = section.querySelector('.fb-btn-down');
+            const result = section.querySelector('.fb-result');
+
+            // Cek apakah sudah pernah vote
+            const data = getFeedbackData();
+            if (data[faqId]) {
+                // Update vote (ganti)
+                if (data[faqId] === type) {
+                    // Klik vote yang sama → hapus vote
+                    delete data[faqId];
+                    saveFeedbackData(data);
+                    resetFeedbackUI(section);
+                    updateStatistik();
+                    return;
+                }
+            }
+
+            // Simpan vote baru
+            data[faqId] = type;
+            saveFeedbackData(data);
+
+            // Update UI
+            resetFeedbackUI(section);
+
+            if (type === 'up') {
+                upBtn.className = 'fb-btn-up inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded-lg border border-[#2E7D32] bg-[#E8F5E9] text-[#2E7D32] transition';
+                result.innerText = 'Terima kasih! 🙏';
+                result.className = 'fb-result text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100 ml-2';
+            } else {
+                downBtn.className = 'fb-btn-down inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded-lg border border-rose-300 bg-rose-50 text-rose-600 transition';
+                result.innerText = 'Terima kasih atas masukannya.';
+                result.className = 'fb-result text-[11px] font-semibold text-rose-700 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-100 ml-2';
+            }
+            result.classList.remove('hidden');
+
+            updateStatistik();
+        }
+
+        function resetFeedbackUI(section) {
+            const upBtn = section.querySelector('.fb-btn-up');
+            const downBtn = section.querySelector('.fb-btn-down');
+            const result = section.querySelector('.fb-result');
+
+            upBtn.className = 'fb-btn-up inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded-lg border border-stone-200 bg-white text-stone-600 hover:bg-emerald-50 hover:border-emerald-200 hover:text-[#2E7D32] transition';
+            downBtn.className = 'fb-btn-down inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded-lg border border-stone-200 bg-white text-stone-600 hover:bg-rose-50 hover:border-rose-200 hover:text-rose-600 transition';
+            result.classList.add('hidden');
+            result.innerText = '';
+        }
+
+        // ========================================================
+        // RESTORE UI SAAT LOAD (kalau user pernah vote)
+        // ========================================================
+        function restoreFeedbackUI() {
+            const data = getFeedbackData();
+            document.querySelectorAll('.feedback-section').forEach(section => {
+                const faqId = section.dataset.faqId;
+                if (data[faqId]) {
+                    const btn = data[faqId] === 'up' 
+                        ? section.querySelector('.fb-btn-up') 
+                        : section.querySelector('.fb-btn-down');
+                    const result = section.querySelector('.fb-result');
+
+                    if (data[faqId] === 'up') {
+                        btn.className = 'fb-btn-up inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded-lg border border-[#2E7D32] bg-[#E8F5E9] text-[#2E7D32] transition';
+                        result.innerText = 'Terima kasih! 🙏';
+                    } else {
+                        btn.className = 'fb-btn-down inline-flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-bold rounded-lg border border-rose-300 bg-rose-50 text-rose-600 transition';
+                        result.innerText = 'Terima kasih atas masukannya.';
+                    }
+                    result.className = 'fb-result text-[11px] font-semibold text-emerald-700 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-100 ml-2';
+                    result.classList.remove('hidden');
+                }
+            });
+        }
+
+        // ========================================================
+        // STATISTIK: dari localStorage
+        // ========================================================
+        function updateStatistik() {
+            const data = getFeedbackData();
+            const totalVote = Object.keys(data).length;
+            const totalUp   = Object.values(data).filter(v => v === 'up').length;
+            const persen    = totalVote > 0 ? Math.round((totalUp / totalVote) * 100) : 0;
+
+            const el = document.getElementById('statistikFeedback');
+            if (!el) return;
+
+            if (totalVote === 0) {
+                el.innerText = 'Belum ada feedback. Bantu kami dengan klik 👍 atau 👎.';
+            } else {
+                el.innerHTML = `<b class="text-stone-700">${persen}%</b> dari <b class="text-stone-700">${totalVote}</b> feedback merasa terbantu.`;
+            }
+        }
+
+        // ========================================================
+        // FAQ TOGGLE
+        // ========================================================
         function toggleFAQ(btn) {
             const item = btn.parentElement;
             const answer = item.querySelector('.faq-answer');
             const icon = btn.querySelector('i');
 
-            // Tutup yang lain (opsional — accordion exclusive)
             document.querySelectorAll('.faq-item').forEach(el => {
                 if (el !== item) {
                     el.querySelector('.faq-answer')?.classList.add('hidden');
@@ -256,12 +404,36 @@ $faqs = [
             icon.classList.toggle('rotate-180');
         }
 
+        // ========================================================
+        // FILTER FAQ
+        // ========================================================
         function filterFAQ() {
             const input = document.getElementById('faqSearch').value.toLowerCase();
+            let visibleCount = 0;
+
             document.querySelectorAll('.faq-item').forEach(item => {
                 const text = item.innerText.toLowerCase();
-                item.style.display = text.includes(input) ? '' : 'none';
+                const show = text.includes(input);
+                item.style.display = show ? '' : 'none';
+                if (show) visibleCount++;
             });
+
+            document.getElementById('faqEmpty').classList.toggle('hidden', visibleCount > 0);
+        }
+
+        // ========================================================
+        // INIT
+        // ========================================================
+        restoreFeedbackUI();
+        updateStatistik();
+
+        function toggleMobileSidebar() {
+            const s = document.getElementById('sidebar');
+            s?.classList.toggle('hidden');
+            s?.classList.toggle('fixed');
+            s?.classList.toggle('inset-y-0');
+            s?.classList.toggle('left-0');
+            s?.classList.toggle('z-40');
         }
     </script>
 </body>

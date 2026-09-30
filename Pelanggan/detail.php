@@ -32,7 +32,60 @@ if (!$qProduk || mysqli_num_rows($qProduk) === 0) {
 
 $p = mysqli_fetch_assoc($qProduk);
 $stok = (int)$p['stok'];
+$stok_minimal = (int)$p['stok_minimal'];
 $isHabis = $stok <= 0;
+$isKritis = ($stok > 0 && $stok <= $stok_minimal);
+
+// =========================================================
+// INFO TERJUAL (dari transaksi Selesai)
+// =========================================================
+$totalTerjual = 0;
+$qTerjual = mysqli_query($conn, "
+    SELECT COALESCE(SUM(td.jumlah), 0) AS total 
+    FROM transaksi_detail td
+    JOIN transaksi t ON td.transaksi_id = t.id
+    WHERE td.produk_id = $id 
+      AND t.status = 'Selesai' 
+      AND t.jenis_transaksi = 'penjualan'
+");
+if ($qTerjual) $totalTerjual = (int)mysqli_fetch_assoc($qTerjual)['total'];
+
+// Cek apakah produk ini best-seller (top 5)
+$isBestSeller = false;
+$qBest = mysqli_query($conn, "
+    SELECT td.produk_id FROM transaksi_detail td
+    JOIN transaksi t ON td.transaksi_id = t.id
+    WHERE t.status = 'Selesai' AND t.jenis_transaksi = 'penjualan'
+    GROUP BY td.produk_id
+    HAVING SUM(td.jumlah) >= 3
+    ORDER BY SUM(td.jumlah) DESC
+    LIMIT 5
+");
+if ($qBest) {
+    while ($r = mysqli_fetch_assoc($qBest)) {
+        if ((int)$r['produk_id'] === $id) { $isBestSeller = true; break; }
+    }
+}
+
+// =========================================================
+// HANDLE BELI SEKARANG (POST)
+// =========================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'beli_sekarang') {
+    $qty = max(1, (int)($_POST['qty'] ?? 1));
+
+    // Validasi stok
+    if ($stok <= 0) {
+        header("Location: detail.php?id=$id&msg=habis");
+        exit;
+    }
+    if ($qty > $stok) $qty = $stok;
+
+    // Reset cart, isi dengan produk ini saja
+    $_SESSION['cart'] = [$id => $qty];
+
+    header("Location: checkout.php");
+    exit;
+}
 
 $imgSrc = (!empty($p['gambar']) && $p['gambar'] !== 'default.jpg' && file_exists("../assets/img/" . $p['gambar']))
     ? "../assets/img/" . $p['gambar']
@@ -162,24 +215,56 @@ $alert = $_GET['msg'] ?? '';
                     <i data-lucide="alert-triangle" class="w-5 h-5 text-[#D97706]"></i>
                     <span>Jumlah melebihi stok yang tersedia.</span>
                 </div>
+            <?php elseif ($alert === 'habis'): ?>
+                <div class="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-sm flex items-center gap-2">
+                    <i data-lucide="x-circle" class="w-5 h-5 text-rose-500"></i>
+                    <span>Produk sudah habis, tidak dapat dibeli.</span>
+                </div>
             <?php endif; ?>
 
             <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-0">
-                    <div class="bg-stone-100 aspect-square md:aspect-auto md:min-h-[420px] overflow-hidden">
+
+                    <!-- GAMBAR + BADGE -->
+                    <div class="relative bg-stone-100 aspect-square md:aspect-auto md:min-h-[460px] overflow-hidden">
                         <img src="<?= $imgSrc ?>" alt="<?= htmlspecialchars($p['nama_tanaman']) ?>" class="w-full h-full object-cover">
+
+                        <!-- Badge Terlaris -->
+                        <?php if ($isBestSeller): ?>
+                            <span class="absolute top-4 left-4 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg uppercase inline-flex items-center gap-1.5 shadow-md">
+                                <i data-lucide="flame" class="w-3.5 h-3.5"></i>
+                                Terlaris
+                            </span>
+                        <?php endif; ?>
+
+                        <!-- Badge Stok Habis -->
+                        <?php if ($isHabis): ?>
+                            <span class="absolute top-4 right-4 bg-rose-600 text-white text-[11px] font-bold px-3 py-1.5 rounded-lg uppercase shadow-md">
+                                Stok Habis
+                            </span>
+                        <?php endif; ?>
                     </div>
 
+                    <!-- INFO PRODUK -->
                     <div class="p-6 lg:p-8 flex flex-col">
+
                         <p class="text-[11px] font-bold uppercase text-stone-400 tracking-wider"><?= htmlspecialchars($p['nama_kategori'] ?? 'Tanaman') ?></p>
                         <h1 class="text-2xl font-bold text-stone-800 tracking-tight mt-1"><?= htmlspecialchars($p['nama_tanaman']) ?></h1>
 
-                        <div class="mt-3 flex items-center gap-3 text-xs">
+                        <!-- Rating / Info Terjual -->
+                        <div class="mt-3 flex items-center gap-3 flex-wrap text-xs">
+                            <?php if ($totalTerjual > 0): ?>
+                                <span class="inline-flex items-center gap-1 font-semibold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-100">
+                                    <i data-lucide="shopping-bag" class="w-3 h-3"></i>
+                                    <?= $totalTerjual ?> terjual
+                                </span>
+                            <?php endif; ?>
+
                             <?php if ($isHabis): ?>
                                 <span class="inline-flex items-center gap-1 font-semibold text-rose-700 bg-rose-50 px-2.5 py-1 rounded-md border border-rose-100">
                                     <i data-lucide="x-circle" class="w-3 h-3"></i> Stok Habis
                                 </span>
-                            <?php elseif ($stok <= (int)$p['stok_minimal']): ?>
+                            <?php elseif ($isKritis): ?>
                                 <span class="inline-flex items-center gap-1 font-semibold text-amber-700 bg-amber-50 px-2.5 py-1 rounded-md border border-amber-100">
                                     <i data-lucide="alert-triangle" class="w-3 h-3"></i> Stok Terbatas
                                 </span>
@@ -188,13 +273,16 @@ $alert = $_GET['msg'] ?? '';
                                     <i data-lucide="check-circle" class="w-3 h-3"></i> Tersedia
                                 </span>
                             <?php endif; ?>
+
                             <span class="text-stone-500">Sisa stok: <b class="text-stone-800"><?= $stok ?> unit</b></span>
                         </div>
 
+                        <!-- Harga -->
                         <div class="mt-5 pb-5 border-b border-stone-100">
                             <p class="text-3xl font-bold text-[#2E7D32] tracking-tight">Rp <?= number_format($p['harga_jual'], 0, ',', '.') ?></p>
                         </div>
 
+                        <!-- Deskripsi -->
                         <?php if (!empty($p['deskripsi'])): ?>
                             <div class="mt-5">
                                 <h3 class="text-xs font-bold uppercase text-stone-500 tracking-wider mb-2">Deskripsi</h3>
@@ -202,6 +290,7 @@ $alert = $_GET['msg'] ?? '';
                             </div>
                         <?php endif; ?>
 
+                        <!-- Cara Perawatan -->
                         <?php if (!empty($p['cara_perawatan'])): ?>
                             <div class="mt-5">
                                 <h3 class="text-xs font-bold uppercase text-stone-500 tracking-wider mb-2">Cara Perawatan</h3>
@@ -209,27 +298,52 @@ $alert = $_GET['msg'] ?? '';
                             </div>
                         <?php endif; ?>
 
+                        <!-- AKSI BELI -->
                         <div class="mt-6 pt-5 border-t border-stone-100">
                             <?php if ($isHabis): ?>
                                 <button disabled class="w-full bg-stone-200 text-stone-400 font-semibold py-3 rounded-xl text-sm cursor-not-allowed">
                                     Stok Habis — Tidak Dapat Dibeli
                                 </button>
                             <?php else: ?>
-                                <form action="cart.php" method="POST" class="flex flex-col sm:flex-row gap-3">
+
+                                <!-- Qty Selector -->
+                                <div class="mb-3">
+                                    <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Jumlah</label>
+                                    <div class="flex items-center gap-3">
+                                        <div class="flex items-center border border-stone-200 rounded-xl overflow-hidden bg-stone-50">
+                                            <button type="button" onclick="ubahQty(-1)" class="px-4 py-2.5 text-stone-600 hover:bg-stone-100 font-bold">−</button>
+                                            <input type="number" id="qtyInput" value="1" min="1" max="<?= $stok ?>" class="w-16 py-2.5 text-center text-sm font-bold bg-white border-0 focus:outline-none">
+                                            <button type="button" onclick="ubahQty(1)" class="px-4 py-2.5 text-stone-600 hover:bg-stone-100 font-bold">+</button>
+                                        </div>
+                                        <span class="text-xs text-stone-500">Maks. <?= $stok ?> unit</span>
+                                    </div>
+                                </div>
+
+                                <!-- Tombol Tambah Keranjang -->
+                                <form action="cart.php" method="POST" class="mb-2">
                                     <input type="hidden" name="action" value="add">
                                     <input type="hidden" name="id" value="<?= (int)$p['id'] ?>">
-
-                                    <div class="flex items-center border border-stone-200 rounded-xl overflow-hidden bg-stone-50">
-                                        <button type="button" onclick="ubahQty(-1)" class="px-4 py-3 text-stone-600 hover:bg-stone-100 font-bold">-</button>
-                                        <input type="number" name="qty" id="qtyInput" value="1" min="1" max="<?= $stok ?>" class="w-16 py-3 text-center text-sm font-bold bg-white border-0 focus:outline-none">
-                                        <button type="button" onclick="ubahQty(1)" class="px-4 py-3 text-stone-600 hover:bg-stone-100 font-bold">+</button>
-                                    </div>
-
-                                    <button type="submit" class="flex-1 bg-[#2E7D32] hover:bg-emerald-800 text-white font-bold py-3 rounded-xl text-sm transition flex items-center justify-center gap-2">
+                                    <input type="hidden" name="qty" id="qtyCart" value="1">
+                                    <button type="submit" onclick="sinkronQtyCart()" class="w-full border-2 border-[#2E7D32] text-[#2E7D32] hover:bg-emerald-50 font-bold py-3 rounded-xl text-sm transition flex items-center justify-center gap-2">
                                         <i data-lucide="shopping-cart" class="w-4 h-4"></i>
                                         <span>Tambah ke Keranjang</span>
                                     </button>
                                 </form>
+
+                                <!-- Tombol Beli Sekarang -->
+                                <form method="POST" action="detail.php?id=<?= (int)$p['id'] ?>">
+                                    <input type="hidden" name="action" value="beli_sekarang">
+                                    <input type="hidden" name="qty" id="qtyCheckout" value="1">
+                                    <button type="submit" onclick="sinkronQtyCheckout()" class="w-full bg-[#2E7D32] hover:bg-emerald-800 text-white font-bold py-3 rounded-xl text-sm transition flex items-center justify-center gap-2 shadow-sm">
+                                        <i data-lucide="zap" class="w-4 h-4"></i>
+                                        <span>Beli Sekarang</span>
+                                    </button>
+                                </form>
+
+                                <p class="text-[10px] text-stone-400 text-center mt-2">
+                                    <i data-lucide="info" class="w-3 h-3 inline-block"></i>
+                                    Beli Sekarang akan mengganti isi keranjang dengan produk ini.
+                                </p>
                             <?php endif; ?>
 
                             <a href="chat.php" class="mt-3 w-full border border-stone-200 text-stone-700 hover:bg-stone-50 font-semibold py-3 rounded-xl text-sm transition flex items-center justify-center gap-2">
@@ -276,6 +390,7 @@ $alert = $_GET['msg'] ?? '';
 
     <script>
         lucide.createIcons();
+
         function toggleMobileSidebar() {
             const s = document.getElementById('sidebar');
             s?.classList.toggle('hidden');
@@ -284,6 +399,7 @@ $alert = $_GET['msg'] ?? '';
             s?.classList.toggle('left-0');
             s?.classList.toggle('z-40');
         }
+
         function ubahQty(delta) {
             const input = document.getElementById('qtyInput');
             const max = parseInt(input.getAttribute('max'));
@@ -291,6 +407,14 @@ $alert = $_GET['msg'] ?? '';
             if (val < 1) val = 1;
             if (val > max) val = max;
             input.value = val;
+        }
+
+        function sinkronQtyCart() {
+            document.getElementById('qtyCart').value = document.getElementById('qtyInput').value;
+        }
+
+        function sinkronQtyCheckout() {
+            document.getElementById('qtyCheckout').value = document.getElementById('qtyInput').value;
         }
     </script>
 </body>

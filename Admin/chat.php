@@ -141,6 +141,13 @@ $editId = (int)($_GET['edit'] ?? 0);
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 9999px; }
+
+        /* Indikator auto-refresh */
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
     </style>
 </head>
 <body class="antialiased min-h-screen flex flex-col">
@@ -159,8 +166,13 @@ $editId = (int)($_GET['edit'] ?? 0);
                 </a>
             </div>
 
-            <div class="hidden md:flex flex-1 max-w-md">
-                <span class="text-xs text-stone-500 self-center">Konsultasi Pelanggan</span>
+            <div class="hidden md:flex flex-1 max-w-md items-center gap-3">
+                <span class="text-xs text-stone-500">Konsultasi Pelanggan</span>
+                <!-- Indikator Auto-refresh -->
+                <button onclick="toggleAutoRefresh()" id="btnAutoRefresh" class="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border border-emerald-200 bg-emerald-50 text-[#2E7D32] hover:bg-emerald-100 transition">
+                    <span class="pulse-dot w-1.5 h-1.5 rounded-full bg-[#2E7D32]"></span>
+                    <span id="autoRefreshLabel">Auto 10s</span>
+                </button>
             </div>
 
             <a href="dashboard.php" class="flex items-center gap-3 pl-1">
@@ -180,17 +192,17 @@ $editId = (int)($_GET['edit'] ?? 0);
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
                     <?php
                     $menu = [
-    ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
-    ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
-    ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
-    ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
-    ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],  // ← BARU
-    ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],  // ← BARU
-    ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
-    ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
-    ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
-    ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
-];
+                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
+                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
+                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
+                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
+                        ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],
+                        ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],
+                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
+                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => true],
+                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
+                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
+                    ];
                     foreach ($menu as $m):
                         $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
                     ?>
@@ -342,7 +354,7 @@ $editId = (int)($_GET['edit'] ?? 0);
                                         <div class="flex <?= $isAdmin ? 'justify-end' : 'justify-start' ?>" id="msg-<?= $msgId ?>">
                                             <div class="max-w-xs sm:max-w-md md:max-w-lg">
                                                 <?php if ($isEdit): ?>
-                                                    <form method="POST" action="chat.php?user_id=<?= $selected_id ?>" class="bg-white border-2 border-[#2E7D32] rounded-2xl p-3 shadow-sm space-y-2 w-full sm:w-96">
+                                                    <form method="POST" action="chat.php?user_id=<?= $selected_id ?>" class="bg-white border-2 border-[#2E7D32] rounded-2xl p-3 shadow-sm space-y-2 w-full sm:w-96 edit-form">
                                                         <input type="hidden" name="action" value="edit">
                                                         <input type="hidden" name="id" value="<?= $msgId ?>">
                                                         <textarea name="new_message" rows="3" required class="w-full text-xs bg-stone-50 border border-stone-200 rounded-lg p-2.5 focus:outline-none focus:border-[#2E7D32] resize-none"><?= htmlspecialchars($msg['message']) ?></textarea>
@@ -389,7 +401,7 @@ $editId = (int)($_GET['edit'] ?? 0);
 
                             <form method="POST" action="chat.php?user_id=<?= $selected_id ?>" class="p-3 bg-white border-t border-stone-100 flex gap-2 shrink-0" autocomplete="off">
                                 <input type="hidden" name="action" value="kirim">
-                                <input type="text" name="message" placeholder="Ketik balasan untuk pelanggan..." required 
+                                <input type="text" name="message" id="inPesan" placeholder="Ketik balasan untuk pelanggan..." required 
                                        class="flex-1 px-4 py-2.5 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] transition">
                                 <button type="submit" class="bg-[#2E7D32] hover:bg-emerald-800 text-white px-5 py-2.5 rounded-xl text-xs font-bold transition inline-flex items-center gap-2">
                                     <span>Kirim</span>
@@ -408,8 +420,119 @@ $editId = (int)($_GET['edit'] ?? 0);
 
     <script>
         lucide.createIcons();
+
+        // ========================================================
+        // AUTO-REFRESH 10 DETIK
+        // ========================================================
+        const REFRESH_INTERVAL = 10000; // 10 detik
+        let autoRefreshTimer = null;
+        let isAutoRefreshOn = true;
+        const currentUserId = <?= (int)$selected_id ?>;
+        const currentFilter = <?= json_encode($filterMode) ?>;
+        const editIdAktif = <?= (int)$editId ?>;
+
+        function startAutoRefresh() {
+            if (autoRefreshTimer) clearInterval(autoRefreshTimer);
+            autoRefreshTimer = setInterval(() => {
+                // Skip kalau user sedang edit pesan
+                if (editIdAktif > 0) return;
+
+                // Skip kalau ada modal / dialog terbuka
+                if (document.querySelector('textarea:focus')) return;
+
+                refreshChat();
+            }, REFRESH_INTERVAL);
+        }
+
+        function stopAutoRefresh() {
+            if (autoRefreshTimer) {
+                clearInterval(autoRefreshTimer);
+                autoRefreshTimer = null;
+            }
+        }
+
+        function toggleAutoRefresh() {
+            isAutoRefreshOn = !isAutoRefreshOn;
+            const btn = document.getElementById('btnAutoRefresh');
+            const label = document.getElementById('autoRefreshLabel');
+
+            if (isAutoRefreshOn) {
+                startAutoRefresh();
+                btn.className = 'inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border border-emerald-200 bg-emerald-50 text-[#2E7D32] hover:bg-emerald-100 transition';
+                btn.querySelector('span:first-child').classList.add('pulse-dot');
+                label.innerText = 'Auto 10s';
+            } else {
+                stopAutoRefresh();
+                btn.className = 'inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border border-stone-200 bg-stone-100 text-stone-500 hover:bg-stone-200 transition';
+                btn.querySelector('span:first-child').classList.remove('pulse-dot');
+                label.innerText = 'Auto OFF';
+            }
+        }
+
+        function refreshChat() {
+            // Simpan posisi scroll
+            const chatBox = document.getElementById('chat-box');
+            if (!chatBox) return;
+
+            const isAtBottom = (chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight) < 50;
+            const oldScrollTop = chatBox.scrollTop;
+
+            // Fetch halaman ini sendiri dengan flag ajax=1
+            const url = new URL(window.location.href);
+            url.searchParams.set('ajax', '1');
+
+            fetch(url.toString(), { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+                .then(r => r.text())
+                .then(html => {
+                    const parser = new DOMParser();
+                    const doc = parser.parseFromString(html, 'text/html');
+
+                    // Update daftar pelanggan
+                    const newCustomerList = doc.querySelector('aside .divide-y');
+                    const oldCustomerList = document.querySelector('aside .divide-y');
+                    if (newCustomerList && oldCustomerList) {
+                        oldCustomerList.innerHTML = newCustomerList.innerHTML;
+                    }
+
+                    // Update chat messages
+                    const newChatBox = doc.getElementById('chat-box');
+                    if (newChatBox && chatBox) {
+                        chatBox.innerHTML = newChatBox.innerHTML;
+                    }
+
+                    // Re-render icons
+                    lucide.createIcons();
+
+                    // Restore scroll: kalau user di bawah, scroll ke bawah. Kalau tidak, biarkan.
+                    if (isAtBottom) {
+                        chatBox.scrollTop = chatBox.scrollHeight;
+                    } else {
+                        chatBox.scrollTop = oldScrollTop;
+                    }
+                })
+                .catch(err => console.warn('Auto-refresh gagal:', err));
+        }
+
+        // Auto scroll ke bawah saat pertama load
         const chatBox = document.getElementById('chat-box');
         if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
+
+        // Mulai auto-refresh
+        startAutoRefresh();
+
+        // Pause saat tab tidak aktif (hemat resource)
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                stopAutoRefresh();
+            } else if (isAutoRefreshOn) {
+                startAutoRefresh();
+                refreshChat();
+            }
+        });
+
+        // ========================================================
+        // SIDEBAR MOBILE
+        // ========================================================
         function toggleMobileSidebar() {
             const s = document.getElementById('sidebar');
             s?.classList.toggle('hidden');

@@ -14,34 +14,111 @@ $cart_count = isset($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
 $sukses = '';
 $error  = '';
 
+// =========================================================
+// FUNGSI UPLOAD FOTO PROFIL
+// =========================================================
+if (!function_exists('uploadFotoProfil')) {
+    function uploadFotoProfil($file, $oldFile = '', &$errors = []) {
+        if (!isset($file) || $file['error'] === UPLOAD_ERR_NO_FILE) return $oldFile;
+
+        if ($file['error'] !== UPLOAD_ERR_OK) {
+            $errors[] = "Gagal upload foto (kode error: {$file['error']}).";
+            return $oldFile;
+        }
+
+        $allowed = ['jpg', 'jpeg', 'png', 'webp'];
+        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+
+        if (!in_array($ext, $allowed)) {
+            $errors[] = "Format foto tidak didukung. Gunakan JPG, PNG, atau WEBP.";
+            return $oldFile;
+        }
+        if ($file['size'] > 2 * 1024 * 1024) {
+            $errors[] = "Ukuran foto melebihi 2MB.";
+            return $oldFile;
+        }
+
+        $dir = '../uploads/avatars/';
+        if (!is_dir($dir)) mkdir($dir, 0755, true);
+
+        $newName = 'avatar_' . time() . '_' . rand(1000, 9999) . '.' . $ext;
+        if (move_uploaded_file($file['tmp_name'], $dir . $newName)) {
+            if ($oldFile && $oldFile !== 'default_avatar.jpg' && file_exists($dir . $oldFile)) {
+                @unlink($dir . $oldFile);
+            }
+            return $newName;
+        }
+        $errors[] = "Gagal memindahkan foto ke folder uploads.";
+        return $oldFile;
+    }
+}
+
+// =========================================================
+// AMBIL DATA USER
+// =========================================================
 $userData = null;
 $qUser = mysqli_query($conn, "SELECT * FROM users WHERE id = $user_id LIMIT 1");
 if ($qUser) $userData = mysqli_fetch_assoc($qUser);
 
+// =========================================================
+// HANDLE POST
+// =========================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
+    // ----- HAPUS FOTO PROFIL -----
+    if ($action === 'hapus_foto') {
+        $old = $userData['foto_profil'] ?? 'default_avatar.jpg';
+        if ($old && $old !== 'default_avatar.jpg' && file_exists('../uploads/avatars/' . $old)) {
+            @unlink('../uploads/avatars/' . $old);
+        }
+        if (mysqli_query($conn, "UPDATE users SET foto_profil = 'default_avatar.jpg' WHERE id = $user_id")) {
+            header("Location: profil.php?status=foto_reset");
+            exit;
+        } else {
+            $error = "Gagal menghapus foto.";
+        }
+    }
+
+    // ----- UPDATE PROFIL -----
     if ($action === 'update_profil') {
         $nama   = mysqli_real_escape_string($conn, trim($_POST['nama_lengkap'] ?? ''));
         $no_hp  = mysqli_real_escape_string($conn, trim($_POST['no_hp'] ?? ''));
         $alamat = mysqli_real_escape_string($conn, trim($_POST['alamat'] ?? ''));
 
+        // Upload foto kalau ada
+        $uploadErrors = [];
+        $fotoLama = $userData['foto_profil'] ?? 'default_avatar.jpg';
+        $fotoBaru = $fotoLama;
+
+        if (isset($_FILES['foto_profil']) && $_FILES['foto_profil']['error'] !== UPLOAD_ERR_NO_FILE) {
+            $fotoBaru = uploadFotoProfil($_FILES['foto_profil'], $fotoLama, $uploadErrors);
+        }
+
         if ($nama === '') {
             $error = "Nama tidak boleh kosong.";
+        } elseif (!empty($uploadErrors)) {
+            $error = implode(' ', $uploadErrors);
         } else {
-            $sql = "UPDATE users SET nama_lengkap = '$nama', no_hp = '$no_hp', alamat = '$alamat' WHERE id = $user_id";
+            $fotoEsc = mysqli_real_escape_string($conn, $fotoBaru);
+            $sql = "UPDATE users SET 
+                        nama_lengkap = '$nama', 
+                        no_hp = '$no_hp', 
+                        alamat = '$alamat',
+                        foto_profil = '$fotoEsc'
+                    WHERE id = $user_id";
             if (mysqli_query($conn, $sql)) {
                 $_SESSION['nama_user'] = $nama;
                 $nama_user = $nama;
-                $sukses = "Profil berhasil diperbarui.";
-                $qUser = mysqli_query($conn, "SELECT * FROM users WHERE id = $user_id LIMIT 1");
-                $userData = mysqli_fetch_assoc($qUser);
+                header("Location: profil.php?status=profil_updated");
+                exit;
             } else {
                 $error = "Gagal update profil: " . mysqli_error($conn);
             }
         }
     }
 
+    // ----- GANTI PASSWORD -----
     if ($action === 'ganti_password') {
         $old  = $_POST['old_password'] ?? '';
         $new  = $_POST['new_password'] ?? '';
@@ -56,12 +133,47 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         } else {
             $hash = password_hash($new, PASSWORD_BCRYPT);
             if (mysqli_query($conn, "UPDATE users SET password = '$hash' WHERE id = $user_id")) {
-                $sukses = "Password berhasil diubah.";
+                header("Location: profil.php?status=pass_updated");
+                exit;
             } else {
                 $error = "Gagal ganti password: " . mysqli_error($conn);
             }
         }
     }
+}
+
+// Refresh userData setelah update
+$qUser = mysqli_query($conn, "SELECT * FROM users WHERE id = $user_id LIMIT 1");
+if ($qUser) $userData = mysqli_fetch_assoc($qUser);
+
+// Status message dari redirect
+if (isset($_GET['status'])) {
+    if ($_GET['status'] === 'profil_updated') $sukses = "Profil berhasil diperbarui.";
+    if ($_GET['status'] === 'pass_updated')   $sukses = "Password berhasil diubah.";
+    if ($_GET['status'] === 'foto_reset')     $sukses = "Foto profil dikembalikan ke default.";
+}
+
+// =========================================================
+// PATH FOTO PROFIL
+// =========================================================
+$foto_profil = $userData['foto_profil'] ?? 'default_avatar.jpg';
+$isFotoCustom = ($foto_profil && $foto_profil !== 'default_avatar.jpg' && file_exists('../uploads/avatars/' . $foto_profil));
+$avatarSrc = $isFotoCustom
+    ? '../uploads/avatars/' . $foto_profil
+    : 'https://ui-avatars.com/api/?name=' . urlencode($nama_user) . '&background=2E7D32&color=fff&size=128';
+
+// =========================================================
+// INFO LOGIN TERAKHIR
+// =========================================================
+$lastLogin = $userData['last_login'] ?? null;
+$lastLoginText = 'Belum pernah login';
+if ($lastLogin) {
+    $diff = time() - strtotime($lastLogin);
+    if ($diff < 60)         $lastLoginText = 'Baru saja';
+    elseif ($diff < 3600)   $lastLoginText = floor($diff / 60) . ' menit lalu';
+    elseif ($diff < 86400)  $lastLoginText = floor($diff / 3600) . ' jam lalu';
+    elseif ($diff < 604800) $lastLoginText = floor($diff / 86400) . ' hari lalu';
+    else                    $lastLoginText = date('d M Y, H:i', strtotime($lastLogin)) . ' WIB';
 }
 ?>
 <!DOCTYPE html>
@@ -94,7 +206,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 <span class="text-xs text-stone-500">Profil Saya</span>
             </div>
             <a href="dashboard.php" class="flex items-center gap-3 pl-1">
-                <img src="https://ui-avatars.com/api/?name=<?= urlencode($nama_user) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
+                <img src="<?= htmlspecialchars($avatarSrc) ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
                 <div class="hidden sm:block text-left">
                     <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($nama_user) ?></p>
                     <p class="text-xs text-stone-500">Pelanggan</p>
@@ -149,7 +261,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             </div>
 
             <?php if ($sukses): ?>
-                <div class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm flex items-center gap-2">
+                <div id="alertSukses" class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm flex items-center gap-2 transition-opacity duration-500">
                     <i data-lucide="check-circle" class="w-5 h-5 text-[#2E7D32]"></i>
                     <span><?= htmlspecialchars($sukses) ?></span>
                 </div>
@@ -161,23 +273,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </div>
             <?php endif; ?>
 
-            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 flex items-center gap-5">
-                <img src="https://ui-avatars.com/api/?name=<?= urlencode($nama_user) ?>&background=2E7D32&color=fff&size=128" class="w-20 h-20 rounded-2xl ring-4 ring-[#2E7D32]/10">
-                <div>
-                    <h2 class="text-xl font-bold text-stone-800"><?= htmlspecialchars($nama_user) ?></h2>
-                    <p class="text-xs text-stone-500 mt-0.5"><?= htmlspecialchars($userData['email'] ?? '') ?></p>
-                    <p class="text-xs text-stone-400 mt-0.5">Bergabung: <?= !empty($userData['created_at']) ? date('d M Y', strtotime($userData['created_at'])) : '-' ?></p>
+            <!-- KARTU PROFIL + AVATAR -->
+            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6">
+                <div class="flex flex-col sm:flex-row items-center sm:items-start gap-5">
+                    <div class="relative shrink-0">
+                        <img id="previewAvatar" src="<?= htmlspecialchars($avatarSrc) ?>" class="w-24 h-24 rounded-2xl object-cover ring-4 ring-[#2E7D32]/10 bg-stone-50">
+                        <?php if ($isFotoCustom): ?>
+                            <button type="button" onclick="konfirmasiHapusFoto()" class="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center shadow-md transition" title="Hapus foto">
+                                <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                            </button>
+                        <?php endif; ?>
+                    </div>
+                    <div class="flex-1 text-center sm:text-left">
+                        <h2 class="text-xl font-bold text-stone-800"><?= htmlspecialchars($nama_user) ?></h2>
+                        <p class="text-xs text-stone-500 mt-0.5"><?= htmlspecialchars($userData['email'] ?? '') ?></p>
+                        <p class="text-xs text-stone-400 mt-0.5">Bergabung: <?= !empty($userData['created_at']) ? date('d M Y', strtotime($userData['created_at'])) : '-' ?></p>
+
+                        <div class="mt-3 flex flex-wrap justify-center sm:justify-start gap-2">
+                            <span class="inline-flex items-center gap-1 text-[11px] font-semibold text-stone-600 bg-stone-100 px-2.5 py-1 rounded-md">
+                                <i data-lucide="clock" class="w-3 h-3"></i>
+                                Login terakhir: <?= htmlspecialchars($lastLoginText) ?>
+                            </span>
+                            <span class="inline-flex items-center gap-1 text-[11px] font-semibold <?= $isFotoCustom ? 'text-emerald-700 bg-emerald-50' : 'text-stone-500 bg-stone-100' ?> px-2.5 py-1 rounded-md">
+                                <i data-lucide="image" class="w-3 h-3"></i>
+                                <?= $isFotoCustom ? 'Foto custom' : 'Foto default' ?>
+                            </span>
+                        </div>
+                    </div>
                 </div>
             </div>
 
+            <!-- FORM DATA DIRI -->
             <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4">
                 <div class="border-b border-stone-100 pb-3">
                     <h2 class="text-base font-bold text-stone-800">Data Diri</h2>
-                    <p class="text-xs text-stone-500 mt-0.5">Perbarui informasi kontak dan alamat pengiriman Anda.</p>
+                    <p class="text-xs text-stone-500 mt-0.5">Perbarui informasi kontak, foto profil, dan alamat pengiriman Anda.</p>
                 </div>
 
-                <form method="POST" class="space-y-4">
+                <form method="POST" enctype="multipart/form-data" class="space-y-4">
                     <input type="hidden" name="action" value="update_profil">
+
+                    <!-- Foto Profil -->
+                    <div>
+                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Foto Profil</label>
+                        <div class="flex items-center gap-4">
+                            <label class="inline-flex items-center gap-2 bg-stone-100 hover:bg-stone-200 text-stone-700 px-4 py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition">
+                                <i data-lucide="upload" class="w-4 h-4"></i>
+                                <span>Pilih Foto</span>
+                                <input type="file" name="foto_profil" id="inFoto" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="previewImage(event)">
+                            </label>
+                            <?php if ($isFotoCustom): ?>
+                                <span class="text-[11px] text-stone-500 inline-flex items-center gap-1">
+                                    <i data-lucide="check-circle" class="w-3.5 h-3.5 text-emerald-600"></i>
+                                    Foto custom aktif
+                                </span>
+                            <?php endif; ?>
+                        </div>
+                        <div id="infoFoto" class="hidden mt-2 text-[10px] text-stone-500 flex items-center gap-2">
+                            <i data-lucide="image" class="w-3 h-3"></i>
+                            <span class="nama-file italic">Belum ada file dipilih</span>
+                            <button type="button" onclick="batalPilihFoto()" class="text-rose-500 hover:underline font-semibold">Batal</button>
+                        </div>
+                        <p class="text-[10px] text-stone-400 mt-1.5">JPG, PNG, WEBP. Maks 2MB. Rasio 1:1 direkomendasikan.</p>
+                    </div>
 
                     <div>
                         <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Nama Lengkap</label>
@@ -208,6 +366,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 </form>
             </div>
 
+            <!-- FORM GANTI PASSWORD -->
             <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4">
                 <div class="border-b border-stone-100 pb-3">
                     <h2 class="text-base font-bold text-stone-800">Ganti Password</h2>
@@ -239,7 +398,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                 </form>
             </div>
-                        <!-- BANTUAN & PANDUAN -->
+
+            <!-- BANTUAN & PANDUAN -->
             <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4">
                 <div class="border-b border-stone-100 pb-3">
                     <h2 class="text-base font-bold text-stone-800">Bantuan & Panduan</h2>
@@ -313,8 +473,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         </main>
     </div>
 
+    <!-- FORM HAPUS FOTO (hidden) -->
+    <form id="formHapusFoto" method="POST" action="profil.php" class="hidden">
+        <input type="hidden" name="action" value="hapus_foto">
+    </form>
+
     <script>
         lucide.createIcons();
+
         function toggleMobileSidebar() {
             const s = document.getElementById('sidebar');
             s?.classList.toggle('hidden');
@@ -322,6 +488,48 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             s?.classList.toggle('inset-y-0');
             s?.classList.toggle('left-0');
             s?.classList.toggle('z-40');
+        }
+
+        function previewImage(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // Validasi ukuran
+            if (file.size > 2 * 1024 * 1024) {
+                alert('Ukuran file melebihi 2MB.');
+                event.target.value = '';
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                document.getElementById('previewAvatar').src = e.target.result;
+                const info = document.getElementById('infoFoto');
+                info.classList.remove('hidden');
+                info.querySelector('.nama-file').innerText = file.name;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function batalPilihFoto() {
+            document.getElementById('inFoto').value = '';
+            document.getElementById('previewAvatar').src = '<?= htmlspecialchars($avatarSrc) ?>';
+            document.getElementById('infoFoto').classList.add('hidden');
+        }
+
+        function konfirmasiHapusFoto() {
+            if (confirm('Hapus foto profil dan kembalikan ke default?')) {
+                document.getElementById('formHapusFoto').submit();
+            }
+        }
+
+        // Auto-hide alert sukses
+        const alertSukses = document.getElementById('alertSukses');
+        if (alertSukses) {
+            setTimeout(() => {
+                alertSukses.style.opacity = '0';
+                setTimeout(() => alertSukses.remove(), 500);
+            }, 4000);
         }
     </script>
 </body>

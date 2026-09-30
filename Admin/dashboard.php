@@ -2,9 +2,6 @@
 session_start();
 require_once '../Config/database.php';
 
-// =========================================================
-// PROTEKSI LOGIN ADMIN
-// =========================================================
 if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
     header("Location: ../Auth/login.php");
     exit;
@@ -16,41 +13,68 @@ $admin_nama = $_SESSION['nama_user'] ?? 'Admin';
 $current_page = basename($_SERVER['PHP_SELF']);
 
 // =========================================================
-// 1. STATISTIK HARI INI
+// FILTER TANGGAL
+// =========================================================
+$range       = $_GET['range'] ?? 'today';
+$tgl_mulai   = $_GET['tgl_mulai']   ?? date('Y-m-d');
+$tgl_selesai = $_GET['tgl_selesai'] ?? date('Y-m-d');
+
+if ($range === 'today') {
+    $tgl_mulai = $tgl_selesai = date('Y-m-d');
+} elseif ($range === '7days') {
+    $tgl_mulai   = date('Y-m-d', strtotime('-7 days'));
+    $tgl_selesai = date('Y-m-d');
+} elseif ($range === '30days') {
+    $tgl_mulai   = date('Y-m-d', strtotime('-30 days'));
+    $tgl_selesai = date('Y-m-d');
+} elseif ($range === 'custom') {
+    // Pakai input dari user
+}
+
+$tgl_mulai_esc   = mysqli_real_escape_string($conn, $tgl_mulai);
+$tgl_selesai_esc = mysqli_real_escape_string($conn, $tgl_selesai);
+
+$labelPeriode = [
+    'today'  => 'Hari Ini',
+    '7days'  => '7 Hari Terakhir',
+    '30days' => '30 Hari Terakhir',
+    'custom' => date('d M', strtotime($tgl_mulai)) . ' – ' . date('d M', strtotime($tgl_selesai)),
+][$range] ?? 'Hari Ini';
+
+// =========================================================
+// 1. STATISTIK PERIODE
 // =========================================================
 $stat = [
-    'penjualan_hari'  => 0,
-    'transaksi_hari'  => 0,
-    'pembelian_hari'  => 0,
-    'stok_kritis'     => 0,
+    'penjualan'  => 0,
+    'transaksi'  => 0,
+    'pembelian'  => 0,
+    'stok_kritis'=> 0,
 ];
 
-// Penjualan & transaksi hari ini
-$qHari = mysqli_query($conn, "
+$qPeriode = mysqli_query($conn, "
     SELECT 
         COALESCE(SUM(CASE WHEN jenis_transaksi='penjualan' THEN total_harga ELSE 0 END),0) AS penjualan,
         COALESCE(SUM(CASE WHEN jenis_transaksi='penjualan' THEN 1 ELSE 0 END),0) AS trx_jual,
         COALESCE(SUM(CASE WHEN jenis_transaksi='pembelian' THEN total_harga ELSE 0 END),0) AS pembelian
     FROM transaksi
-    WHERE DATE(created_at) = CURDATE()
+    WHERE DATE(created_at) BETWEEN '$tgl_mulai_esc' AND '$tgl_selesai_esc'
 ");
-if ($qHari) {
-    $r = mysqli_fetch_assoc($qHari);
-    $stat['penjualan_hari'] = (float)$r['penjualan'];
-    $stat['transaksi_hari'] = (int)$r['trx_jual'];
-    $stat['pembelian_hari'] = (float)$r['pembelian'];
+if ($qPeriode) {
+    $r = mysqli_fetch_assoc($qPeriode);
+    $stat['penjualan'] = (float)$r['penjualan'];
+    $stat['transaksi'] = (int)$r['trx_jual'];
+    $stat['pembelian'] = (float)$r['pembelian'];
 }
 
-// Stok kritis
+// Stok kritis (global, tidak terpengaruh filter)
 $qKritis = mysqli_query($conn, "SELECT COUNT(*) AS total FROM produk WHERE stok > 0 AND stok <= stok_minimal");
 if ($qKritis) $stat['stok_kritis'] = (int)mysqli_fetch_assoc($qKritis)['total'];
 
-// Stok habis (tambahan)
 $qHabis = mysqli_query($conn, "SELECT COUNT(*) AS total FROM produk WHERE stok = 0");
 $stokHabis = $qHabis ? (int)mysqli_fetch_assoc($qHabis)['total'] : 0;
 
 // =========================================================
-// 2. CHART: PENDAPATAN 30 HARI TERAKHIR
+// 2. CHART: PENDAPATAN PERIODE
 // =========================================================
 $chart_labels = [];
 $chart_data   = [];
@@ -59,7 +83,7 @@ $qChart = mysqli_query($conn, "
     SELECT DATE(created_at) AS tgl, SUM(total_harga) AS total
     FROM transaksi
     WHERE jenis_transaksi = 'penjualan'
-      AND created_at >= DATE_SUB(CURDATE(), INTERVAL 30 DAY)
+      AND DATE(created_at) BETWEEN '$tgl_mulai_esc' AND '$tgl_selesai_esc'
     GROUP BY DATE(created_at)
     ORDER BY DATE(created_at) ASC
 ");
@@ -70,21 +94,26 @@ if ($qChart) {
     }
 }
 
-// Isi tanggal yang kosong supaya chart tetap konsisten
-for ($i = 29; $i >= 0; $i--) {
-    $tgl = date('Y-m-d', strtotime("-$i days"));
-    $chart_labels[] = date('d M', strtotime($tgl));
-    $chart_data[]   = $chartRaw[$tgl] ?? 0;
+// Isi tanggal kosong
+$startTs = strtotime($tgl_mulai);
+$endTs   = strtotime($tgl_selesai);
+$diffDays = max(1, (int)(($endTs - $startTs) / 86400) + 1);
+
+for ($t = $startTs; $t <= $endTs; $t += 86400) {
+    $key = date('Y-m-d', $t);
+    // Format label: kalau >14 hari, pakai "d M" biar tidak terlalu padat
+    $chart_labels[] = ($diffDays > 14) ? date('d M', $t) : date('d/m', $t);
+    $chart_data[]   = $chartRaw[$key] ?? 0;
 }
 
 // =========================================================
-// 3. 5 TRANSAKSI TERAKHIR (dari PELANGGAN)
+// 3. 5 TRANSAKSI TERAKHIR
 // =========================================================
 $recent_transactions = [];
 $qRecent = mysqli_query($conn, "
     SELECT 
         t.id, t.kode_transaksi, t.total_harga, t.status, t.created_at,
-        t.nama_penerima,
+        t.nama_penerima, t.jenis_transaksi,
         COALESCE(u.nama_lengkap, 'Walk-in') AS pelanggan
     FROM transaksi t
     LEFT JOIN users u ON t.user_id = u.id
@@ -97,14 +126,13 @@ if ($qRecent) {
 }
 
 // =========================================================
-// 4. NOTIFIKASI STOK KRITIS (untuk dropdown bell)
+// 4. NOTIFIKASI STOK KRITIS
 // =========================================================
 $notifItems = [];
 $qNotif = mysqli_query($conn, "SELECT id, nama_tanaman, stok, stok_minimal FROM produk WHERE stok <= stok_minimal ORDER BY stok ASC LIMIT 5");
 if ($qNotif) while ($r = mysqli_fetch_assoc($qNotif)) $notifItems[] = $r;
 $notifCount = count($notifItems);
 
-// Helper format tanggal relatif
 function tanggalRelatif($datetime) {
     $diff = time() - strtotime($datetime);
     if ($diff < 60) return 'Baru saja';
@@ -112,6 +140,16 @@ function tanggalRelatif($datetime) {
     if ($diff < 86400) return floor($diff/3600) . ' jam lalu';
     if ($diff < 172800) return 'Kemarin';
     return date('d M Y', strtotime($datetime));
+}
+
+function badgeStatus($status) {
+    switch ($status) {
+        case 'Diproses': return 'bg-amber-50 text-amber-700 border-amber-200';
+        case 'Dikirim':  return 'bg-blue-50 text-blue-700 border-blue-200';
+        case 'Selesai':  return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+        case 'Batal':    return 'bg-rose-50 text-rose-700 border-rose-200';
+        default:         return 'bg-stone-100 text-stone-600 border-stone-200';
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -169,7 +207,7 @@ function tanggalRelatif($datetime) {
                                 <?php foreach ($notifItems as $item): 
                                     $stokHabisItem = ((int)$item['stok'] === 0);
                                 ?>
-                                    <a href="stok.php" class="block p-2 rounded-xl border <?= $stokHabisItem ? 'bg-rose-50/70 border-rose-100' : 'bg-amber-50/70 border-amber-100' ?>">
+                                    <a href="stok.php?status_filter=<?= $stokHabisItem ? 'empty' : 'critical' ?>" class="block p-2 rounded-xl border <?= $stokHabisItem ? 'bg-rose-50/70 border-rose-100' : 'bg-amber-50/70 border-amber-100' ?>">
                                         <p class="font-semibold <?= $stokHabisItem ? 'text-rose-900' : 'text-amber-900' ?>">
                                             <?= $stokHabisItem ? 'Stok Habis: ' : 'Stok Kritis: ' ?><?= htmlspecialchars($item['nama_tanaman']) ?>
                                         </p>
@@ -180,6 +218,11 @@ function tanggalRelatif($datetime) {
                                 <p class="text-stone-400 text-center py-2">Semua stok aman.</p>
                             <?php endif; ?>
                         </div>
+                        <?php if ($notifCount > 0): ?>
+                            <a href="stok.php" class="block text-center text-[11px] font-bold text-[#2E7D32] hover:underline pt-2 border-t border-stone-100">
+                                Lihat Semua Produk →
+                            </a>
+                        <?php endif; ?>
                     </div>
                 </div>
 
@@ -217,17 +260,17 @@ function tanggalRelatif($datetime) {
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
                     <?php
                     $menu = [
-    ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
-    ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
-    ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
-    ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
-    ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],  // ← BARU
-    ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],  // ← BARU
-    ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
-    ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
-    ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
-    ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
-];
+                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => true],
+                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
+                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
+                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
+                        ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],
+                        ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],
+                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
+                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
+                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
+                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
+                    ];
                     foreach ($menu as $m):
                         $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
                     ?>
@@ -275,21 +318,71 @@ function tanggalRelatif($datetime) {
         <!-- MAIN CONTENT -->
         <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
 
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <!-- HEADER + FILTER -->
+            <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                 <div>
                     <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Ringkasan Dashboard</h1>
-                    <p class="text-sm text-stone-500 mt-0.5">Pantau arus kas, stok tanaman, dan penjualan toko hari ini.</p>
+                    <p class="text-sm text-stone-500 mt-0.5">Menampilkan data periode <b class="text-stone-700"><?= $labelPeriode ?></b></p>
                 </div>
-                <div class="flex items-center gap-2">
-                    <a href="laporan.php" class="inline-flex items-center gap-2 bg-white border border-stone-300 px-3.5 py-2.5 rounded-xl text-sm font-medium text-stone-700 hover:bg-stone-50 shadow-sm">
-                        <i data-lucide="calendar" class="w-4 h-4 text-stone-500"></i>
-                        <span>Laporan Lanjutan</span>
-                    </a>
-                    <a href="pos.php" class="inline-flex items-center gap-2 bg-[#2E7D32] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-emerald-800 shadow-sm">
-                        <i data-lucide="plus" class="w-4 h-4"></i>
-                        <span>Transaksi Baru</span>
-                    </a>
+
+                <!-- FILTER TANGGAL CEPAT -->
+                <div class="flex items-center gap-2 flex-wrap">
+                    <a href="?range=today"  class="px-3.5 py-2 text-xs font-bold rounded-xl border <?= $range==='today'  ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-white text-stone-600 hover:bg-stone-50 border-stone-200' ?>">Hari Ini</a>
+                    <a href="?range=7days"  class="px-3.5 py-2 text-xs font-bold rounded-xl border <?= $range==='7days'  ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-white text-stone-600 hover:bg-stone-50 border-stone-200' ?>">7 Hari</a>
+                    <a href="?range=30days" class="px-3.5 py-2 text-xs font-bold rounded-xl border <?= $range==='30days' ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-white text-stone-600 hover:bg-stone-50 border-stone-200' ?>">30 Hari</a>
+                    <button onclick="document.getElementById('modalFilter').classList.remove('hidden');document.getElementById('modalFilter').classList.add('flex')" class="px-3.5 py-2 text-xs font-bold rounded-xl border <?= $range==='custom' ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-white text-stone-600 hover:bg-stone-50 border-stone-200' ?> inline-flex items-center gap-1.5">
+                        <i data-lucide="calendar" class="w-3.5 h-3.5"></i>
+                        Custom
+                    </button>
                 </div>
+            </div>
+
+            <!-- QUICK ACTION -->
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                <a href="pos.php" class="bg-white rounded-2xl border border-stone-200/80 p-4 hover:shadow-md hover:border-[#2E7D32]/30 transition group">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-emerald-50 text-[#2E7D32] flex items-center justify-center group-hover:bg-[#2E7D32] group-hover:text-white transition">
+                            <i data-lucide="shopping-cart" class="w-5 h-5"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-bold text-stone-800">Kasir POS</p>
+                            <p class="text-[10px] text-stone-400">Transaksi baru</p>
+                        </div>
+                    </div>
+                </a>
+                <a href="stok.php" class="bg-white rounded-2xl border border-stone-200/80 p-4 hover:shadow-md hover:border-[#2E7D32]/30 transition group">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition">
+                            <i data-lucide="package-plus" class="w-5 h-5"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-bold text-stone-800">Tambah Produk</p>
+                            <p class="text-[10px] text-stone-400">Stok & katalog</p>
+                        </div>
+                    </div>
+                </a>
+                <a href="laporan.php" class="bg-white rounded-2xl border border-stone-200/80 p-4 hover:shadow-md hover:border-[#2E7D32]/30 transition group">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center group-hover:bg-amber-600 group-hover:text-white transition">
+                            <i data-lucide="bar-chart-3" class="w-5 h-5"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-bold text-stone-800">Lihat Laporan</p>
+                            <p class="text-[10px] text-stone-400">Omset & laba</p>
+                        </div>
+                    </div>
+                </a>
+                <a href="chat.php" class="bg-white rounded-2xl border border-stone-200/80 p-4 hover:shadow-md hover:border-[#2E7D32]/30 transition group">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center group-hover:bg-purple-600 group-hover:text-white transition">
+                            <i data-lucide="message-square" class="w-5 h-5"></i>
+                        </div>
+                        <div>
+                            <p class="text-xs font-bold text-stone-800">Chat Pelanggan</p>
+                            <p class="text-[10px] text-stone-400">Balas konsultasi</p>
+                        </div>
+                    </div>
+                </a>
             </div>
 
             <!-- 4 METRIC CARDS -->
@@ -297,27 +390,27 @@ function tanggalRelatif($datetime) {
                 <a href="laporan.php" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32] flex flex-col justify-between hover:shadow-md transition-shadow">
                     <div>
                         <div class="flex items-center justify-between mb-3">
-                            <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Penjualan Hari Ini</p>
+                            <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Penjualan</p>
                             <div class="w-10 h-10 rounded-xl bg-emerald-50 text-[#2E7D32] flex items-center justify-center">
                                 <i data-lucide="wallet" class="w-5 h-5"></i>
                             </div>
                         </div>
-                        <p class="text-2xl font-bold text-stone-800 tracking-tight mb-2">Rp <?= number_format($stat['penjualan_hari'], 0, ',', '.') ?></p>
+                        <p class="text-2xl font-bold text-stone-800 tracking-tight mb-2">Rp <?= number_format($stat['penjualan'], 0, ',', '.') ?></p>
                     </div>
                     <div class="pt-2 text-xs">
-                        <span class="font-medium text-stone-400">Dari <?= $stat['transaksi_hari'] ?> transaksi</span>
+                        <span class="font-medium text-stone-400"><?= $labelPeriode ?></span>
                     </div>
                 </a>
 
                 <a href="transaksi.php" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32] flex flex-col justify-between hover:shadow-md transition-shadow">
                     <div>
                         <div class="flex items-center justify-between mb-3">
-                            <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Transaksi Hari Ini</p>
+                            <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Transaksi</p>
                             <div class="w-10 h-10 rounded-xl bg-emerald-50 text-[#2E7D32] flex items-center justify-center">
                                 <i data-lucide="shopping-cart" class="w-5 h-5"></i>
                             </div>
                         </div>
-                        <p class="text-2xl font-bold text-stone-800 tracking-tight mb-2"><?= $stat['transaksi_hari'] ?> Transaksi</p>
+                        <p class="text-2xl font-bold text-stone-800 tracking-tight mb-2"><?= $stat['transaksi'] ?> Transaksi</p>
                     </div>
                     <div class="pt-2 text-xs">
                         <span class="font-medium text-stone-400">Penjualan pelanggan</span>
@@ -327,19 +420,19 @@ function tanggalRelatif($datetime) {
                 <a href="restock.php" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32] flex flex-col justify-between hover:shadow-md transition-shadow">
                     <div>
                         <div class="flex items-center justify-between mb-3">
-                            <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Pembelian Supplier</p>
+                            <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Pembelian</p>
                             <div class="w-10 h-10 rounded-xl bg-emerald-50 text-[#2E7D32] flex items-center justify-center">
                                 <i data-lucide="package-check" class="w-5 h-5"></i>
                             </div>
                         </div>
-                        <p class="text-2xl font-bold text-stone-800 tracking-tight mb-2">Rp <?= number_format($stat['pembelian_hari'], 0, ',', '.') ?></p>
+                        <p class="text-2xl font-bold text-stone-800 tracking-tight mb-2">Rp <?= number_format($stat['pembelian'], 0, ',', '.') ?></p>
                     </div>
                     <div class="pt-2 text-xs">
-                        <span class="font-medium text-stone-400">Restock hari ini</span>
+                        <span class="font-medium text-stone-400">Restock supplier</span>
                     </div>
                 </a>
 
-                <a href="stok.php" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#D97706] flex flex-col justify-between hover:shadow-md transition-shadow">
+                <a href="stok.php?status_filter=critical" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#D97706] flex flex-col justify-between hover:shadow-md transition-shadow">
                     <div>
                         <div class="flex items-center justify-between mb-3">
                             <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Stok Kritis</p>
@@ -366,7 +459,7 @@ function tanggalRelatif($datetime) {
                     <div class="flex items-center justify-between mb-6">
                         <div>
                             <h2 class="text-lg font-bold text-stone-800">Tren Pendapatan Penjualan</h2>
-                            <p class="text-xs text-stone-500">Performa pendapatan 30 hari terakhir</p>
+                            <p class="text-xs text-stone-500"><?= $labelPeriode ?></p>
                         </div>
                         <span class="inline-flex items-center gap-1.5 text-xs font-medium text-stone-600 bg-stone-100 px-3 py-1.5 rounded-lg">
                             <span class="w-2 h-2 rounded-full bg-[#2E7D32]"></span>
@@ -394,28 +487,24 @@ function tanggalRelatif($datetime) {
                         <?php if (empty($recent_transactions)): ?>
                             <p class="text-center text-xs text-stone-400 py-8">Belum ada transaksi.</p>
                         <?php else: ?>
-                            <div class="overflow-x-auto">
-                                <table class="w-full text-left border-collapse">
-                                    <thead>
-                                        <tr class="border-b border-stone-200 text-[11px] font-bold text-stone-500 uppercase tracking-wider">
-                                            <th class="pb-3 pr-2">Kode</th>
-                                            <th class="pb-3 px-2">Pelanggan</th>
-                                            <th class="pb-3 pl-2 text-right">Total</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody class="divide-y divide-stone-100 text-xs">
-                                        <?php foreach ($recent_transactions as $trx): ?>
-                                            <tr class="hover:bg-stone-50/80 cursor-pointer" onclick="window.location.href='transaksi.php';">
-                                                <td class="py-3 pr-2 font-mono text-stone-500 text-[10px]"><?= htmlspecialchars($trx['kode_transaksi']) ?></td>
-                                                <td class="py-3 px-2">
-                                                    <p class="font-semibold text-stone-800 truncate"><?= htmlspecialchars($trx['pelanggan']) ?></p>
-                                                    <p class="text-stone-400 text-[10px]"><?= tanggalRelatif($trx['created_at']) ?></p>
-                                                </td>
-                                                <td class="py-3 pl-2 text-right font-semibold text-[#2E7D32]">Rp <?= number_format($trx['total_harga'], 0, ',', '.') ?></td>
-                                            </tr>
-                                        <?php endforeach; ?>
-                                    </tbody>
-                                </table>
+                            <div class="space-y-2.5">
+                                <?php foreach ($recent_transactions as $trx): ?>
+                                    <a href="detail_transaksi.php?id=<?= (int)$trx['id'] ?>" class="block p-2.5 rounded-xl border border-stone-100 hover:border-[#2E7D32]/30 hover:bg-stone-50/60 transition">
+                                        <div class="flex items-center justify-between gap-2 mb-1">
+                                            <p class="font-mono text-[10px] text-stone-500"><?= htmlspecialchars($trx['kode_transaksi']) ?></p>
+                                            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase border <?= badgeStatus($trx['status']) ?>">
+                                                <?= htmlspecialchars($trx['status']) ?>
+                                            </span>
+                                        </div>
+                                        <div class="flex items-center justify-between gap-2">
+                                            <div class="min-w-0">
+                                                <p class="text-xs font-semibold text-stone-800 truncate"><?= htmlspecialchars($trx['pelanggan']) ?></p>
+                                                <p class="text-[10px] text-stone-400"><?= tanggalRelatif($trx['created_at']) ?></p>
+                                            </div>
+                                            <p class="text-xs font-bold text-[#2E7D32] shrink-0">Rp <?= number_format($trx['total_harga'], 0, ',', '.') ?></p>
+                                        </div>
+                                    </a>
+                                <?php endforeach; ?>
                             </div>
                         <?php endif; ?>
                     </div>
@@ -430,6 +519,35 @@ function tanggalRelatif($datetime) {
             </div>
 
         </main>
+    </div>
+
+    <!-- MODAL FILTER CUSTOM -->
+    <div id="modalFilter" class="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full">
+            <div class="p-5 border-b border-stone-100 flex items-center justify-between">
+                <h3 class="text-base font-bold text-stone-800">Filter Tanggal Custom</h3>
+                <button onclick="document.getElementById('modalFilter').classList.add('hidden');document.getElementById('modalFilter').classList.remove('flex')" class="text-stone-400 hover:text-stone-700 p-1.5 rounded-lg hover:bg-stone-100">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            <form method="GET" action="dashboard.php" class="p-5 space-y-4">
+                <input type="hidden" name="range" value="custom">
+                <div>
+                    <label class="block text-xs font-bold text-stone-600 uppercase mb-1.5">Mulai Dari</label>
+                    <input type="date" name="tgl_mulai" value="<?= htmlspecialchars($tgl_mulai) ?>" class="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-stone-600 uppercase mb-1.5">Sampai Dengan</label>
+                    <input type="date" name="tgl_selesai" value="<?= htmlspecialchars($tgl_selesai) ?>" class="w-full px-3.5 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                </div>
+                <div class="flex justify-end gap-2 pt-2 border-t border-stone-100">
+                    <button type="button" onclick="document.getElementById('modalFilter').classList.add('hidden');document.getElementById('modalFilter').classList.remove('flex')" class="px-4 py-2 text-sm font-semibold text-stone-600 hover:bg-stone-100 rounded-xl">Batal</button>
+                    <button type="submit" class="px-5 py-2 text-sm font-semibold bg-[#2E7D32] text-white rounded-xl hover:bg-emerald-800 inline-flex items-center gap-2">
+                        <i data-lucide="check" class="w-4 h-4"></i> Terapkan
+                    </button>
+                </div>
+            </form>
+        </div>
     </div>
 
     <script>

@@ -12,7 +12,9 @@ $user_id    = (int)$_SESSION['user_id'];
 $nama_user  = $_SESSION['nama_user'] ?? 'Pelanggan';
 $cart_count = isset($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
 
-// Statistik pesanan
+// =========================================================
+// STATISTIK PESANAN
+// =========================================================
 $total_orders   = 0;
 $pending_orders = 0;
 $total_belanja  = 0;
@@ -32,7 +34,24 @@ if ($qStats) {
     $total_belanja  = (float)$s['total_belanja'];
 }
 
-// Produk terbaru
+// =========================================================
+// PESANAN TERAKHIR
+// =========================================================
+$lastOrder = null;
+$qLast = mysqli_query($conn, "
+    SELECT t.*, 
+           (SELECT COUNT(*) FROM transaksi_detail td WHERE td.transaksi_id = t.id) AS jml_item,
+           (SELECT COALESCE(SUM(jumlah), 0) FROM transaksi_detail td WHERE td.transaksi_id = t.id) AS total_qty
+    FROM transaksi t
+    WHERE t.user_id = $user_id AND t.jenis_transaksi = 'penjualan'
+    ORDER BY t.created_at DESC
+    LIMIT 1
+");
+if ($qLast && mysqli_num_rows($qLast) > 0) $lastOrder = mysqli_fetch_assoc($qLast);
+
+// =========================================================
+// PRODUK TERBARU
+// =========================================================
 $produk_terbaru = [];
 $qProduk = mysqli_query($conn, "
     SELECT p.*, k.nama_kategori 
@@ -42,6 +61,49 @@ $qProduk = mysqli_query($conn, "
     ORDER BY p.id DESC LIMIT 4
 ");
 if ($qProduk) while ($r = mysqli_fetch_assoc($qProduk)) $produk_terbaru[] = $r;
+
+// =========================================================
+// CEK CHAT BELUM DIBACA (dari admin)
+// =========================================================
+$unreadChat = 0;
+$qChat = mysqli_query($conn, "SELECT COUNT(*) AS total FROM chats WHERE user_id = $user_id AND sender_type = 'admin' AND is_read = 0 AND is_deleted = 0");
+if ($qChat) $unreadChat = (int)mysqli_fetch_assoc($qChat)['total'];
+
+// =========================================================
+// BADGE STATUS
+// =========================================================
+if (!function_exists('badgeStatusDash')) {
+    function badgeStatusDash($status) {
+        switch ($status) {
+            case 'Diproses': return 'bg-amber-50 text-amber-700 border-amber-200';
+            case 'Dikirim':  return 'bg-blue-50 text-blue-700 border-blue-200';
+            case 'Selesai':  return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+            case 'Batal':    return 'bg-rose-50 text-rose-700 border-rose-200';
+            default:         return 'bg-stone-100 text-stone-600 border-stone-200';
+        }
+    }
+}
+
+if (!function_exists('iconStatusDash')) {
+    function iconStatusDash($status) {
+        switch ($status) {
+            case 'Diproses': return 'clock';
+            case 'Dikirim':  return 'truck';
+            case 'Selesai':  return 'check-circle-2';
+            case 'Batal':    return 'x-circle';
+            default:         return 'circle';
+        }
+    }
+}
+
+// =========================================================
+// WAKTU SALAM
+// =========================================================
+$jam = (int)date('H');
+if ($jam < 11)      $salam = 'Selamat Pagi';
+elseif ($jam < 15)  $salam = 'Selamat Siang';
+elseif ($jam < 19)  $salam = 'Selamat Sore';
+else                $salam = 'Selamat Malam';
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -135,6 +197,9 @@ if ($qProduk) while ($r = mysqli_fetch_assoc($qProduk)) $produk_terbaru[] = $r;
                                 <span><?= $m['label'] ?></span>
                             </div>
                             <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
+                            <?php if ($m['url'] === 'chat.php' && $unreadChat > 0): ?>
+                                <span class="bg-[#D97706] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full"><?= $unreadChat ?></span>
+                            <?php endif; ?>
                         </a>
                     <?php endforeach; ?>
                 </nav>
@@ -152,11 +217,53 @@ if ($qProduk) while ($r = mysqli_fetch_assoc($qProduk)) $produk_terbaru[] = $r;
 
         <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
 
+            <!-- WELCOME -->
             <div>
-                <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Selamat Datang, <?= htmlspecialchars($nama_user) ?></h1>
+                <h1 class="text-2xl font-bold text-stone-800 tracking-tight"><?= $salam ?>, <?= htmlspecialchars($nama_user) ?> 👋</h1>
                 <p class="text-sm text-stone-500 mt-0.5">Ringkasan aktivitas belanja dan pesanan Anda di PlantHub.</p>
             </div>
 
+            <!-- BANNER: LANJUTKAN BELANJA (kalau cart tidak kosong) -->
+            <?php if ($cart_count > 0): ?>
+                <div class="bg-gradient-to-r from-[#2E7D32] to-emerald-600 rounded-2xl p-5 sm:p-6 text-white shadow-md flex flex-col sm:flex-row items-center justify-between gap-4">
+                    <div class="flex items-center gap-4">
+                        <div class="w-14 h-14 rounded-2xl bg-white/15 backdrop-blur-sm flex items-center justify-center shrink-0">
+                            <i data-lucide="shopping-bag" class="w-7 h-7"></i>
+                        </div>
+                        <div>
+                            <p class="text-base font-bold">Keranjang belanja Anda menunggu!</p>
+                            <p class="text-xs text-emerald-100 mt-0.5">
+                                Ada <b class="text-white"><?= $cart_count ?> item</b> yang belum di-checkout. Yuk selesaikan pesanan Anda.
+                            </p>
+                        </div>
+                    </div>
+                    <a href="cart.php" class="inline-flex items-center gap-2 bg-white text-[#2E7D32] hover:bg-emerald-50 font-bold px-5 py-3 rounded-xl text-sm transition shadow-sm shrink-0">
+                        <span>Lihat Keranjang</span>
+                        <i data-lucide="arrow-right" class="w-4 h-4"></i>
+                    </a>
+                </div>
+            <?php endif; ?>
+
+            <!-- BANNER: CHAT BELUM DIBACA -->
+            <?php if ($unreadChat > 0): ?>
+                <div class="bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-3">
+                    <div class="flex items-center gap-3">
+                        <div class="w-11 h-11 rounded-xl bg-blue-100 text-blue-600 flex items-center justify-center shrink-0">
+                            <i data-lucide="message-square" class="w-5 h-5"></i>
+                        </div>
+                        <div>
+                            <p class="text-sm font-bold text-blue-900">Admin membalas chat Anda!</p>
+                            <p class="text-xs text-blue-700 mt-0.5">Anda punya <b><?= $unreadChat ?></b> pesan belum dibaca dari admin.</p>
+                        </div>
+                    </div>
+                    <a href="chat.php" class="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition shrink-0">
+                        <span>Buka Chat</span>
+                        <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+                    </a>
+                </div>
+            <?php endif; ?>
+
+            <!-- 3 STAT CARD -->
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
                 <a href="cart.php" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32] flex flex-col justify-between hover:shadow-md transition-shadow">
                     <div>
@@ -175,10 +282,10 @@ if ($qProduk) while ($r = mysqli_fetch_assoc($qProduk)) $produk_terbaru[] = $r;
                     </div>
                 </a>
 
-                <a href="riwayat.php" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#D97706] flex flex-col justify-between hover:shadow-md transition-shadow">
+                <a href="riwayat.php?status_filter=Diproses" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#D97706] flex flex-col justify-between hover:shadow-md transition-shadow">
                     <div>
                         <div class="flex items-center justify-between mb-3">
-                            <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Pesanan Diproses</p>
+                            <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Pesanan Aktif</p>
                             <div class="w-10 h-10 rounded-xl bg-amber-50 text-[#D97706] flex items-center justify-center">
                                 <i data-lucide="truck" class="w-5 h-5"></i>
                             </div>
@@ -203,11 +310,67 @@ if ($qProduk) while ($r = mysqli_fetch_assoc($qProduk)) $produk_terbaru[] = $r;
                         <p class="text-2xl font-bold text-stone-800 tracking-tight mb-2">Rp <?= number_format($total_belanja, 0, ',', '.') ?></p>
                     </div>
                     <div class="pt-2 text-xs">
-                        <span class="font-medium text-stone-400"><?= $total_orders ?> transaksi selesai</span>
+                        <span class="font-medium text-stone-400"><?= $total_orders ?> transaksi total</span>
                     </div>
                 </div>
             </div>
 
+            <!-- PESANAN TERAKHIR -->
+            <?php if ($lastOrder): ?>
+                <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6">
+                    <div class="flex items-center justify-between border-b border-stone-100 pb-3 mb-4">
+                        <div class="flex items-center gap-2.5">
+                            <div class="w-10 h-10 rounded-xl bg-stone-100 text-stone-600 flex items-center justify-center">
+                                <i data-lucide="package" class="w-5 h-5"></i>
+                            </div>
+                            <div>
+                                <h2 class="text-base font-bold text-stone-800">Pesanan Terakhir</h2>
+                                <p class="text-[11px] text-stone-500 mt-0.5">Status terkini pesanan terbaru Anda</p>
+                            </div>
+                        </div>
+                        <a href="riwayat.php" class="text-xs font-semibold text-[#2E7D32] hover:underline inline-flex items-center gap-1">
+                            Lihat Semua <i data-lucide="chevron-right" class="w-3.5 h-3.5"></i>
+                        </a>
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div class="flex-1 space-y-1.5">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <p class="font-mono text-sm font-bold text-stone-800"><?= htmlspecialchars($lastOrder['kode_transaksi']) ?></p>
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold uppercase border <?= badgeStatusDash($lastOrder['status']) ?>">
+                                    <i data-lucide="<?= iconStatusDash($lastOrder['status']) ?>" class="w-3 h-3"></i>
+                                    <?= htmlspecialchars($lastOrder['status']) ?>
+                                </span>
+                            </div>
+                            <p class="text-xs text-stone-500">
+                                <i data-lucide="calendar" class="w-3 h-3 inline-block mr-1"></i>
+                                <?= date('d M Y, H:i', strtotime($lastOrder['created_at'])) ?> WIB
+                            </p>
+                            <p class="text-xs text-stone-500">
+                                <i data-lucide="package" class="w-3 h-3 inline-block mr-1"></i>
+                                <?= (int)$lastOrder['jml_item'] ?> produk &middot; <?= (int)$lastOrder['total_qty'] ?> item
+                            </p>
+                            <p class="text-xs text-stone-500">
+                                <i data-lucide="map-pin" class="w-3 h-3 inline-block mr-1"></i>
+                                <?= htmlspecialchars(mb_strimwidth($lastOrder['alamat'] ?? '-', 0, 60, '...')) ?>
+                            </p>
+                        </div>
+
+                        <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 sm:gap-5 sm:border-l sm:border-stone-100 sm:pl-5 shrink-0">
+                            <div class="text-left sm:text-right">
+                                <p class="text-[10px] font-bold uppercase text-stone-400 tracking-wider">Total Bayar</p>
+                                <p class="text-lg font-bold text-[#2E7D32]">Rp <?= number_format($lastOrder['total_harga'], 0, ',', '.') ?></p>
+                            </div>
+                            <a href="riwayat.php" class="inline-flex items-center justify-center gap-1.5 bg-[#2E7D32] hover:bg-emerald-800 text-white font-bold px-4 py-2.5 rounded-xl text-xs transition">
+                                <i data-lucide="search" class="w-3.5 h-3.5"></i>
+                                Lacak Pesanan
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            <?php endif; ?>
+
+            <!-- PRODUK TERBARU -->
             <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6">
                 <div class="flex items-center justify-between border-b border-stone-100 pb-3 mb-4">
                     <div>

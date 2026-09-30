@@ -10,6 +10,33 @@ if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
 $admin_nama = $_SESSION['nama_user'] ?? 'Admin';
 
 // =========================================================
+// HANDLE HAPUS GAMBAR PRODUK (AJAX / POST biasa)
+// =========================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'hapus_gambar') {
+    header('Content-Type: application/json');
+    $id = (int)($_POST['id'] ?? 0);
+    if ($id <= 0) {
+        echo json_encode(['success' => false, 'message' => 'ID tidak valid.']);
+        exit;
+    }
+
+    $qImg = mysqli_query($conn, "SELECT gambar FROM produk WHERE id = $id LIMIT 1");
+    if ($qImg && $row = mysqli_fetch_assoc($qImg)) {
+        if ($row['gambar'] && $row['gambar'] !== 'default.jpg' && file_exists("../assets/img/" . $row['gambar'])) {
+            @unlink("../assets/img/" . $row['gambar']);
+        }
+        if (mysqli_query($conn, "UPDATE produk SET gambar = 'default.jpg' WHERE id = $id")) {
+            echo json_encode(['success' => true, 'message' => 'Gambar berhasil dihapus.']);
+        } else {
+            echo json_encode(['success' => false, 'message' => 'Gagal update database.']);
+        }
+    } else {
+        echo json_encode(['success' => false, 'message' => 'Produk tidak ditemukan.']);
+    }
+    exit;
+}
+
+// =========================================================
 // PROSES AKSI (POST: tambah / edit / hapus)
 // =========================================================
 $pesan_sukses = '';
@@ -18,7 +45,6 @@ $pesan_error  = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
-    // ----- FUNGSI UPLOAD GAMBAR -----
     function uploadGambar($file, $oldFile = '') {
         if (!isset($file) || $file['error'] !== UPLOAD_ERR_OK) return $oldFile;
 
@@ -26,14 +52,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
 
         if (!in_array($ext, $allowed)) return $oldFile;
-        if ($file['size'] > 2 * 1024 * 1024) return $oldFile; // max 2MB
+        if ($file['size'] > 2 * 1024 * 1024) return $oldFile;
 
         $dir = '../assets/img/';
         if (!is_dir($dir)) mkdir($dir, 0755, true);
 
         $newName = 'produk_' . time() . '_' . rand(1000, 9999) . '.' . $ext;
         if (move_uploaded_file($file['tmp_name'], $dir . $newName)) {
-            // Hapus file lama kalau bukan default
             if ($oldFile && $oldFile !== 'default.jpg' && file_exists($dir . $oldFile)) {
                 @unlink($dir . $oldFile);
             }
@@ -53,7 +78,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $deskripsi    = mysqli_real_escape_string($conn, trim($_POST['deskripsi'] ?? ''));
         $perawatan    = mysqli_real_escape_string($conn, trim($_POST['cara_perawatan'] ?? ''));
 
-        // Upload gambar
         $gambar = 'default.jpg';
         if (isset($_FILES['gambar']) && $_FILES['gambar']['error'] === UPLOAD_ERR_OK) {
             $gambar = uploadGambar($_FILES['gambar'], '');
@@ -89,7 +113,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $deskripsi    = mysqli_real_escape_string($conn, trim($_POST['deskripsi'] ?? ''));
         $perawatan    = mysqli_real_escape_string($conn, trim($_POST['cara_perawatan'] ?? ''));
 
-        // Ambil gambar lama
         $oldGambar = 'default.jpg';
         $qOld = mysqli_query($conn, "SELECT gambar FROM produk WHERE id = $id LIMIT 1");
         if ($qOld && $r = mysqli_fetch_assoc($qOld)) $oldGambar = $r['gambar'];
@@ -123,14 +146,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'hapus') {
         $id = (int)($_POST['id'] ?? 0);
         if ($id > 0) {
-            // Cek apakah produk pernah dipakai di transaksi
             $qCek = mysqli_query($conn, "SELECT COUNT(*) AS total FROM transaksi_detail WHERE produk_id = $id");
             $dipakai = $qCek ? (int)mysqli_fetch_assoc($qCek)['total'] : 0;
 
             if ($dipakai > 0) {
                 $pesan_error = "Produk tidak bisa dihapus karena sudah dipakai di $dipakai transaksi.";
             } else {
-                // Hapus gambar
                 $qImg = mysqli_query($conn, "SELECT gambar FROM produk WHERE id = $id LIMIT 1");
                 if ($qImg && $row = mysqli_fetch_assoc($qImg)) {
                     if ($row['gambar'] && $row['gambar'] !== 'default.jpg' && file_exists("../assets/img/" . $row['gambar'])) {
@@ -148,9 +169,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// =========================================================
-// STATUS MESSAGE
-// =========================================================
 if (isset($_GET['status'])) {
     if ($_GET['status'] === 'added')   $pesan_sukses = "Produk baru berhasil ditambahkan.";
     if ($_GET['status'] === 'edited')  $pesan_sukses = "Produk berhasil diperbarui.";
@@ -158,11 +176,29 @@ if (isset($_GET['status'])) {
 }
 
 // =========================================================
-// FILTER & SEARCH
+// FILTER, SEARCH, SORTING
 // =========================================================
 $search        = isset($_GET['search']) ? mysqli_real_escape_string($conn, trim($_GET['search'])) : '';
 $kategori_id   = isset($_GET['kategori']) ? (int)$_GET['kategori'] : 0;
 $statusFilter  = $_GET['status_filter'] ?? 'semua';
+
+// Sorting
+$sortBy    = $_GET['sort'] ?? 'terbaru';
+$sortOrder = strtoupper($_GET['order'] ?? 'DESC');
+if (!in_array($sortOrder, ['ASC', 'DESC'])) $sortOrder = 'DESC';
+
+$allowedSort = [
+    'terbaru'     => 'p.id DESC',
+    'nama_asc'    => 'p.nama_tanaman ASC',
+    'nama_desc'   => 'p.nama_tanaman DESC',
+    'harga_asc'   => 'p.harga_jual ASC',
+    'harga_desc'  => 'p.harga_jual DESC',
+    'stok_asc'    => 'p.stok ASC',
+    'stok_desc'   => 'p.stok DESC',
+    'kategori_asc'=> 'k.nama_kategori ASC, p.nama_tanaman ASC',
+    'kategori_desc'=> 'k.nama_kategori DESC, p.nama_tanaman ASC',
+];
+$orderBy = $allowedSort[$sortBy] ?? 'p.id DESC';
 
 $where = "WHERE 1=1";
 if ($search !== '')      $where .= " AND p.nama_tanaman LIKE '%$search%'";
@@ -180,11 +216,10 @@ $qProduk = mysqli_query($conn, "
     FROM produk p 
     LEFT JOIN kategori k ON p.kategori_id = k.id 
     $where
-    ORDER BY p.id DESC
+    ORDER BY $orderBy
 ");
 if ($qProduk) while ($r = mysqli_fetch_assoc($qProduk)) $produk[] = $r;
 
-// Ambil kategori untuk filter & dropdown form
 $kategoriList = [];
 $qKat = mysqli_query($conn, "SELECT * FROM kategori ORDER BY id ASC");
 if ($qKat) while ($r = mysqli_fetch_assoc($qKat)) $kategoriList[] = $r;
@@ -216,6 +251,30 @@ function gambarProduk($nama) {
     }
     if (file_exists("../assets/img/" . $nama)) return "../assets/img/" . $nama;
     return "https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400";
+}
+
+// Helper sort URL
+function sortUrl($col) {
+    $params = $_GET;
+    $currentSort  = $params['sort']  ?? 'terbaru';
+    $currentOrder = strtoupper($params['order'] ?? 'DESC');
+    $mapAsc  = ['nama' => 'nama_asc', 'harga' => 'harga_asc', 'stok' => 'stok_asc', 'kategori' => 'kategori_asc'];
+    $mapDesc = ['nama' => 'nama_desc', 'harga' => 'harga_desc', 'stok' => 'stok_desc', 'kategori' => 'kategori_desc'];
+    $ascKey  = $mapAsc[$col]  ?? 'nama_asc';
+    $descKey = $mapDesc[$col] ?? 'nama_desc';
+    $params['sort']  = ($currentSort === $ascKey) ? $descKey : $ascKey;
+    $params['order'] = ($currentSort === $ascKey) ? 'DESC' : 'ASC';
+    return 'stok.php?' . http_build_query($params);
+}
+
+function sortIcon($col, $currentSort, $currentOrder) {
+    $mapAsc  = ['nama' => 'nama_asc', 'harga' => 'harga_asc', 'stok' => 'stok_asc', 'kategori' => 'kategori_asc'];
+    $mapDesc = ['nama' => 'nama_desc', 'harga' => 'harga_desc', 'stok' => 'stok_desc', 'kategori' => 'kategori_desc'];
+    $ascKey  = $mapAsc[$col]  ?? '';
+    $descKey = $mapDesc[$col] ?? '';
+    if ($currentSort === $ascKey)  return '▲';
+    if ($currentSort === $descKey) return '▼';
+    return '<span class="text-stone-300">⇅</span>';
 }
 ?>
 <!DOCTYPE html>
@@ -267,17 +326,17 @@ function gambarProduk($nama) {
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
                     <?php
                     $menu = [
-    ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
-    ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
-    ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
-    ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
-    ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],  // ← BARU
-    ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],  // ← BARU
-    ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
-    ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
-    ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
-    ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
-];
+                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
+                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
+                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
+                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => true],
+                        ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],
+                        ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],
+                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
+                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
+                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
+                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
+                    ];
                     foreach ($menu as $m):
                         $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
                     ?>
@@ -324,7 +383,7 @@ function gambarProduk($nama) {
 
             <!-- ALERT -->
             <?php if ($pesan_sukses): ?>
-                <div class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm flex items-center gap-2">
+                <div id="alertSukses" class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm flex items-center gap-2 transition-opacity duration-500">
                     <i data-lucide="check-circle" class="w-5 h-5 text-[#2E7D32] shrink-0"></i>
                     <span><?= htmlspecialchars($pesan_sukses) ?></span>
                 </div>
@@ -372,7 +431,7 @@ function gambarProduk($nama) {
                 </a>
             </div>
 
-            <!-- FILTER -->
+            <!-- FILTER + SORTING -->
             <div class="bg-white p-4 rounded-2xl border border-stone-200/80 shadow-sm space-y-3">
                 <div class="flex items-center gap-2 overflow-x-auto pb-1">
                     <a href="stok.php<?= $search ? '?search=' . urlencode($search) : '' ?>" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $kategori_id === 0 ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">Semua Kategori</a>
@@ -391,6 +450,28 @@ function gambarProduk($nama) {
                             <option value="empty" <?= $statusFilter === 'empty' ? 'selected' : '' ?>>Habis</option>
                         </select>
                     </div>
+                </div>
+
+                <!-- Sorting Bar -->
+                <div class="flex items-center gap-2 overflow-x-auto pt-3 border-t border-stone-100">
+                    <span class="text-xs font-bold text-stone-400 uppercase tracking-wider whitespace-nowrap">Urutkan:</span>
+                    <?php
+                    $sorts = [
+                        'terbaru'      => 'Terbaru',
+                        'nama_asc'     => 'Nama A–Z',
+                        'nama_desc'    => 'Nama Z–A',
+                        'harga_asc'    => 'Harga Terendah',
+                        'harga_desc'   => 'Harga Tertinggi',
+                        'stok_asc'     => 'Stok Terkecil',
+                        'stok_desc'    => 'Stok Terbesar',
+                    ];
+                    foreach ($sorts as $key => $label):
+                    ?>
+                        <a href="<?= 'stok.php?' . http_build_query(array_merge($_GET, ['sort' => $key])) ?>" 
+                           class="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $sortBy === $key ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">
+                            <?= $label ?>
+                        </a>
+                    <?php endforeach; ?>
                 </div>
             </div>
 
@@ -473,7 +554,6 @@ function gambarProduk($nama) {
                 <input type="hidden" name="id" id="formId" value="">
 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <!-- KIRI: FORM -->
                     <div class="space-y-3">
                         <div>
                             <label class="block text-xs font-bold text-stone-600 uppercase mb-1">Nama Produk <span class="text-rose-500">*</span></label>
@@ -513,7 +593,6 @@ function gambarProduk($nama) {
                         </div>
                     </div>
 
-                    <!-- KANAN: GAMBAR + DESKRIPSI -->
                     <div class="space-y-3">
                         <div>
                             <label class="block text-xs font-bold text-stone-600 uppercase mb-1">Gambar Produk</label>
@@ -525,7 +604,13 @@ function gambarProduk($nama) {
                                 </div>
                                 <input type="file" name="gambar" id="inGambar" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="previewImg(event)">
                             </div>
-                            <p class="text-[10px] text-stone-400 mt-1">JPG, PNG, WEBP. Maks 2MB.</p>
+                            <div class="flex items-center justify-between mt-2">
+                                <p class="text-[10px] text-stone-400">JPG, PNG, WEBP. Maks 2MB.</p>
+                                <!-- TOMBOL HAPUS GAMBAR (hanya muncul di mode edit) -->
+                                <button type="button" id="btnHapusGambar" onclick="hapusGambarProduk()" class="hidden items-center gap-1 text-[10px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 hover:bg-rose-100 px-2 py-1 rounded-md transition">
+                                    <i data-lucide="trash-2" class="w-3 h-3"></i> Hapus Gambar
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -583,18 +668,23 @@ function gambarProduk($nama) {
 
         const modal = document.getElementById('modalProduk');
         const formProduk = document.getElementById('formProduk');
+        let currentEditId = null;
 
         function openModalTambah() {
+            currentEditId = null;
             document.getElementById('modalTitle').innerText = 'Tambah Produk Baru';
             document.getElementById('formAction').value = 'tambah';
             document.getElementById('formId').value = '';
             formProduk.reset();
             document.getElementById('previewGambar').src = 'https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400';
+            document.getElementById('btnHapusGambar').classList.add('hidden');
+            document.getElementById('btnHapusGambar').classList.remove('inline-flex');
             modal.classList.remove('hidden');
             modal.classList.add('flex');
         }
 
         function openModalEdit(data) {
+            currentEditId = data.id;
             document.getElementById('modalTitle').innerText = 'Edit Produk';
             document.getElementById('formAction').value = 'edit';
             document.getElementById('formId').value = data.id;
@@ -607,6 +697,18 @@ function gambarProduk($nama) {
             document.getElementById('inDeskripsi').value = data.deskripsi || '';
             document.getElementById('inPerawatan').value = data.perawatan || '';
             document.getElementById('previewGambar').src = data.gambar || 'https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400';
+
+            // Tampilkan tombol hapus gambar kalau gambar bukan default
+            const btn = document.getElementById('btnHapusGambar');
+            const isDefault = !data.gambar || data.gambar.includes('unsplash.com');
+            if (isDefault) {
+                btn.classList.add('hidden');
+                btn.classList.remove('inline-flex');
+            } else {
+                btn.classList.remove('hidden');
+                btn.classList.add('inline-flex');
+            }
+
             modal.classList.remove('hidden');
             modal.classList.add('flex');
         }
@@ -619,12 +721,56 @@ function gambarProduk($nama) {
         function previewImg(e) {
             const file = e.target.files[0];
             if (file) {
+                if (file.size > 2 * 1024 * 1024) {
+                    alert('Ukuran file melebihi 2MB.');
+                    e.target.value = '';
+                    return;
+                }
                 const reader = new FileReader();
                 reader.onload = (ev) => {
                     document.getElementById('previewGambar').src = ev.target.result;
                 };
                 reader.readAsDataURL(file);
+
+                // Kalau user pilih gambar baru, tombol hapus muncul
+                const btn = document.getElementById('btnHapusGambar');
+                btn.classList.remove('hidden');
+                btn.classList.add('inline-flex');
             }
+        }
+
+        // ========================================================
+        // HAPUS GAMBAR PRODUK (AJAX)
+        // ========================================================
+        function hapusGambarProduk() {
+            if (!currentEditId) {
+                // Mode tambah: cuma reset preview, tidak perlu AJAX
+                document.getElementById('previewGambar').src = 'https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400';
+                document.getElementById('inGambar').value = '';
+                document.getElementById('btnHapusGambar').classList.add('hidden');
+                document.getElementById('btnHapusGambar').classList.remove('inline-flex');
+                return;
+            }
+
+            if (!confirm('Hapus gambar produk ini? Gambar akan dikembalikan ke default.')) return;
+
+            const fd = new FormData();
+            fd.append('action', 'hapus_gambar');
+            fd.append('id', currentEditId);
+
+            fetch('stok.php', { method: 'POST', body: fd })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        document.getElementById('previewGambar').src = 'https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400';
+                        document.getElementById('btnHapusGambar').classList.add('hidden');
+                        document.getElementById('btnHapusGambar').classList.remove('inline-flex');
+                        alert(data.message);
+                    } else {
+                        alert('Gagal: ' + data.message);
+                    }
+                })
+                .catch(err => alert('Error: ' + err.message));
         }
 
         const modalHapus = document.getElementById('formHapus');
@@ -639,9 +785,17 @@ function gambarProduk($nama) {
             modalHapus.classList.remove('flex');
         }
 
-        // Klik overlay untuk close
         modal.addEventListener('click', (e) => { if (e.target === modal) closeModal(); });
         modalHapus.addEventListener('click', (e) => { if (e.target === modalHapus) closeHapus(); });
+
+        // Auto-hide alert
+        const alertSukses = document.getElementById('alertSukses');
+        if (alertSukses) {
+            setTimeout(() => {
+                alertSukses.style.opacity = '0';
+                setTimeout(() => alertSukses.remove(), 500);
+            }, 4000);
+        }
     </script>
 </body>
 </html>

@@ -63,7 +63,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'hapus') {
         $id = (int)($_POST['id'] ?? 0);
         if ($id > 0) {
-            // Cek apakah kategori masih dipakai produk
             $qCek = mysqli_query($conn, "SELECT COUNT(*) AS total FROM produk WHERE kategori_id = $id");
             $dipakai = $qCek ? (int)mysqli_fetch_assoc($qCek)['total'] : 0;
 
@@ -88,6 +87,16 @@ if (isset($_GET['status'])) {
 }
 
 // =========================================================
+// SEARCH
+// =========================================================
+$search = isset($_GET['search']) ? mysqli_real_escape_string($conn, trim($_GET['search'])) : '';
+
+$where = "WHERE 1=1";
+if ($search !== '') {
+    $where .= " AND k.nama_kategori LIKE '%$search%'";
+}
+
+// =========================================================
 // AMBIL DATA KATEGORI + JUMLAH PRODUK
 // =========================================================
 $kategoriList = [];
@@ -95,17 +104,26 @@ $qKategori = mysqli_query($conn, "
     SELECT k.*, 
            (SELECT COUNT(*) FROM produk p WHERE p.kategori_id = k.id) AS total_produk
     FROM kategori k
+    $where
     ORDER BY k.id ASC
 ");
 if ($qKategori) while ($r = mysqli_fetch_assoc($qKategori)) $kategoriList[] = $r;
 
-// Statistik
-$statTotal    = count($kategoriList);
-$statDipakai  = 0;
-$statKosong   = 0;
-foreach ($kategoriList as $k) {
-    if ((int)$k['total_produk'] > 0) $statDipakai++;
-    else $statKosong++;
+// Statistik (global, tidak terpengaruh search)
+$statTotal = 0;
+$statDipakai = 0;
+$statKosong = 0;
+$qStat = mysqli_query($conn, "
+    SELECT 
+        COUNT(*) AS total,
+        COALESCE(SUM(CASE WHEN (SELECT COUNT(*) FROM produk p WHERE p.kategori_id = k.id) > 0 THEN 1 ELSE 0 END), 0) AS dipakai
+    FROM kategori k
+");
+if ($qStat) {
+    $s = mysqli_fetch_assoc($qStat);
+    $statTotal   = (int)$s['total'];
+    $statDipakai = (int)$s['dipakai'];
+    $statKosong  = $statTotal - $statDipakai;
 }
 ?>
 <!DOCTYPE html>
@@ -135,9 +153,10 @@ foreach ($kategoriList as $k) {
                 </a>
             </div>
 
-            <div class="hidden md:flex flex-1 max-w-md">
-                <span class="text-xs text-stone-500 self-center">Kelola Kategori Produk</span>
-            </div>
+            <form method="GET" action="kategori.php" class="hidden md:flex flex-1 max-w-md relative">
+                <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
+                <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari kategori..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] placeholder:text-stone-400">
+            </form>
 
             <a href="dashboard.php" class="flex items-center gap-3 pl-1">
                 <img src="https://ui-avatars.com/api/?name=<?= urlencode($admin_nama) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
@@ -242,6 +261,14 @@ foreach ($kategoriList as $k) {
                 </div>
             </div>
 
+            <!-- SEARCH BAR (mobile) -->
+            <form method="GET" action="kategori.php" class="md:hidden bg-white p-3 rounded-2xl border border-stone-200/80 shadow-sm">
+                <div class="relative">
+                    <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
+                    <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari kategori..." class="w-full pl-10 pr-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                </div>
+            </form>
+
             <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse">
@@ -258,10 +285,18 @@ foreach ($kategoriList as $k) {
                                 <tr>
                                     <td colspan="4" class="py-12 text-center">
                                         <div class="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                                            <i data-lucide="tag" class="w-6 h-6 text-stone-400"></i>
+                                            <i data-lucide="<?= $search ? 'search-x' : 'tag' ?>" class="w-6 h-6 text-stone-400"></i>
                                         </div>
-                                        <p class="text-sm font-semibold text-stone-700">Belum ada kategori</p>
-                                        <p class="text-xs text-stone-500 mt-1">Klik "Tambah Kategori" untuk mulai.</p>
+                                        <p class="text-sm font-semibold text-stone-700">
+                                            <?= $search ? 'Tidak ada kategori yang cocok' : 'Belum ada kategori' ?>
+                                        </p>
+                                        <p class="text-xs text-stone-500 mt-1">
+                                            <?php if ($search): ?>
+                                                Coba kata kunci lain atau <a href="kategori.php" class="text-[#2E7D32] font-bold hover:underline">reset pencarian</a>.
+                                            <?php else: ?>
+                                                Klik "Tambah Kategori" untuk mulai.
+                                            <?php endif; ?>
+                                        </p>
                                     </td>
                                 </tr>
                             <?php else: ?>
@@ -296,6 +331,13 @@ foreach ($kategoriList as $k) {
                         </tbody>
                     </table>
                 </div>
+
+                <?php if ($search && !empty($kategoriList)): ?>
+                    <div class="p-4 bg-stone-50/60 border-t border-stone-100 flex items-center justify-between text-xs text-stone-500">
+                        <span>Hasil pencarian: <b class="text-stone-700"><?= count($kategoriList) ?></b> kategori</span>
+                        <a href="kategori.php" class="text-[#2E7D32] font-semibold hover:underline">Reset pencarian</a>
+                    </div>
+                <?php endif; ?>
             </div>
 
         </main>

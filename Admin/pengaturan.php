@@ -34,16 +34,27 @@ if (!$qCek || mysqli_num_rows($qCek) === 0) {
 }
 
 // =========================================================
-// FUNGSI UPLOAD
+// FUNGSI UPLOAD (dengan validasi & pesan error)
 // =========================================================
-function uploadFile($file, $prefix, $oldFile = '') {
-    if (!isset($file) || $file['error'] !== UPLOAD_ERR_OK) return $oldFile;
+function uploadFile($file, $prefix, $oldFile = '', &$errors = []) {
+    if (!isset($file) || $file['error'] === UPLOAD_ERR_NO_FILE) return $oldFile;
+
+    if ($file['error'] !== UPLOAD_ERR_OK) {
+        $errors[] = "Gagal upload $prefix (kode error: {$file['error']}).";
+        return $oldFile;
+    }
 
     $allowed = ['jpg', 'jpeg', 'png', 'webp'];
     $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
 
-    if (!in_array($ext, $allowed)) return $oldFile;
-    if ($file['size'] > 2 * 1024 * 1024) return $oldFile;
+    if (!in_array($ext, $allowed)) {
+        $errors[] = "Format file $prefix tidak didukung. Gunakan JPG, PNG, atau WEBP.";
+        return $oldFile;
+    }
+    if ($file['size'] > 2 * 1024 * 1024) {
+        $errors[] = "Ukuran file $prefix melebihi 2MB.";
+        return $oldFile;
+    }
 
     $dir = '../uploads/';
     if (!is_dir($dir)) mkdir($dir, 0755, true);
@@ -55,50 +66,104 @@ function uploadFile($file, $prefix, $oldFile = '') {
         }
         return $newName;
     }
+    $errors[] = "Gagal memindahkan file $prefix ke folder uploads.";
     return $oldFile;
 }
 
 // =========================================================
-// SIMPAN PENGATURAN
+// HANDLE HAPUS LOGO / FOTO PROFIL
+// =========================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['hapus_gambar'])) {
+    $target = $_POST['hapus_gambar']; // 'logo' atau 'profil'
+    $qOld = mysqli_query($conn, "SELECT logo_toko, foto_profil FROM pengaturan WHERE id = 1");
+    $old = mysqli_fetch_assoc($qOld);
+
+    if ($target === 'logo') {
+        if ($old['logo_toko'] && !in_array($old['logo_toko'], ['default_logo.png']) && file_exists('../uploads/' . $old['logo_toko'])) {
+            @unlink('../uploads/' . $old['logo_toko']);
+        }
+        mysqli_query($conn, "UPDATE pengaturan SET logo_toko = 'default_logo.png' WHERE id = 1");
+        header("Location: pengaturan.php?status=logo_reset");
+        exit;
+    }
+    if ($target === 'profil') {
+        if ($old['foto_profil'] && !in_array($old['foto_profil'], ['default_avatar.jpg']) && file_exists('../uploads/' . $old['foto_profil'])) {
+            @unlink('../uploads/' . $old['foto_profil']);
+        }
+        mysqli_query($conn, "UPDATE pengaturan SET foto_profil = 'default_avatar.jpg' WHERE id = 1");
+        header("Location: pengaturan.php?status=profil_reset");
+        exit;
+    }
+}
+
+// =========================================================
+// SIMPAN PENGATURAN (dengan validasi lengkap)
 // =========================================================
 $pesan_sukses = '';
 $pesan_error  = '';
+$upload_errors = [];
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['simpan_pengaturan'])) {
-    $nama_toko    = mysqli_real_escape_string($conn, trim($_POST['nama_toko'] ?? ''));
-    $nama_cabang  = mysqli_real_escape_string($conn, trim($_POST['nama_cabang'] ?? ''));
-    $no_telepon   = mysqli_real_escape_string($conn, trim($_POST['no_telepon'] ?? ''));
-    $email_toko   = mysqli_real_escape_string($conn, trim($_POST['email_toko'] ?? ''));
-    $alamat_toko  = mysqli_real_escape_string($conn, trim($_POST['alamat_toko'] ?? ''));
-    $catatan_nota = mysqli_real_escape_string($conn, trim($_POST['catatan_nota'] ?? ''));
+    $nama_toko    = trim($_POST['nama_toko'] ?? '');
+    $nama_cabang  = trim($_POST['nama_cabang'] ?? '');
+    $no_telepon   = trim($_POST['no_telepon'] ?? '');
+    $email_toko   = trim($_POST['email_toko'] ?? '');
+    $alamat_toko  = trim($_POST['alamat_toko'] ?? '');
+    $catatan_nota = trim($_POST['catatan_nota'] ?? '');
 
-    // Ambil data lama
-    $qOld = mysqli_query($conn, "SELECT * FROM pengaturan WHERE id = 1");
-    $dataLama = mysqli_fetch_assoc($qOld);
-
-    // Upload logo & foto profil
-    $logo_toko   = uploadFile($_FILES['logo_toko']   ?? null, 'logo',   $dataLama['logo_toko']);
-    $foto_profil = uploadFile($_FILES['foto_profil'] ?? null, 'profil', $dataLama['foto_profil']);
-
+    // Validasi
     if ($nama_toko === '') {
         $pesan_error = "Nama toko wajib diisi.";
-    } else {
-        $sql = "UPDATE pengaturan SET 
-                    nama_toko = '$nama_toko',
-                    nama_cabang = '$nama_cabang',
-                    no_telepon = '$no_telepon',
-                    email_toko = '$email_toko',
-                    alamat_toko = '$alamat_toko',
-                    catatan_nota = '$catatan_nota',
-                    logo_toko = '$logo_toko',
-                    foto_profil = '$foto_profil'
-                WHERE id = 1";
-        if (mysqli_query($conn, $sql)) {
-            $pesan_sukses = "Pengaturan berhasil diperbarui.";
+    } elseif ($nama_cabang === '') {
+        $pesan_error = "Nama cabang wajib diisi.";
+    } elseif ($email_toko !== '' && !filter_var($email_toko, FILTER_VALIDATE_EMAIL)) {
+        $pesan_error = "Format email tidak valid.";
+    } elseif ($no_telepon !== '' && !preg_match('/^[0-9+\-\s()]{8,20}$/', $no_telepon)) {
+        $pesan_error = "Nomor telepon hanya boleh angka, min. 8 digit.";
+    }
+
+    if ($pesan_error === '') {
+        $nama_toko_esc    = mysqli_real_escape_string($conn, $nama_toko);
+        $nama_cabang_esc  = mysqli_real_escape_string($conn, $nama_cabang);
+        $no_telepon_esc   = mysqli_real_escape_string($conn, $no_telepon);
+        $email_toko_esc   = mysqli_real_escape_string($conn, $email_toko);
+        $alamat_toko_esc  = mysqli_real_escape_string($conn, $alamat_toko);
+        $catatan_nota_esc = mysqli_real_escape_string($conn, $catatan_nota);
+
+        $qOld = mysqli_query($conn, "SELECT * FROM pengaturan WHERE id = 1");
+        $dataLama = mysqli_fetch_assoc($qOld);
+
+        $logo_toko   = uploadFile($_FILES['logo_toko']   ?? null, 'logo',   $dataLama['logo_toko'],   $upload_errors);
+        $foto_profil = uploadFile($_FILES['foto_profil'] ?? null, 'profil', $dataLama['foto_profil'], $upload_errors);
+
+        if (!empty($upload_errors)) {
+            $pesan_error = implode(' ', $upload_errors);
         } else {
-            $pesan_error = "Gagal menyimpan: " . mysqli_error($conn);
+            $sql = "UPDATE pengaturan SET 
+                        nama_toko = '$nama_toko_esc',
+                        nama_cabang = '$nama_cabang_esc',
+                        no_telepon = '$no_telepon_esc',
+                        email_toko = '$email_toko_esc',
+                        alamat_toko = '$alamat_toko_esc',
+                        catatan_nota = '$catatan_nota_esc',
+                        logo_toko = '$logo_toko',
+                        foto_profil = '$foto_profil'
+                    WHERE id = 1";
+            if (mysqli_query($conn, $sql)) {
+                header("Location: pengaturan.php?status=saved");
+                exit;
+            } else {
+                $pesan_error = "Gagal menyimpan: " . mysqli_error($conn);
+            }
         }
     }
+}
+
+// Status message dari redirect
+if (isset($_GET['status'])) {
+    if ($_GET['status'] === 'saved')        $pesan_sukses = "Pengaturan berhasil diperbarui.";
+    if ($_GET['status'] === 'logo_reset')   $pesan_sukses = "Logo toko dikembalikan ke default.";
+    if ($_GET['status'] === 'profil_reset') $pesan_sukses = "Foto profil dikembalikan ke default.";
 }
 
 // =========================================================
@@ -106,14 +171,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['simpan_pengaturan']))
 // =========================================================
 $data_toko = mysqli_fetch_assoc(mysqli_query($conn, "SELECT * FROM pengaturan WHERE id = 1"));
 
-// Path gambar
-$logo_src = (!empty($data_toko['logo_toko']) && file_exists('../uploads/' . $data_toko['logo_toko']))
+$logo_src = (!empty($data_toko['logo_toko']) && $data_toko['logo_toko'] !== 'default_logo.png' && file_exists('../uploads/' . $data_toko['logo_toko']))
     ? '../uploads/' . $data_toko['logo_toko']
     : 'https://ui-avatars.com/api/?name=PH&background=2E7D32&color=fff&size=128';
 
-$avatar_src = (!empty($data_toko['foto_profil']) && file_exists('../uploads/' . $data_toko['foto_profil']))
+$avatar_src = (!empty($data_toko['foto_profil']) && $data_toko['foto_profil'] !== 'default_avatar.jpg' && file_exists('../uploads/' . $data_toko['foto_profil']))
     ? '../uploads/' . $data_toko['foto_profil']
     : 'https://ui-avatars.com/api/?name=' . urlencode($admin_nama) . '&background=2E7D32&color=fff';
+
+$is_logo_custom   = !empty($data_toko['logo_toko']) && $data_toko['logo_toko'] !== 'default_logo.png';
+$is_avatar_custom = !empty($data_toko['foto_profil']) && $data_toko['foto_profil'] !== 'default_avatar.jpg';
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -163,17 +230,17 @@ $avatar_src = (!empty($data_toko['foto_profil']) && file_exists('../uploads/' . 
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
                     <?php
                     $menu = [
-    ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
-    ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
-    ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
-    ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
-    ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],  // ← BARU
-    ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],  // ← BARU
-    ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
-    ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
-    ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
-    ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
-];
+                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
+                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
+                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
+                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
+                        ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],
+                        ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],
+                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
+                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
+                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
+                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
+                    ];
                     foreach ($menu as $m):
                         $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
                     ?>
@@ -225,19 +292,19 @@ $avatar_src = (!empty($data_toko['foto_profil']) && file_exists('../uploads/' . 
 
             <!-- ALERT -->
             <?php if (!empty($pesan_sukses)): ?>
-                <div class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm flex items-center gap-2">
-                    <i data-lucide="check-circle" class="w-5 h-5 text-[#2E7D32]"></i>
+                <div id="alertSukses" class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm flex items-center gap-2 transition-opacity duration-500">
+                    <i data-lucide="check-circle" class="w-5 h-5 text-[#2E7D32] shrink-0"></i>
                     <span><?= htmlspecialchars($pesan_sukses) ?></span>
                 </div>
             <?php endif; ?>
             <?php if (!empty($pesan_error)): ?>
                 <div class="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-sm flex items-center gap-2">
-                    <i data-lucide="alert-circle" class="w-5 h-5"></i>
+                    <i data-lucide="alert-circle" class="w-5 h-5 shrink-0"></i>
                     <span><?= htmlspecialchars($pesan_error) ?></span>
                 </div>
             <?php endif; ?>
 
-            <form method="POST" action="pengaturan.php" enctype="multipart/form-data" class="space-y-6">
+            <form method="POST" action="pengaturan.php" enctype="multipart/form-data" class="space-y-6" onsubmit="return konfirmasiSimpan(event)">
 
                 <!-- KARTU 1: LOGO + FOTO PROFIL -->
                 <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-5">
@@ -250,14 +317,27 @@ $avatar_src = (!empty($data_toko['foto_profil']) && file_exists('../uploads/' . 
                         <!-- Logo Toko -->
                         <div>
                             <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Logo Toko</label>
-                            <div class="flex items-center gap-4">
+                            <div class="flex items-start gap-4">
                                 <img id="previewLogo" src="<?= htmlspecialchars($logo_src) ?>" class="w-20 h-20 rounded-2xl object-cover ring-4 ring-stone-100 bg-stone-50">
-                                <div>
-                                    <label class="inline-flex items-center gap-2 bg-stone-100 hover:bg-stone-200 text-stone-700 px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer transition">
-                                        <i data-lucide="upload" class="w-4 h-4"></i>
-                                        <span>Pilih Logo</span>
-                                        <input type="file" name="logo_toko" accept="image/*" class="hidden" onchange="previewImage(event, 'previewLogo')">
-                                    </label>
+                                <div class="flex-1">
+                                    <div class="flex flex-wrap gap-2">
+                                        <label class="inline-flex items-center gap-2 bg-stone-100 hover:bg-stone-200 text-stone-700 px-3.5 py-2 rounded-xl text-xs font-semibold cursor-pointer transition">
+                                            <i data-lucide="upload" class="w-4 h-4"></i>
+                                            <span>Pilih Logo</span>
+                                            <input type="file" name="logo_toko" id="inLogo" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="previewImage(event, 'previewLogo', 'infoLogo', '<?= htmlspecialchars($logo_src) ?>')">
+                                        </label>
+                                        <?php if ($is_logo_custom): ?>
+                                            <button type="button" onclick="konfirmasiHapusGambar('logo')" class="inline-flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 px-3 py-2 rounded-xl text-xs font-semibold transition">
+                                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                                <span>Hapus</span>
+                                            </button>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div id="infoLogo" class="hidden mt-2 text-[10px] text-stone-500 flex items-center gap-2">
+                                        <i data-lucide="file-image" class="w-3 h-3"></i>
+                                        <span class="nama-file italic">Belum ada file dipilih</span>
+                                        <button type="button" onclick="batalPilih('inLogo', 'previewLogo', 'infoLogo', '<?= htmlspecialchars($logo_src) ?>')" class="text-rose-500 hover:underline font-semibold">Batal</button>
+                                    </div>
                                     <p class="text-[10px] text-stone-400 mt-1.5">JPG/PNG/WEBP, maks 2MB.</p>
                                 </div>
                             </div>
@@ -266,14 +346,27 @@ $avatar_src = (!empty($data_toko['foto_profil']) && file_exists('../uploads/' . 
                         <!-- Foto Profil -->
                         <div>
                             <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Foto Profil Admin</label>
-                            <div class="flex items-center gap-4">
+                            <div class="flex items-start gap-4">
                                 <img id="previewProfil" src="<?= htmlspecialchars($avatar_src) ?>" class="w-20 h-20 rounded-2xl object-cover ring-4 ring-stone-100 bg-stone-50">
-                                <div>
-                                    <label class="inline-flex items-center gap-2 bg-stone-100 hover:bg-stone-200 text-stone-700 px-4 py-2 rounded-xl text-xs font-semibold cursor-pointer transition">
-                                        <i data-lucide="upload" class="w-4 h-4"></i>
-                                        <span>Pilih Foto</span>
-                                        <input type="file" name="foto_profil" accept="image/*" class="hidden" onchange="previewImage(event, 'previewProfil')">
-                                    </label>
+                                <div class="flex-1">
+                                    <div class="flex flex-wrap gap-2">
+                                        <label class="inline-flex items-center gap-2 bg-stone-100 hover:bg-stone-200 text-stone-700 px-3.5 py-2 rounded-xl text-xs font-semibold cursor-pointer transition">
+                                            <i data-lucide="upload" class="w-4 h-4"></i>
+                                            <span>Pilih Foto</span>
+                                            <input type="file" name="foto_profil" id="inProfil" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="previewImage(event, 'previewProfil', 'infoProfil', '<?= htmlspecialchars($avatar_src) ?>')">
+                                        </label>
+                                        <?php if ($is_avatar_custom): ?>
+                                            <button type="button" onclick="konfirmasiHapusGambar('profil')" class="inline-flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-600 px-3 py-2 rounded-xl text-xs font-semibold transition">
+                                                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+                                                <span>Hapus</span>
+                                            </button>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div id="infoProfil" class="hidden mt-2 text-[10px] text-stone-500 flex items-center gap-2">
+                                        <i data-lucide="file-image" class="w-3 h-3"></i>
+                                        <span class="nama-file italic">Belum ada file dipilih</span>
+                                        <button type="button" onclick="batalPilih('inProfil', 'previewProfil', 'infoProfil', '<?= htmlspecialchars($avatar_src) ?>')" class="text-rose-500 hover:underline font-semibold">Batal</button>
+                                    </div>
                                     <p class="text-[10px] text-stone-400 mt-1.5">Foto yang tampil di header.</p>
                                 </div>
                             </div>
@@ -294,16 +387,16 @@ $avatar_src = (!empty($data_toko['foto_profil']) && file_exists('../uploads/' . 
                             <input type="text" name="nama_toko" value="<?= htmlspecialchars($data_toko['nama_toko']) ?>" required class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
                         </div>
                         <div>
-                            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Nama Cabang</label>
-                            <input type="text" name="nama_cabang" value="<?= htmlspecialchars($data_toko['nama_cabang']) ?>" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Nama Cabang <span class="text-rose-500">*</span></label>
+                            <input type="text" name="nama_cabang" value="<?= htmlspecialchars($data_toko['nama_cabang']) ?>" required class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
                         </div>
                         <div>
                             <label class="block text-xs font-bold text-stone-600 uppercase mb-2">No. Telepon / WA</label>
-                            <input type="text" name="no_telepon" value="<?= htmlspecialchars($data_toko['no_telepon']) ?>" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                            <input type="text" name="no_telepon" value="<?= htmlspecialchars($data_toko['no_telepon']) ?>" placeholder="08123456789" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
                         </div>
                         <div>
                             <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Email Toko</label>
-                            <input type="email" name="email_toko" value="<?= htmlspecialchars($data_toko['email_toko']) ?>" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                            <input type="email" name="email_toko" value="<?= htmlspecialchars($data_toko['email_toko']) ?>" placeholder="admin@planthub.com" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
                         </div>
                     </div>
 
@@ -313,27 +406,52 @@ $avatar_src = (!empty($data_toko['foto_profil']) && file_exists('../uploads/' . 
                     </div>
                 </div>
 
-                <!-- KARTU 3: CATATAN STRUK -->
+                <!-- KARTU 3: CATATAN STRUK + PREVIEW -->
                 <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4">
                     <div class="border-b border-stone-100 pb-3">
                         <h2 class="text-base font-bold text-stone-800">Preferensi Struk</h2>
                         <p class="text-xs text-stone-500 mt-0.5">Catatan kaki yang muncul di bagian bawah struk pembelian.</p>
                     </div>
 
-                    <div>
-                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Catatan Kaki Struk</label>
-                        <textarea name="catatan_nota" rows="3" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] resize-none"><?= htmlspecialchars($data_toko['catatan_nota']) ?></textarea>
-                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                        <div>
+                            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Catatan Kaki Struk</label>
+                            <textarea name="catatan_nota" id="inCatatan" rows="5" oninput="updatePreviewStruk()" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] resize-none"><?= htmlspecialchars($data_toko['catatan_nota']) ?></textarea>
 
-                    <div class="text-[11px] text-stone-400">
-                        <p class="font-semibold text-stone-500 mb-1">Terakhir diperbarui:</p>
-                        <p><?= !empty($data_toko['updated_at']) ? date('d M Y, H:i', strtotime($data_toko['updated_at'])) . ' WIB' : '-' ?></p>
+                            <div class="mt-3 text-[11px] text-stone-400">
+                                <p class="font-semibold text-stone-500 mb-1">Terakhir diperbarui:</p>
+                                <p><?= !empty($data_toko['updated_at']) ? date('d M Y, H:i', strtotime($data_toko['updated_at'])) . ' WIB' : '-' ?></p>
+                            </div>
+                        </div>
+
+                        <!-- Preview Struk -->
+                        <div>
+                            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Preview Struk</label>
+                            <div class="bg-stone-50 border border-stone-200 rounded-xl p-4">
+                                <div class="bg-white rounded-lg p-4 font-mono text-[10px] text-stone-700 shadow-sm border border-stone-100 max-w-xs mx-auto">
+                                    <div class="text-center border-b border-dashed border-stone-300 pb-2 mb-2">
+                                        <p class="font-bold text-xs text-stone-800" id="pvNamaToko"><?= htmlspecialchars($data_toko['nama_toko']) ?></p>
+                                        <p class="text-[9px] text-stone-500" id="pvNamaCabang"><?= htmlspecialchars($data_toko['nama_cabang']) ?></p>
+                                    </div>
+                                    <div class="space-y-0.5 mb-2">
+                                        <div class="flex justify-between"><span>Contoh Produk</span><span>x1</span></div>
+                                        <div class="flex justify-between"><span></span><span>Rp 50.000</span></div>
+                                    </div>
+                                    <div class="border-t border-dashed border-stone-300 pt-2 flex justify-between font-bold">
+                                        <span>TOTAL</span><span>Rp 55.500</span>
+                                    </div>
+                                    <div class="border-t border-dashed border-stone-300 mt-2 pt-2 text-center text-[9px] text-stone-500 italic min-h-[1.5rem]" id="pvCatatan">
+                                        <?= htmlspecialchars($data_toko['catatan_nota'] ?: 'Terima kasih!') ?>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
                 <!-- TOMBOL AKSI -->
                 <div class="flex items-center justify-end gap-3">
-                    <a href="dashboard.php" class="px-5 py-2.5 text-sm font-semibold text-stone-600 hover:bg-stone-100 rounded-xl">Batal</a>
+                    <a href="pengaturan.php" class="px-5 py-2.5 text-sm font-semibold text-stone-600 hover:bg-stone-100 rounded-xl">Batal</a>
                     <button type="submit" name="simpan_pengaturan" class="inline-flex items-center gap-2 bg-[#2E7D32] text-white px-6 py-2.5 rounded-xl text-sm font-bold hover:bg-emerald-800 shadow-sm transition">
                         <i data-lucide="save" class="w-4 h-4"></i> Simpan Pengaturan
                     </button>
@@ -341,8 +459,26 @@ $avatar_src = (!empty($data_toko['foto_profil']) && file_exists('../uploads/' . 
 
             </form>
 
+            <!-- ZONA INFO -->
+            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-5">
+                <div class="flex items-start gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
+                        <i data-lucide="info" class="w-5 h-5"></i>
+                    </div>
+                    <div class="text-xs text-stone-500 leading-relaxed">
+                        <p class="font-bold text-stone-700 mb-1">Info</p>
+                        <p>Semua perubahan akan langsung diterapkan ke seluruh halaman admin, katalog pelanggan, dan struk pembelian. Upload gambar maksimal 2MB.</p>
+                    </div>
+                </div>
+            </div>
+
         </main>
     </div>
+
+    <!-- FORM HAPUS GAMBAR (hidden, submit via JS) -->
+    <form id="formHapusGambar" method="POST" action="pengaturan.php" class="hidden">
+        <input type="hidden" name="hapus_gambar" id="hapusTarget" value="">
+    </form>
 
     <script>
         lucide.createIcons();
@@ -356,14 +492,66 @@ $avatar_src = (!empty($data_toko['foto_profil']) && file_exists('../uploads/' . 
             s?.classList.toggle('z-40');
         }
 
-        function previewImage(event, targetId) {
+        function previewImage(event, targetId, infoId, originalSrc) {
             const file = event.target.files[0];
             if (!file) return;
+
+            // Validasi ukuran
+            if (file.size > 2 * 1024 * 1024) {
+                alert('Ukuran file melebihi 2MB.');
+                event.target.value = '';
+                return;
+            }
+
             const reader = new FileReader();
             reader.onload = (e) => {
                 document.getElementById(targetId).src = e.target.result;
+                const info = document.getElementById(infoId);
+                if (info) {
+                    info.classList.remove('hidden');
+                    info.querySelector('.nama-file').innerText = file.name;
+                }
             };
             reader.readAsDataURL(file);
+        }
+
+        function batalPilih(inputId, targetId, infoId, originalSrc) {
+            document.getElementById(inputId).value = '';
+            document.getElementById(targetId).src = originalSrc;
+            document.getElementById(infoId)?.classList.add('hidden');
+        }
+
+        function konfirmasiHapusGambar(target) {
+            const label = target === 'logo' ? 'logo toko' : 'foto profil';
+            if (confirm(`Hapus ${label} dan kembalikan ke default?`)) {
+                document.getElementById('hapusTarget').value = target;
+                document.getElementById('formHapusGambar').submit();
+            }
+        }
+
+        function konfirmasiSimpan(e) {
+            // Cek apakah ada file yang dipilih atau field berubah
+            const nama = document.querySelector('input[name="nama_toko"]').value.trim();
+            if (nama === '') {
+                alert('Nama toko wajib diisi.');
+                e.preventDefault();
+                return false;
+            }
+            return true;
+        }
+
+        function updatePreviewStruk() {
+            const catatan = document.getElementById('inCatatan').value.trim();
+            document.getElementById('pvCatatan').innerText = catatan || 'Terima kasih!';
+        }
+
+        // Auto-hide alert sukses
+        const alertSukses = document.getElementById('alertSukses');
+        if (alertSukses) {
+            setTimeout(() => {
+                alertSukses.style.opacity = '0';
+                setTimeout(() => alertSukses.remove(), 500);
+            }, 4000);
         }
     </script>
 </body>

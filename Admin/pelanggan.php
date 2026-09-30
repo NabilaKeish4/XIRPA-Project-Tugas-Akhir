@@ -10,17 +10,86 @@ if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
 $admin_nama = $_SESSION['nama_user'] ?? 'Admin';
 
 // =========================================================
-// FILTER & SEARCH
+// HANDLE RESET PASSWORD
 // =========================================================
-$search = isset($_GET['search']) ? mysqli_real_escape_string($conn, trim($_GET['search'])) : '';
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reset_password') {
+    header('Content-Type: application/json');
+    $user_id = (int)($_POST['user_id'] ?? 0);
 
-$where = "WHERE u.role = 'customer'";
-if ($search !== '') {
-    $where .= " AND (u.nama_lengkap LIKE '%$search%' OR u.email LIKE '%$search%' OR u.username LIKE '%$search%')";
+    if ($user_id <= 0) {
+        echo json_encode(['success' => false, 'message' => 'ID tidak valid.']);
+        exit;
+    }
+
+    // Cek user ada & role customer
+    $qCek = mysqli_query($conn, "SELECT id, nama_lengkap, username, email FROM users WHERE id = $user_id AND role = 'customer' LIMIT 1");
+    if (!$qCek || mysqli_num_rows($qCek) === 0) {
+        echo json_encode(['success' => false, 'message' => 'Pelanggan tidak ditemukan.']);
+        exit;
+    }
+    $user = mysqli_fetch_assoc($qCek);
+
+    // Generate password acak 8 karakter (huruf + angka, mudah dibaca)
+    $chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    $newPassword = '';
+    for ($i = 0; $i < 8; $i++) {
+        $newPassword .= $chars[random_int(0, strlen($chars) - 1)];
+    }
+
+    $hash = password_hash($newPassword, PASSWORD_DEFAULT);
+    $hashEsc = mysqli_real_escape_string($conn, $hash);
+
+    if (mysqli_query($conn, "UPDATE users SET password = '$hashEsc' WHERE id = $user_id")) {
+        echo json_encode([
+            'success'  => true,
+            'message'  => 'Password berhasil direset.',
+            'password' => $newPassword,
+            'nama'     => $user['nama_lengkap'],
+            'username' => $user['username'],
+        ]);
+    } else {
+        echo json_encode(['success' => false, 'message' => 'Gagal reset: ' . mysqli_error($conn)]);
+    }
+    exit;
 }
 
 // =========================================================
-// AMBIL DAFTAR PELANGGAN + STATISTIK
+// FILTER & SORTING
+// =========================================================
+$search = isset($_GET['search']) ? mysqli_real_escape_string($conn, trim($_GET['search'])) : '';
+$tab    = $_GET['tab'] ?? 'semua';   // semua | aktif | baru | belum
+$sortBy = $_GET['sort'] ?? 'terbaru'; // terbaru | nama | belanja | transaksi
+
+$allowedTab  = ['semua', 'aktif', 'baru', 'belum'];
+$allowedSort = ['terbaru', 'nama', 'belanja', 'transaksi'];
+if (!in_array($tab, $allowedTab))   $tab = 'semua';
+if (!in_array($sortBy, $allowedSort)) $sortBy = 'terbaru';
+
+$where = "WHERE u.role = 'customer'";
+if ($search !== '') {
+    $where .= " AND (u.nama_lengkap LIKE '%$search%' OR u.email LIKE '%$search%' OR u.username LIKE '%$search%' OR u.no_hp LIKE '%$search%')";
+}
+
+// Filter tab
+if ($tab === 'aktif') {
+    $where .= " AND (SELECT COUNT(*) FROM transaksi t WHERE t.user_id = u.id AND t.jenis_transaksi='penjualan') > 0";
+} elseif ($tab === 'baru') {
+    // Daftar 30 hari terakhir
+    $where .= " AND u.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
+} elseif ($tab === 'belum') {
+    $where .= " AND (SELECT COUNT(*) FROM transaksi t WHERE t.user_id = u.id AND t.jenis_transaksi='penjualan') = 0";
+}
+
+// Sorting
+$orderBy = match($sortBy) {
+    'nama'      => 'u.nama_lengkap ASC',
+    'belanja'   => 'total_belanja DESC',
+    'transaksi' => 'total_order DESC',
+    default     => 'u.created_at DESC',
+};
+
+// =========================================================
+// AMBIL DAFTAR PELANGGAN
 // =========================================================
 $pelanggan = [];
 $qPel = mysqli_query($conn, "
@@ -28,23 +97,35 @@ $qPel = mysqli_query($conn, "
         u.id, u.nama_lengkap, u.username, u.email, u.no_hp, u.alamat, u.created_at,
         COALESCE((SELECT COUNT(*) FROM transaksi t WHERE t.user_id = u.id AND t.jenis_transaksi = 'penjualan'), 0) AS total_order,
         COALESCE((SELECT SUM(total_harga) FROM transaksi t WHERE t.user_id = u.id AND t.jenis_transaksi = 'penjualan' AND t.status = 'Selesai'), 0) AS total_belanja,
-        COALESCE((SELECT COUNT(*) FROM transaksi t WHERE t.user_id = u.id AND t.jenis_transaksi = 'penjualan' AND t.status IN ('Diproses','Dikirim')), 0) AS order_aktif
+        COALESCE((SELECT COUNT(*) FROM transaksi t WHERE t.user_id = u.id AND t.jenis_transaksi = 'penjualan' AND t.status IN ('Diproses','Dikirim')), 0) AS order_aktif,
+        (SELECT MAX(t.created_at) FROM transaksi t WHERE t.user_id = u.id AND t.jenis_transaksi = 'penjualan') AS last_order
     FROM users u
     $where
-    ORDER BY u.created_at DESC
+    ORDER BY $orderBy
 ");
 if ($qPel) while ($r = mysqli_fetch_assoc($qPel)) $pelanggan[] = $r;
 
-// Statistik global
-$stat = ['total' => 0, 'aktif' => 0, 'total_belanja' => 0];
+// =========================================================
+// STATISTIK GLOBAL (per tab)
+// =========================================================
+$stat = ['total' => 0, 'aktif' => 0, 'baru' => 0, 'belum' => 0, 'total_belanja' => 0];
+
 $qStat = mysqli_query($conn, "
     SELECT 
         COUNT(*) AS total,
-        COALESCE(SUM(CASE WHEN (SELECT COUNT(*) FROM transaksi t WHERE t.user_id = u.id AND t.jenis_transaksi = 'penjualan') > 0 THEN 1 ELSE 0 END), 0) AS aktif
+        COALESCE(SUM(CASE WHEN (SELECT COUNT(*) FROM transaksi t WHERE t.user_id = u.id AND t.jenis_transaksi='penjualan') > 0 THEN 1 ELSE 0 END), 0) AS aktif,
+        COALESCE(SUM(CASE WHEN u.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY) THEN 1 ELSE 0 END), 0) AS baru,
+        COALESCE(SUM(CASE WHEN (SELECT COUNT(*) FROM transaksi t WHERE t.user_id = u.id AND t.jenis_transaksi='penjualan') = 0 THEN 1 ELSE 0 END), 0) AS belum
     FROM users u
     WHERE u.role = 'customer'
 ");
-if ($qStat) $stat = array_merge($stat, mysqli_fetch_assoc($qStat));
+if ($qStat) {
+    $s = mysqli_fetch_assoc($qStat);
+    $stat['total'] = (int)$s['total'];
+    $stat['aktif'] = (int)$s['aktif'];
+    $stat['baru']  = (int)$s['baru'];
+    $stat['belum'] = (int)$s['belum'];
+}
 
 $qTotalBelanja = mysqli_query($conn, "
     SELECT COALESCE(SUM(total_harga), 0) AS total 
@@ -53,8 +134,7 @@ $qTotalBelanja = mysqli_query($conn, "
 ");
 if ($qTotalBelanja) $stat['total_belanja'] = (float)mysqli_fetch_assoc($qTotalBelanja)['total'];
 
-// Ambil riwayat transaksi per pelanggan untuk modal (dipanggil via JS pakai data JSON)
-// Kita generate data transaksi detail di PHP biar gampang
+// Data transaksi untuk modal (per pelanggan)
 $dataTransaksi = [];
 if (!empty($pelanggan)) {
     $ids = implode(',', array_map(fn($p) => (int)$p['id'], $pelanggan));
@@ -71,6 +151,12 @@ if (!empty($pelanggan)) {
             }
         }
     }
+}
+
+// Helper URL
+function buildUrl($overrides = []) {
+    $params = array_merge($_GET, $overrides);
+    return 'pelanggan.php?' . http_build_query($params);
 }
 ?>
 <!DOCTYPE html>
@@ -102,7 +188,9 @@ if (!empty($pelanggan)) {
 
             <form method="GET" action="pelanggan.php" class="hidden md:flex flex-1 max-w-md relative">
                 <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
-                <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari nama, email, atau username..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] placeholder:text-stone-400">
+                <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari nama, email, username, no HP..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] placeholder:text-stone-400">
+                <input type="hidden" name="tab" value="<?= htmlspecialchars($tab) ?>">
+                <input type="hidden" name="sort" value="<?= htmlspecialchars($sortBy) ?>">
             </form>
 
             <a href="dashboard.php" class="flex items-center gap-3 pl-1">
@@ -122,17 +210,17 @@ if (!empty($pelanggan)) {
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
                     <?php
                     $menu = [
-    ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
-    ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
-    ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
-    ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
-    ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],  // ← BARU
-    ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],  // ← BARU
-    ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
-    ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
-    ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
-    ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
-];
+                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
+                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
+                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
+                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
+                        ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],
+                        ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],
+                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => true],
+                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
+                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
+                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
+                    ];
                     foreach ($menu as $m):
                         $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
                     ?>
@@ -175,23 +263,67 @@ if (!empty($pelanggan)) {
             </div>
 
             <!-- STATISTIK -->
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32]">
+            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                <a href="<?= buildUrl(['tab' => 'semua']) ?>" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 <?= $tab==='semua' ? 'border-t-[#2E7D32]' : 'border-t-stone-300' ?> hover:shadow-md transition-shadow">
                     <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Total Pelanggan</p>
-                    <p class="text-2xl font-bold text-stone-800 mt-1"><?= (int)$stat['total'] ?></p>
+                    <p class="text-2xl font-bold text-stone-800 mt-1"><?= $stat['total'] ?></p>
                     <p class="text-[11px] text-stone-400 mt-1">Akun terdaftar</p>
-                </div>
-                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-emerald-500">
+                </a>
+                <a href="<?= buildUrl(['tab' => 'aktif']) ?>" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 <?= $tab==='aktif' ? 'border-t-emerald-500' : 'border-t-stone-300' ?> hover:shadow-md transition-shadow">
                     <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Pelanggan Aktif</p>
-                    <p class="text-2xl font-bold text-stone-800 mt-1"><?= (int)$stat['aktif'] ?></p>
+                    <p class="text-2xl font-bold text-stone-800 mt-1"><?= $stat['aktif'] ?></p>
                     <p class="text-[11px] text-stone-400 mt-1">Pernah bertransaksi</p>
-                </div>
-                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-blue-500">
+                </a>
+                <a href="<?= buildUrl(['tab' => 'baru']) ?>" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 <?= $tab==='baru' ? 'border-t-blue-500' : 'border-t-stone-300' ?> hover:shadow-md transition-shadow">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Pelanggan Baru</p>
+                    <p class="text-2xl font-bold text-stone-800 mt-1"><?= $stat['baru'] ?></p>
+                    <p class="text-[11px] text-stone-400 mt-1">30 hari terakhir</p>
+                </a>
+                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-stone-300">
                     <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Total Belanja</p>
                     <p class="text-lg font-bold text-stone-800 mt-1">Rp <?= number_format($stat['total_belanja'], 0, ',', '.') ?></p>
                     <p class="text-[11px] text-stone-400 mt-1">Dari transaksi selesai</p>
                 </div>
             </div>
+
+            <!-- TAB FILTER + SORTING -->
+            <div class="bg-white p-4 rounded-2xl border border-stone-200/80 shadow-sm space-y-3">
+
+                <!-- Tab -->
+                <div class="flex items-center gap-2 overflow-x-auto pb-1">
+                    <a href="<?= buildUrl(['tab' => 'semua']) ?>" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $tab === 'semua' ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">
+                        Semua <span class="opacity-70">(<?= $stat['total'] ?>)</span>
+                    </a>
+                    <a href="<?= buildUrl(['tab' => 'aktif']) ?>" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $tab === 'aktif' ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">
+                        Aktif <span class="opacity-70">(<?= $stat['aktif'] ?>)</span>
+                    </a>
+                    <a href="<?= buildUrl(['tab' => 'baru']) ?>" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $tab === 'baru' ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">
+                        Baru <span class="opacity-70">(<?= $stat['baru'] ?>)</span>
+                    </a>
+                    <a href="<?= buildUrl(['tab' => 'belum']) ?>" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $tab === 'belum' ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">
+                        Belum Beli <span class="opacity-70">(<?= $stat['belum'] ?>)</span>
+                    </a>
+                </div>
+
+                <!-- Sorting -->
+                <div class="flex items-center gap-2 overflow-x-auto pt-3 border-t border-stone-100">
+                    <span class="text-xs font-bold text-stone-400 uppercase tracking-wider whitespace-nowrap">Urutkan:</span>
+                    <a href="<?= buildUrl(['sort' => 'terbaru']) ?>" class="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $sortBy === 'terbaru' ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">Terbaru</a>
+                    <a href="<?= buildUrl(['sort' => 'nama']) ?>" class="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $sortBy === 'nama' ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">Nama A–Z</a>
+                    <a href="<?= buildUrl(['sort' => 'belanja']) ?>" class="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $sortBy === 'belanja' ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">Total Belanja</a>
+                    <a href="<?= buildUrl(['sort' => 'transaksi']) ?>" class="px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $sortBy === 'transaksi' ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">Jumlah Order</a>
+                </div>
+            </div>
+
+            <!-- SEARCH BAR (mobile) -->
+            <form method="GET" action="pelanggan.php" class="md:hidden bg-white p-3 rounded-2xl border border-stone-200/80 shadow-sm">
+                <input type="hidden" name="tab" value="<?= htmlspecialchars($tab) ?>">
+                <input type="hidden" name="sort" value="<?= htmlspecialchars($sortBy) ?>">
+                <div class="relative">
+                    <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
+                    <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari nama, email, no HP..." class="w-full pl-10 pr-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                </div>
+            </form>
 
             <!-- TABEL PELANGGAN -->
             <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
@@ -212,10 +344,18 @@ if (!empty($pelanggan)) {
                                 <tr>
                                     <td colspan="6" class="py-12 text-center">
                                         <div class="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                                            <i data-lucide="users" class="w-6 h-6 text-stone-400"></i>
+                                            <i data-lucide="<?= $search ? 'search-x' : 'users' ?>" class="w-6 h-6 text-stone-400"></i>
                                         </div>
-                                        <p class="text-sm font-semibold text-stone-700">Belum ada pelanggan terdaftar</p>
-                                        <p class="text-xs text-stone-500 mt-1">Pelanggan yang mendaftar via Auth akan muncul di sini.</p>
+                                        <p class="text-sm font-semibold text-stone-700">
+                                            <?= $search ? 'Tidak ada pelanggan yang cocok' : 'Belum ada pelanggan' ?>
+                                        </p>
+                                        <p class="text-xs text-stone-500 mt-1">
+                                            <?php if ($search): ?>
+                                                Coba kata kunci lain atau <a href="pelanggan.php" class="text-[#2E7D32] font-bold hover:underline">reset pencarian</a>.
+                                            <?php else: ?>
+                                                Pelanggan yang mendaftar via Auth akan muncul di sini.
+                                            <?php endif; ?>
+                                        </p>
                                     </td>
                                 </tr>
                             <?php else: ?>
@@ -253,15 +393,20 @@ if (!empty($pelanggan)) {
                                             Rp <?= number_format($p['total_belanja'], 0, ',', '.') ?>
                                         </td>
                                         <td class="py-3.5 px-6 text-center">
-                                            <button onclick='openDetail(<?= json_encode([
-                                                "id" => $p['id'], "nama" => $p["nama_lengkap"], "username" => $p["username"],
-                                                "email" => $p["email"], "no_hp" => $p["no_hp"], "alamat" => $p["alamat"],
-                                                "created_at" => $p["created_at"], "total_order" => $p["total_order"],
-                                                "total_belanja" => $p["total_belanja"],
-                                                "transaksi" => $dataTransaksi[$p["id"]] ?? []
-                                            ]) ?>)' class="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-[#2E7D32] hover:bg-emerald-50 rounded-lg transition">
-                                                <i data-lucide="eye" class="w-3.5 h-3.5"></i> Detail
-                                            </button>
+                                            <div class="flex items-center justify-center gap-1">
+                                                <button onclick='openDetail(<?= json_encode([
+                                                    "id" => $p['id'], "nama" => $p["nama_lengkap"], "username" => $p["username"],
+                                                    "email" => $p["email"], "no_hp" => $p["no_hp"], "alamat" => $p["alamat"],
+                                                    "created_at" => $p["created_at"], "total_order" => $p["total_order"],
+                                                    "total_belanja" => $p["total_belanja"],
+                                                    "transaksi" => $dataTransaksi[$p["id"]] ?? []
+                                                ]) ?>)' class="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-[#2E7D32] hover:bg-emerald-50 rounded-lg transition">
+                                                    <i data-lucide="eye" class="w-3.5 h-3.5"></i> Detail
+                                                </button>
+                                                <button onclick='openResetPassword(<?= (int)$p["id"] ?>, <?= json_encode($p["nama_lengkap"]) ?>)' class="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-amber-600 hover:bg-amber-50 rounded-lg transition" title="Reset Password">
+                                                    <i data-lucide="key-round" class="w-3.5 h-3.5"></i>
+                                                </button>
+                                            </div>
                                         </td>
                                     </tr>
                                 <?php endforeach; ?>
@@ -272,6 +417,7 @@ if (!empty($pelanggan)) {
 
                 <div class="p-4 bg-stone-50/60 border-t border-stone-100 text-xs text-stone-500">
                     Menampilkan <b class="text-stone-700"><?= count($pelanggan) ?></b> pelanggan
+                    <?= $search ? 'dari pencarian <b class="text-stone-700">"' . htmlspecialchars($search) . '"</b>' : '' ?>
                 </div>
             </div>
 
@@ -295,7 +441,6 @@ if (!empty($pelanggan)) {
             </div>
 
             <div class="p-5 space-y-5 max-h-[70vh] overflow-y-auto">
-                <!-- Info -->
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div class="bg-stone-50 border border-stone-100 rounded-xl p-3">
                         <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Email</p>
@@ -311,7 +456,6 @@ if (!empty($pelanggan)) {
                     </div>
                 </div>
 
-                <!-- Statistik -->
                 <div class="grid grid-cols-3 gap-3">
                     <div class="bg-emerald-50 border border-emerald-100 rounded-xl p-3 text-center">
                         <p class="text-[10px] font-bold text-[#2E7D32] uppercase">Total Order</p>
@@ -327,7 +471,6 @@ if (!empty($pelanggan)) {
                     </div>
                 </div>
 
-                <!-- Riwayat transaksi -->
                 <div>
                     <h4 class="text-xs font-bold text-stone-500 uppercase tracking-wider mb-2">Riwayat Transaksi</h4>
                     <div id="dRiwayat" class="space-y-2 max-h-64 overflow-y-auto pr-1"></div>
@@ -336,6 +479,77 @@ if (!empty($pelanggan)) {
 
             <div class="p-4 border-t border-stone-100 flex justify-end">
                 <button onclick="closeDetail()" class="px-5 py-2 text-sm font-semibold bg-stone-100 hover:bg-stone-200 text-stone-700 rounded-xl">Tutup</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL RESET PASSWORD -->
+    <div id="modalReset" class="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full">
+            <div class="p-5 border-b border-stone-100 flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                    <div class="w-9 h-9 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+                        <i data-lucide="key-round" class="w-4 h-4"></i>
+                    </div>
+                    <div>
+                        <h3 class="text-base font-bold text-stone-800">Reset Password</h3>
+                        <p class="text-[11px] text-stone-500">Untuk <b id="rNama" class="text-stone-700">-</b></p>
+                    </div>
+                </div>
+                <button onclick="closeReset()" class="text-stone-400 hover:text-stone-700 p-1.5 rounded-lg hover:bg-stone-100">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+
+            <div class="p-5 space-y-4">
+                <div id="rKonfirmasi">
+                    <div class="p-4 bg-amber-50 border border-amber-200 rounded-xl flex gap-3">
+                        <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-600 shrink-0 mt-0.5"></i>
+                        <div class="text-xs text-amber-800 leading-relaxed">
+                            <p class="font-bold mb-1">Password akan di-reset</p>
+                            <p>Sistem akan membuat password baru secara acak. Password lama tidak akan berlaku lagi. Pastikan kamu memberikan password baru ke pelanggan.</p>
+                        </div>
+                    </div>
+
+                    <div class="flex gap-2 mt-4">
+                        <button onclick="closeReset()" class="flex-1 px-4 py-2.5 text-sm font-semibold text-stone-600 bg-stone-100 hover:bg-stone-200 rounded-xl">Batal</button>
+                        <button onclick="konfirmasiReset()" id="btnKonfirmasiReset" class="flex-1 px-4 py-2.5 text-sm font-bold bg-amber-500 hover:bg-amber-600 text-white rounded-xl inline-flex items-center justify-center gap-2">
+                            <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                            Ya, Reset
+                        </button>
+                    </div>
+                </div>
+
+                <div id="rHasil" class="hidden space-y-3">
+                    <div class="p-4 bg-emerald-50 border border-emerald-200 rounded-xl flex gap-3">
+                        <i data-lucide="check-circle" class="w-5 h-5 text-[#2E7D32] shrink-0 mt-0.5"></i>
+                        <div class="text-xs text-emerald-800 leading-relaxed">
+                            <p class="font-bold mb-1">Password berhasil di-reset!</p>
+                            <p>Berikan password baru ini ke pelanggan. Password hanya ditampilkan sekali.</p>
+                        </div>
+                    </div>
+
+                    <div class="bg-stone-50 border border-stone-200 rounded-xl p-4 space-y-3">
+                        <div>
+                            <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-1">Username</p>
+                            <p id="rUsername" class="text-sm font-bold font-mono text-stone-800">-</p>
+                        </div>
+                        <div>
+                            <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-1">Password Baru</p>
+                            <div class="flex items-center gap-2">
+                                <p id="rPassword" class="text-base font-bold font-mono text-[#2E7D32] bg-white border border-emerald-200 px-3 py-2 rounded-lg flex-1 tracking-wider">-</p>
+                                <button onclick="salinPassword()" class="p-2.5 bg-[#2E7D32] hover:bg-emerald-800 text-white rounded-lg transition" title="Salin">
+                                    <i data-lucide="copy" class="w-4 h-4"></i>
+                                </button>
+                            </div>
+                            <p id="rCopied" class="text-[10px] text-[#2E7D32] font-semibold mt-1 hidden">✓ Tersalin ke clipboard</p>
+                        </div>
+                    </div>
+
+                    <button onclick="closeReset()" class="w-full px-4 py-2.5 text-sm font-bold bg-[#2E7D32] hover:bg-emerald-800 text-white rounded-xl">
+                        Selesai
+                    </button>
+                </div>
             </div>
         </div>
     </div>
@@ -364,6 +578,9 @@ if (!empty($pelanggan)) {
             return map[status] || 'bg-stone-100 text-stone-600 border-stone-200';
         }
 
+        // ========================================================
+        // DETAIL PELANGGAN
+        // ========================================================
         function openDetail(data) {
             document.getElementById('dAvatar').innerText = (data.nama || 'P').charAt(0).toUpperCase();
             document.getElementById('dNama').innerText = data.nama || '-';
@@ -409,6 +626,86 @@ if (!empty($pelanggan)) {
 
         document.getElementById('modalDetail').addEventListener('click', (e) => {
             if (e.target.id === 'modalDetail') closeDetail();
+        });
+
+        // ========================================================
+        // RESET PASSWORD
+        // ========================================================
+        let resetUserId = null;
+        let generatedPassword = '';
+
+        function openResetPassword(userId, nama) {
+            resetUserId = userId;
+            generatedPassword = '';
+
+            document.getElementById('rNama').innerText = nama;
+            document.getElementById('rKonfirmasi').classList.remove('hidden');
+            document.getElementById('rHasil').classList.add('hidden');
+            document.getElementById('rPassword').innerText = '-';
+            document.getElementById('rUsername').innerText = '-';
+            document.getElementById('rCopied').classList.add('hidden');
+
+            const modal = document.getElementById('modalReset');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function closeReset() {
+            const modal = document.getElementById('modalReset');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+            resetUserId = null;
+            generatedPassword = '';
+        }
+
+        function konfirmasiReset() {
+            if (!resetUserId) return;
+
+            const btn = document.getElementById('btnKonfirmasiReset');
+            btn.disabled = true;
+            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Memproses...';
+            lucide.createIcons();
+
+            const fd = new FormData();
+            fd.append('action', 'reset_password');
+            fd.append('user_id', resetUserId);
+
+            fetch('pelanggan.php', { method: 'POST', body: fd })
+                .then(r => r.json())
+                .then(data => {
+                    if (data.success) {
+                        generatedPassword = data.password;
+                        document.getElementById('rUsername').innerText = data.username || '-';
+                        document.getElementById('rPassword').innerText = data.password;
+                        document.getElementById('rKonfirmasi').classList.add('hidden');
+                        document.getElementById('rHasil').classList.remove('hidden');
+                    } else {
+                        alert('Gagal: ' + data.message);
+                    }
+                    btn.disabled = false;
+                    btn.innerHTML = '<i data-lucide="refresh-cw" class="w-4 h-4"></i> Ya, Reset';
+                    lucide.createIcons();
+                })
+                .catch(err => {
+                    alert('Error: ' + err.message);
+                    btn.disabled = false;
+                    btn.innerHTML = '<i data-lucide="refresh-cw" class="w-4 h-4"></i> Ya, Reset';
+                    lucide.createIcons();
+                });
+        }
+
+        function salinPassword() {
+            if (!generatedPassword) return;
+            navigator.clipboard.writeText(generatedPassword).then(() => {
+                document.getElementById('rCopied').classList.remove('hidden');
+                setTimeout(() => document.getElementById('rCopied').classList.add('hidden'), 2000);
+            }).catch(err => {
+                alert('Gagal menyalin. Silakan copy manual: ' + generatedPassword);
+            });
+        }
+
+        document.getElementById('modalReset').addEventListener('click', (e) => {
+            if (e.target.id === 'modalReset') closeReset();
         });
     </script>
 </body>

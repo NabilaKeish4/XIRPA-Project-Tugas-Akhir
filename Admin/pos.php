@@ -29,11 +29,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         exit;
     }
 
+    if ($nama === '') $nama = 'Pelanggan Walk-in';
+
     $metodeValid = ['tunai', 'qris', 'debit', 'transfer', 'ewallet', 'cod'];
     if (!in_array($metode, $metodeValid)) $metode = 'tunai';
 
-    // Hitung total & validasi stok
-    $total    = 0;
     $subtotal = 0;
     foreach ($cart as $item) {
         $qty   = (int)$item['qty'];
@@ -43,7 +43,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
     $ppn   = $subtotal * 0.11;
     $total = $subtotal + $ppn;
 
-    // Validasi bayar
     if ($metode === 'tunai' && $bayar < $total) {
         echo json_encode(['success' => false, 'message' => 'Jumlah bayar kurang dari total.']);
         exit;
@@ -55,7 +54,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         $namaEsc    = mysqli_real_escape_string($conn, $nama);
         $catatanEsc = mysqli_real_escape_string($conn, $catatan);
 
-        // 1. Simpan transaksi
         $sqlTx = "INSERT INTO transaksi 
                   (kode_transaksi, user_id, jenis_transaksi, nama_penerima, total_harga, metode_pembayaran, status, catatan, created_at) 
                   VALUES 
@@ -64,7 +62,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
 
         $transaksi_id = mysqli_insert_id($conn);
 
-        // 2. Simpan detail + update stok
         foreach ($cart as $item) {
             $pid   = (int)$item['id'];
             $qty   = (int)$item['qty'];
@@ -83,13 +80,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         mysqli_commit($conn);
 
         echo json_encode([
-            'success' => true,
-            'message' => 'Transaksi berhasil',
-            'kode'    => $kode,
-            'total'   => $total,
-            'bayar'   => $bayar,
-            'kembali' => $metode === 'tunai' ? max(0, $bayar - $total) : 0,
-            'id'      => $transaksi_id
+            'success'    => true,
+            'message'    => 'Transaksi berhasil',
+            'kode'       => $kode,
+            'total'      => $total,
+            'subtotal'   => $subtotal,
+            'ppn'        => $ppn,
+            'bayar'      => $bayar,
+            'kembali'    => $metode === 'tunai' ? max(0, $bayar - $total) : 0,
+            'metode'     => $metode,
+            'nama'       => $nama,
+            'catatan'    => $catatan,
+            'id'         => $transaksi_id,
+            'waktu'      => date('d/m/Y H:i'),
+            'kasir'      => $admin_nama,
+            'items'      => $cart,
         ]);
         exit;
 
@@ -101,7 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
 }
 
 // =========================================================
-// AMBIL DAFTAR PRODUK UNTUK KATALOG POS
+// AMBIL DATA PRODUK & KATEGORI
 // =========================================================
 $produkList = [];
 $qProduk = mysqli_query($conn, "
@@ -139,6 +144,26 @@ function gambarPOS($nama) {
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 9999px; }
+
+        /* ========================================================= */
+        /* PRINT THERMAL 58mm — hanya struk yang ke-print            */
+        /* ========================================================= */
+        @media print {
+            body * { visibility: hidden !important; }
+            #areaCetak, #areaCetak * { visibility: visible !important; }
+            #areaCetak {
+                position: absolute !important;
+                left: 0; top: 0;
+                width: 58mm !important;
+                padding: 2mm !important;
+                margin: 0 !important;
+                background: #fff !important;
+                font-family: 'Courier New', monospace !important;
+                font-size: 10px !important;
+                color: #000 !important;
+            }
+            @page { size: 58mm auto; margin: 0; }
+        }
     </style>
 </head>
 <body class="antialiased h-screen flex flex-col overflow-hidden">
@@ -238,18 +263,19 @@ function gambarPOS($nama) {
         <!-- KANAN: KERANJANG -->
         <section class="hidden lg:flex w-[40%] flex-col bg-white border-l border-stone-200 shadow-xl z-10 overflow-hidden">
 
-            <!-- Info Pelanggan -->
-            <div class="p-4 border-b border-stone-200/80 bg-stone-50/60 flex items-center justify-between shrink-0">
-                <div class="flex items-center gap-3">
-                    <div class="p-2 bg-stone-200/70 text-stone-600 rounded-xl">
-                        <i data-lucide="user" class="w-4 h-4"></i>
+            <!-- Info Pelanggan + INPUT NAMA -->
+            <div class="p-4 border-b border-stone-200/80 bg-stone-50/60 shrink-0">
+                <div class="flex items-center justify-between mb-2.5">
+                    <div class="flex items-center gap-2.5">
+                        <div class="p-2 bg-stone-200/70 text-stone-600 rounded-xl">
+                            <i data-lucide="user" class="w-4 h-4"></i>
+                        </div>
+                        <p class="text-[10px] text-stone-400 font-bold uppercase tracking-wider">Pelanggan</p>
                     </div>
-                    <div>
-                        <p class="text-[10px] text-stone-400 font-bold uppercase">Pelanggan</p>
-                        <p class="text-sm font-semibold text-stone-800">Walk-in Customer</p>
-                    </div>
+                    <span class="text-[10px] font-bold text-[#2E7D32] bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-md">POS</span>
                 </div>
-                <span class="text-[10px] font-bold text-[#2E7D32] bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-md">POS</span>
+                <input type="text" id="inNamaPelanggan" value="Pelanggan Walk-in" placeholder="Nama pelanggan..." class="w-full px-3.5 py-2 text-sm bg-white border border-stone-200 rounded-xl focus:outline-none focus:border-[#2E7D32] font-semibold text-stone-800">
+                <p class="text-[10px] text-stone-400 mt-1.5">Kosongkan untuk pelanggan walk-in.</p>
             </div>
 
             <!-- Cart Header -->
@@ -342,10 +368,14 @@ function gambarPOS($nama) {
                 </button>
             </div>
 
-            <div id="strukContent" class="p-6 overflow-y-auto custom-scrollbar text-sm font-mono"></div>
+            <div class="p-6 overflow-y-auto custom-scrollbar">
+                <div id="areaCetak">
+                    <!-- Struk akan diisi oleh JS -->
+                </div>
+            </div>
 
             <div class="p-4 border-t border-stone-100 flex gap-2">
-                <button onclick="window.print()" class="flex-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold py-2.5 rounded-xl text-xs inline-flex items-center justify-center gap-2">
+                <button onclick="cetakStruk()" class="flex-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold py-2.5 rounded-xl text-xs inline-flex items-center justify-center gap-2">
                     <i data-lucide="printer" class="w-4 h-4"></i> Cetak
                 </button>
                 <button onclick="closeStruk()" class="flex-1 bg-[#2E7D32] hover:bg-emerald-800 text-white font-bold py-2.5 rounded-xl text-xs">
@@ -422,14 +452,20 @@ function gambarPOS($nama) {
             renderCart();
         }
 
+        // ========================================================
+        // KONFIRMASI HAPUS ITEM (perbaikan #2)
+        // ========================================================
         function hapusItem(id) {
+            const item = cart.find(i => i.id === id);
+            if (!item) return;
+            if (!confirm(`Hapus "${item.nama}" dari keranjang?`)) return;
             cart = cart.filter(i => i.id !== id);
             renderCart();
         }
 
         function kosongkanKeranjang() {
             if (cart.length === 0) return;
-            if (!confirm('Kosongkan keranjang?')) return;
+            if (!confirm('Kosongkan seluruh keranjang?')) return;
             cart = [];
             renderCart();
         }
@@ -440,6 +476,7 @@ function gambarPOS($nama) {
                 renderCart();
                 document.getElementById('inputBayar').value = '';
                 document.getElementById('kembalianText').innerText = 'Rp 0';
+                document.getElementById('inNamaPelanggan').value = 'Pelanggan Walk-in';
             }
         }
 
@@ -481,7 +518,6 @@ function gambarPOS($nama) {
                 lucide.createIcons();
             }
 
-            // Hitung
             let subtotal = 0, totalQty = 0;
             cart.forEach(i => { subtotal += i.harga * i.qty; totalQty += i.qty; });
             const ppn = subtotal * 0.11;
@@ -531,6 +567,7 @@ function gambarPOS($nama) {
             const subtotal = cart.reduce((s, i) => s + i.harga * i.qty, 0);
             const total = subtotal * 1.11;
             const bayar = parseFloat(document.getElementById('inputBayar').value) || 0;
+            const namaPelanggan = document.getElementById('inNamaPelanggan').value.trim() || 'Pelanggan Walk-in';
 
             if (currentMetode === 'tunai' && bayar < total) {
                 alert('Jumlah bayar kurang dari total.');
@@ -546,7 +583,7 @@ function gambarPOS($nama) {
             formData.append('action', 'checkout_pos');
             formData.append('cart', JSON.stringify(cart));
             formData.append('metode', currentMetode);
-            formData.append('nama_pelanggan', 'Pelanggan Walk-in');
+            formData.append('nama_pelanggan', namaPelanggan);
             formData.append('jumlah_bayar', bayar);
 
             fetch('pos.php', { method: 'POST', body: formData })
@@ -572,49 +609,72 @@ function gambarPOS($nama) {
                 });
         }
 
+        // ========================================================
+        // TAMPILKAN STRUK (format thermal 58mm)
+        // ========================================================
         function tampilkanStruk(data) {
-            const subtotal = cart.reduce((s, i) => s + i.harga * i.qty, 0);
             let itemsHtml = '';
-            cart.forEach(i => {
-                itemsHtml += `<div class="flex justify-between text-[11px] py-0.5">
-                    <span>${i.nama} x${i.qty}</span>
-                    <span>${formatRp(i.harga * i.qty)}</span>
-                </div>`;
+            data.items.forEach(i => {
+                itemsHtml += `
+                    <div style="margin-bottom:4px;">
+                        <div style="display:flex;justify-content:space-between;">
+                            <span>${i.nama}</span>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;font-size:10px;">
+                            <span>&nbsp;&nbsp;${i.qty} x ${formatRp(i.harga)}</span>
+                            <span>${formatRp(i.harga * i.qty)}</span>
+                        </div>
+                    </div>`;
             });
 
-            const now = new Date();
-            const tgl = now.toLocaleString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+            const metodeLabel = {
+                'tunai': 'Tunai',
+                'qris': 'QRIS',
+                'debit': 'Debit',
+                'transfer': 'Transfer',
+                'ewallet': 'E-Wallet',
+                'cod': 'COD'
+            }[data.metode] || data.metode;
 
-            document.getElementById('strukContent').innerHTML = `
-                <div class="text-center border-b border-dashed border-stone-300 pb-3 mb-3">
-                    <p class="font-bold text-base text-stone-800">PlantHub</p>
-                    <p class="text-[10px] text-stone-500">Sistem Manajemen Toko Tanaman</p>
-                </div>
-                <div class="text-[10px] text-stone-600 mb-3 space-y-0.5">
-                    <div class="flex justify-between"><span>Kode</span><span class="font-bold">${data.kode}</span></div>
-                    <div class="flex justify-between"><span>Tanggal</span><span>${tgl}</span></div>
-                    <div class="flex justify-between"><span>Kasir</span><span><?= htmlspecialchars($admin_nama) ?></span></div>
-                </div>
-                <div class="border-t border-b border-dashed border-stone-300 py-2 mb-3">
-                    ${itemsHtml}
-                </div>
-                <div class="text-[11px] space-y-1 mb-3">
-                    <div class="flex justify-between"><span>Subtotal</span><span>${formatRp(subtotal)}</span></div>
-                    <div class="flex justify-between"><span>PPN 11%</span><span>${formatRp(subtotal * 0.11)}</span></div>
-                    <div class="flex justify-between font-bold text-base border-t border-stone-300 pt-2 mt-2"><span>TOTAL</span><span>${formatRp(data.total)}</span></div>
-                </div>
-                <div class="text-[11px] space-y-1 border-t border-dashed border-stone-300 pt-2">
-                    <div class="flex justify-between"><span>Bayar</span><span>${formatRp(data.bayar)}</span></div>
-                    <div class="flex justify-between font-bold"><span>Kembali</span><span>${formatRp(data.kembali)}</span></div>
-                </div>
-                <div class="text-center text-[10px] text-stone-500 mt-4 pt-3 border-t border-dashed border-stone-300">
-                    <p>Terima kasih!</p>
+            document.getElementById('areaCetak').innerHTML = `
+                <div style="font-family:'Courier New',monospace;font-size:11px;color:#000;line-height:1.4;">
+                    <div style="text-align:center;border-bottom:1px dashed #000;padding-bottom:8px;margin-bottom:8px;">
+                        <div style="font-weight:bold;font-size:14px;">PLANTHUB</div>
+                        <div style="font-size:10px;">Sistem Manajemen Toko Tanaman</div>
+                    </div>
+                    <div style="font-size:10px;margin-bottom:8px;">
+                        <div style="display:flex;justify-content:space-between;"><span>Kode</span><span>${data.kode}</span></div>
+                        <div style="display:flex;justify-content:space-between;"><span>Tanggal</span><span>${data.waktu}</span></div>
+                        <div style="display:flex;justify-content:space-between;"><span>Kasir</span><span>${data.kasir}</span></div>
+                        <div style="display:flex;justify-content:space-between;"><span>Pelanggan</span><span>${data.nama}</span></div>
+                    </div>
+                    <div style="border-top:1px dashed #000;border-bottom:1px dashed #000;padding:6px 0;margin-bottom:6px;">
+                        ${itemsHtml}
+                    </div>
+                    <div style="font-size:10px;">
+                        <div style="display:flex;justify-content:space-between;"><span>Subtotal</span><span>${formatRp(data.subtotal)}</span></div>
+                        <div style="display:flex;justify-content:space-between;"><span>PPN 11%</span><span>${formatRp(data.ppn)}</span></div>
+                        <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:12px;border-top:1px solid #000;padding-top:4px;margin-top:4px;"><span>TOTAL</span><span>${formatRp(data.total)}</span></div>
+                    </div>
+                    <div style="font-size:10px;border-top:1px dashed #000;margin-top:6px;padding-top:6px;">
+                        <div style="display:flex;justify-content:space-between;"><span>Metode</span><span>${metodeLabel}</span></div>
+                        <div style="display:flex;justify-content:space-between;"><span>Bayar</span><span>${formatRp(data.bayar)}</span></div>
+                        <div style="display:flex;justify-content:space-between;font-weight:bold;"><span>Kembali</span><span>${formatRp(data.kembali)}</span></div>
+                    </div>
+                    <div style="text-align:center;font-size:10px;margin-top:12px;padding-top:8px;border-top:1px dashed #000;">
+                        <div>Terima kasih telah berbelanja!</div>
+                        <div style="margin-top:2px;">~ PlantHub ~</div>
+                    </div>
                 </div>
             `;
 
             const modal = document.getElementById('modalStruk');
             modal.classList.remove('hidden');
             modal.classList.add('flex');
+        }
+
+        function cetakStruk() {
+            window.print();
         }
 
         function closeStruk() {
