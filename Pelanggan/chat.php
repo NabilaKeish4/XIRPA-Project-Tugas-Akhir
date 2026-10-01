@@ -2,6 +2,9 @@
 session_start();
 require_once '../Config/database.php';
 
+// =========================================================
+// PROTEKSI LOGIN
+// =========================================================
 if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'customer') {
     header("Location: ../Auth/login.php");
     exit;
@@ -14,26 +17,75 @@ $cart_count = isset($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
 $pesan_error  = '';
 $pesan_sukses = '';
 
+// =========================================================
+// FUNGSI UPLOAD ATTACHMENT
+// =========================================================
+if (!function_exists('uploadChatAttachment')) {
+    function uploadChatAttachment($file, &$errors = []) {
+        if (!isset($file) || $file['error'] === UPLOAD_ERR_NO_FILE) return null;
+
+        if ($file['error'] !== UPLOAD_ERR_OK) {
+            $errors[] = "Gagal upload gambar (kode: {$file['error']}).";
+            return null;
+        }
+
+        $allowed = ['jpg', 'jpeg', 'png', 'webp', 'gif'];
+        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+
+        if (!in_array($ext, $allowed)) {
+            $errors[] = "Format gambar tidak didukung. Gunakan JPG, PNG, WEBP, atau GIF.";
+            return null;
+        }
+        if ($file['size'] > 3 * 1024 * 1024) {
+            $errors[] = "Ukuran gambar melebihi 3MB.";
+            return null;
+        }
+
+        $dir = '../uploads/chats/';
+        if (!is_dir($dir)) mkdir($dir, 0755, true);
+
+        $newName = 'chat_' . time() . '_' . rand(1000, 9999) . '.' . $ext;
+        if (move_uploaded_file($file['tmp_name'], $dir . $newName)) {
+            return $newName;
+        }
+        $errors[] = "Gagal memindahkan file ke folder uploads.";
+        return null;
+    }
+}
+
+// =========================================================
+// HANDLE POST
+// =========================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
+    // ----- KIRIM PESAN -----
     if ($action === 'kirim') {
         $msg = trim($_POST['message'] ?? '');
-        if ($msg !== '') {
+
+        $uploadErrors = [];
+        $attachment = uploadChatAttachment($_FILES['attachment'] ?? null, $uploadErrors);
+
+        if ($msg === '' && !$attachment) {
+            $pesan_error = "Pesan tidak boleh kosong.";
+        } elseif (!empty($uploadErrors)) {
+            $pesan_error = implode(' ', $uploadErrors);
+        } else {
             $clean = mysqli_real_escape_string($conn, $msg);
-            $sql = "INSERT INTO chats (user_id, sender_type, message, is_read, created_at) 
-                    VALUES ($user_id, 'customer', '$clean', 0, NOW())";
+            $attachEsc = $attachment ? "'" . mysqli_real_escape_string($conn, $attachment) . "'" : 'NULL';
+
+            $sql = "INSERT INTO chats (user_id, sender_type, message, attachment, is_read, created_at) 
+                    VALUES ($user_id, 'customer', '$clean', $attachEsc, 0, NOW())";
             if (mysqli_query($conn, $sql)) {
                 header("Location: chat.php?status=sent");
                 exit;
             } else {
                 $pesan_error = "Gagal mengirim: " . mysqli_error($conn);
             }
-        } else {
-            $pesan_error = "Pesan tidak boleh kosong.";
         }
     }
 
+    // ----- EDIT PESAN -----
     if ($action === 'edit') {
         $id     = (int)($_POST['id'] ?? 0);
         $newMsg = trim($_POST['new_message'] ?? '');
@@ -51,9 +103,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    // ----- HAPUS PESAN -----
     if ($action === 'hapus') {
         $id = (int)($_POST['id'] ?? 0);
         if ($id > 0) {
+            $qOld = mysqli_query($conn, "SELECT attachment FROM chats WHERE id = $id AND user_id = $user_id AND sender_type = 'customer' LIMIT 1");
+            if ($qOld && $r = mysqli_fetch_assoc($qOld)) {
+                if (!empty($r['attachment']) && file_exists('../uploads/chats/' . $r['attachment'])) {
+                    @unlink('../uploads/chats/' . $r['attachment']);
+                }
+            }
+
             $sql = "UPDATE chats SET is_deleted = 1 
                     WHERE id = $id AND user_id = $user_id AND sender_type = 'customer'";
             if (mysqli_query($conn, $sql)) {
@@ -72,6 +132,9 @@ if (isset($_GET['status'])) {
     if ($_GET['status'] === 'deleted') $pesan_sukses = "Pesan berhasil dihapus.";
 }
 
+// =========================================================
+// AMBIL PESAN
+// =========================================================
 $chatMessages = [];
 $qChat = mysqli_query($conn, "
     SELECT * FROM chats 
@@ -80,10 +143,21 @@ $qChat = mysqli_query($conn, "
 ");
 if ($qChat) while ($row = mysqli_fetch_assoc($qChat)) $chatMessages[] = $row;
 
-// Tandai pesan dari admin sudah dibaca oleh pelanggan (biar unread count di admin reset)
+// Tandai pesan admin sudah dibaca
 mysqli_query($conn, "UPDATE chats SET is_read = 1 WHERE user_id = $user_id AND sender_type = 'admin' AND is_read = 0");
 
 $editId = (int)($_GET['edit'] ?? 0);
+
+// =========================================================
+// QUICK REPLY
+// =========================================================
+$quickReplies = [
+    ['icon' => 'leaf',         'text' => 'Tanaman saya kok daunnya menguning ya?'],
+    ['icon' => 'droplet',      'text' => 'Berapa kali sehari sebaiknya disiram?'],
+    ['icon' => 'sun',          'text' => 'Apakah butuh sinar matahari langsung?'],
+    ['icon' => 'package',      'text' => 'Apakah bisa dikirim ke luar kota?'],
+    ['icon' => 'help-circle',  'text' => 'Cara perawatan yang benar bagaimana ya?'],
+];
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -105,6 +179,18 @@ $editId = (int)($_GET['edit'] ?? 0);
             50% { opacity: 0.4; }
         }
         .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+        .lightbox {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.9);
+            z-index: 100;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+        .lightbox.active { display: flex; }
+        .lightbox img { max-width: 100%; max-height: 90vh; border-radius: 0.5rem; }
     </style>
 </head>
 <body class="antialiased min-h-screen flex flex-col">
@@ -125,7 +211,6 @@ $editId = (int)($_GET['edit'] ?? 0);
 
             <div class="hidden md:flex flex-1 max-w-md items-center gap-3">
                 <span class="text-xs text-stone-500">Konsultasi dengan admin PlantHub</span>
-                <!-- Indikator Auto-refresh -->
                 <button onclick="toggleAutoRefresh()" id="btnAutoRefresh" class="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border border-emerald-200 bg-emerald-50 text-[#2E7D32] hover:bg-emerald-100 transition">
                     <span class="pulse-dot w-1.5 h-1.5 rounded-full bg-[#2E7D32]"></span>
                     <span id="autoRefreshLabel">Auto 10s</span>
@@ -195,9 +280,8 @@ $editId = (int)($_GET['edit'] ?? 0);
                 <div class="flex items-center justify-between gap-3">
                     <div>
                         <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Konsultasi</h1>
-                        <p class="text-sm text-stone-500 mt-0.5">Tanyakan masalah perawatan tanaman atau produk ke admin.</p>
+                        <p class="text-sm text-stone-500 mt-0.5">Tanyakan masalah perawatan atau kirim foto kondisi tanaman.</p>
                     </div>
-                    <!-- Toggle auto-refresh versi mobile -->
                     <button onclick="toggleAutoRefresh()" id="btnAutoRefreshMobile" class="md:hidden inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border border-emerald-200 bg-emerald-50 text-[#2E7D32]">
                         <span class="pulse-dot w-1.5 h-1.5 rounded-full bg-[#2E7D32]"></span>
                         <span>Auto 10s</span>
@@ -247,6 +331,7 @@ $editId = (int)($_GET['edit'] ?? 0);
                                 $isAdmin = ($msg['sender_type'] === 'admin');
                                 $msgId   = (int)$msg['id'];
                                 $isEdit  = ($editId === $msgId && !$isAdmin);
+                                $hasAttachment = !empty($msg['attachment']) && file_exists('../uploads/chats/' . $msg['attachment']);
                             ?>
                                 <div class="flex <?= $isAdmin ? 'justify-start' : 'justify-end' ?>" id="msg-<?= $msgId ?>">
                                     <div class="max-w-xs sm:max-w-md md:max-w-lg">
@@ -264,7 +349,20 @@ $editId = (int)($_GET['edit'] ?? 0);
                                             <div class="p-3 rounded-2xl text-xs relative <?= $isAdmin 
                                                 ? 'bg-white text-stone-800 rounded-tl-none border border-stone-200/80 shadow-sm' 
                                                 : 'bg-[#2E7D32] text-white rounded-tr-none shadow-sm' ?>">
-                                                <p class="leading-relaxed whitespace-pre-wrap"><?= htmlspecialchars($msg['message']) ?></p>
+
+                                                <?php if ($hasAttachment): ?>
+                                                    <div class="mb-2 rounded-lg overflow-hidden">
+                                                        <img src="../uploads/chats/<?= htmlspecialchars($msg['attachment']) ?>" 
+                                                             alt="Attachment" 
+                                                             class="max-w-full max-h-64 rounded-lg cursor-pointer hover:opacity-90 transition"
+                                                             onclick="openLightbox('../uploads/chats/<?= htmlspecialchars($msg['attachment']) ?>')">
+                                                    </div>
+                                                <?php endif; ?>
+
+                                                <?php if (!empty($msg['message'])): ?>
+                                                    <p class="leading-relaxed whitespace-pre-wrap"><?= htmlspecialchars($msg['message']) ?></p>
+                                                <?php endif; ?>
+
                                                 <div class="flex items-center justify-end gap-2 mt-1.5">
                                                     <?php if (!empty($msg['edited_at'])): ?>
                                                         <span class="text-[9px] italic <?= $isAdmin ? 'text-stone-400' : 'text-emerald-100' ?>">(diedit)</span>
@@ -277,9 +375,11 @@ $editId = (int)($_GET['edit'] ?? 0);
 
                                             <?php if (!$isAdmin): ?>
                                                 <div class="flex items-center justify-end gap-1 mt-1.5">
-                                                    <a href="chat.php?edit=<?= $msgId ?>" class="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-md border border-stone-200">
-                                                        <i data-lucide="edit-3" class="w-3 h-3"></i> Edit
-                                                    </a>
+                                                    <?php if (!$hasAttachment): ?>
+                                                        <a href="chat.php?edit=<?= $msgId ?>" class="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-md border border-stone-200">
+                                                            <i data-lucide="edit-3" class="w-3 h-3"></i> Edit
+                                                        </a>
+                                                    <?php endif; ?>
                                                     <form method="POST" action="chat.php" onsubmit="return confirm('Hapus pesan ini?');" class="inline">
                                                         <input type="hidden" name="action" value="hapus">
                                                         <input type="hidden" name="id" value="<?= $msgId ?>">
@@ -297,14 +397,45 @@ $editId = (int)($_GET['edit'] ?? 0);
 
                     </div>
 
-                    <form method="POST" action="chat.php" class="p-3 bg-white border-t border-stone-100 flex gap-2" autocomplete="off">
+                    <div class="px-3 pt-2 pb-1 bg-white border-t border-stone-100 flex items-center gap-2 overflow-x-auto shrink-0">
+                        <span class="text-[10px] font-bold text-stone-400 uppercase tracking-wider whitespace-nowrap shrink-0">Quick:</span>
+                        <?php foreach ($quickReplies as $qr): ?>
+                            <button type="button" onclick="pakaiQuickReply('<?= htmlspecialchars(addslashes($qr['text'])) ?>')" 
+                                    class="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-medium text-stone-600 bg-stone-100 hover:bg-emerald-50 hover:text-[#2E7D32] rounded-lg whitespace-nowrap transition shrink-0">
+                                <i data-lucide="<?= $qr['icon'] ?>" class="w-3 h-3"></i>
+                                <?= htmlspecialchars($qr['text']) ?>
+                            </button>
+                        <?php endforeach; ?>
+                    </div>
+
+                    <form method="POST" action="chat.php" enctype="multipart/form-data" class="p-3 bg-white border-t border-stone-100 flex flex-col gap-2 shrink-0" autocomplete="off" id="formChat">
                         <input type="hidden" name="action" value="kirim">
-                        <input type="text" name="message" id="inPesan" placeholder="Ketik pesan..." required 
-                               class="flex-1 px-4 py-2.5 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] transition">
-                        <button type="submit" class="bg-[#2E7D32] hover:bg-emerald-800 text-white px-5 py-2.5 rounded-xl text-xs font-bold transition inline-flex items-center gap-2">
-                            <span>Kirim</span>
-                            <i data-lucide="send" class="w-3.5 h-3.5"></i>
-                        </button>
+
+                        <div id="previewWrap" class="hidden">
+                            <div class="relative inline-block">
+                                <img id="previewImg" src="" class="h-20 rounded-lg border-2 border-[#2E7D32] object-cover">
+                                <button type="button" onclick="batalPilihGambar()" class="absolute -top-2 -right-2 w-6 h-6 bg-rose-600 hover:bg-rose-700 text-white rounded-full flex items-center justify-center shadow-md transition">
+                                    <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                                </button>
+                            </div>
+                            <p id="previewInfo" class="text-[10px] text-stone-500 mt-1"></p>
+                        </div>
+
+                        <div class="flex gap-2">
+                            <label class="inline-flex items-center justify-center bg-stone-100 hover:bg-stone-200 text-stone-600 rounded-xl w-11 h-11 cursor-pointer transition shrink-0" title="Lampirkan gambar">
+                                <i data-lucide="image-plus" class="w-5 h-5"></i>
+                                <input type="file" name="attachment" id="inAttachment" accept="image/jpeg,image/png,image/webp,image/gif" class="hidden" onchange="previewGambar(event)">
+                            </label>
+
+                            <input type="text" name="message" id="inPesan" placeholder="Ketik pesan atau lampirkan gambar..." 
+                                   class="flex-1 px-4 py-2.5 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] transition">
+
+                            <button type="submit" class="bg-[#2E7D32] hover:bg-emerald-800 text-white px-5 py-2.5 rounded-xl text-xs font-bold transition inline-flex items-center gap-2 shrink-0">
+                                <span>Kirim</span>
+                                <i data-lucide="send" class="w-3.5 h-3.5"></i>
+                            </button>
+                        </div>
+                        <p class="text-[10px] text-stone-400">Maks. 3MB per gambar. Format: JPG, PNG, WEBP, GIF.</p>
                     </form>
 
                 </div>
@@ -313,13 +444,14 @@ $editId = (int)($_GET['edit'] ?? 0);
         </main>
     </div>
 
+    <div id="lightbox" class="lightbox" onclick="closeLightbox()">
+        <img id="lightboxImg" src="" alt="Preview">
+    </div>
+
     <script>
         lucide.createIcons();
 
-        // ========================================================
-        // AUTO-REFRESH 10 DETIK (sisi pelanggan)
-        // ========================================================
-        const REFRESH_INTERVAL = 10000; // 10 detik
+        const REFRESH_INTERVAL = 10000;
         let autoRefreshTimer = null;
         let isAutoRefreshOn = true;
         const editIdAktif = <?= (int)$editId ?>;
@@ -327,12 +459,9 @@ $editId = (int)($_GET['edit'] ?? 0);
         function startAutoRefresh() {
             if (autoRefreshTimer) clearInterval(autoRefreshTimer);
             autoRefreshTimer = setInterval(() => {
-                // Skip kalau user sedang edit pesan
                 if (editIdAktif > 0) return;
-
-                // Skip kalau user sedang mengetik
                 if (document.activeElement && document.activeElement.id === 'inPesan') return;
-
+                if (document.getElementById('previewWrap')?.classList.contains('hidden') === false) return;
                 refreshChat();
             }, REFRESH_INTERVAL);
         }
@@ -403,14 +532,11 @@ $editId = (int)($_GET['edit'] ?? 0);
                 .catch(err => console.warn('Auto-refresh gagal:', err));
         }
 
-        // Auto scroll ke bawah saat pertama load
         const chatBox = document.getElementById('chat-box');
         if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
 
-        // Mulai auto-refresh
         startAutoRefresh();
 
-        // Pause saat tab tidak aktif
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
                 stopAutoRefresh();
@@ -420,7 +546,49 @@ $editId = (int)($_GET['edit'] ?? 0);
             }
         });
 
-        // Auto-hide alert sukses
+        function previewGambar(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            if (file.size > 3 * 1024 * 1024) {
+                alert('Ukuran file melebihi 3MB.');
+                event.target.value = '';
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                document.getElementById('previewImg').src = e.target.result;
+                document.getElementById('previewInfo').innerText = file.name + ' (' + (file.size / 1024).toFixed(0) + ' KB)';
+                document.getElementById('previewWrap').classList.remove('hidden');
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function batalPilihGambar() {
+            document.getElementById('inAttachment').value = '';
+            document.getElementById('previewWrap').classList.add('hidden');
+        }
+
+        function pakaiQuickReply(text) {
+            const input = document.getElementById('inPesan');
+            input.value = text;
+            input.focus();
+        }
+
+        function openLightbox(src) {
+            document.getElementById('lightboxImg').src = src;
+            document.getElementById('lightbox').classList.add('active');
+        }
+
+        function closeLightbox() {
+            document.getElementById('lightbox').classList.remove('active');
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeLightbox();
+        });
+
         const alertSukses = document.getElementById('alertSukses');
         if (alertSukses) {
             setTimeout(() => {
@@ -428,6 +596,15 @@ $editId = (int)($_GET['edit'] ?? 0);
                 setTimeout(() => alertSukses.remove(), 500);
             }, 4000);
         }
+
+        document.getElementById('formChat').addEventListener('submit', (e) => {
+            const msg = document.getElementById('inPesan').value.trim();
+            const file = document.getElementById('inAttachment').files.length;
+            if (!msg && !file) {
+                e.preventDefault();
+                alert('Ketik pesan atau lampirkan gambar terlebih dahulu.');
+            }
+        });
 
         function toggleMobileSidebar() {
             const s = document.getElementById('sidebar');

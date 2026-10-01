@@ -21,6 +21,7 @@ $qCust = mysqli_query($conn, "
         u.email, 
         u.username,
         (SELECT message FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0 ORDER BY c.created_at DESC LIMIT 1) AS last_message,
+        (SELECT attachment FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0 ORDER BY c.created_at DESC LIMIT 1) AS last_attachment,
         (SELECT created_at FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0 ORDER BY c.created_at DESC LIMIT 1) AS last_time,
         (SELECT COUNT(*) FROM chats c WHERE c.user_id = u.id AND c.sender_type = 'customer' AND c.is_read = 0 AND c.is_deleted = 0) AS unread_count,
         (SELECT COUNT(*) FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0) AS total_messages
@@ -93,6 +94,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selected_id > 0) {
     if ($action === 'hapus') {
         $id = (int)($_POST['id'] ?? 0);
         if ($id > 0) {
+            // Hapus attachment juga kalau ada
+            $qOld = mysqli_query($conn, "SELECT attachment FROM chats WHERE id = $id AND sender_type = 'admin' LIMIT 1");
+            if ($qOld && $r = mysqli_fetch_assoc($qOld)) {
+                if (!empty($r['attachment']) && file_exists('../uploads/chats/' . $r['attachment'])) {
+                    @unlink('../uploads/chats/' . $r['attachment']);
+                }
+            }
+
             $sql = "UPDATE chats SET is_deleted = 1 WHERE id = $id AND sender_type = 'admin'";
             if (mysqli_query($conn, $sql)) {
                 header("Location: chat.php?user_id=$selected_id&status=deleted");
@@ -142,12 +151,24 @@ $editId = (int)($_GET['edit'] ?? 0);
         .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 9999px; }
 
-        /* Indikator auto-refresh */
         @keyframes pulse-dot {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.4; }
         }
         .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
+
+        /* Lightbox */
+        .lightbox {
+            position: fixed; inset: 0;
+            background: rgba(0,0,0,0.9);
+            z-index: 100;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 1rem;
+        }
+        .lightbox.active { display: flex; }
+        .lightbox img { max-width: 100%; max-height: 90vh; border-radius: 0.5rem; }
     </style>
 </head>
 <body class="antialiased min-h-screen flex flex-col">
@@ -168,7 +189,6 @@ $editId = (int)($_GET['edit'] ?? 0);
 
             <div class="hidden md:flex flex-1 max-w-md items-center gap-3">
                 <span class="text-xs text-stone-500">Konsultasi Pelanggan</span>
-                <!-- Indikator Auto-refresh -->
                 <button onclick="toggleAutoRefresh()" id="btnAutoRefresh" class="inline-flex items-center gap-1.5 text-[10px] font-bold px-2.5 py-1 rounded-full border border-emerald-200 bg-emerald-50 text-[#2E7D32] hover:bg-emerald-100 transition">
                     <span class="pulse-dot w-1.5 h-1.5 rounded-full bg-[#2E7D32]"></span>
                     <span id="autoRefreshLabel">Auto 10s</span>
@@ -277,6 +297,7 @@ $editId = (int)($_GET['edit'] ?? 0);
                                     $isActive = ((int)$c['id'] === $selected_id);
                                     $initial = strtoupper(substr($c['nama_lengkap'] ?? 'P', 0, 1));
                                     $unread = (int)$c['unread_count'];
+                                    $hasLastAttach = !empty($c['last_attachment']);
                                 ?>
                                     <a href="chat.php?user_id=<?= (int)$c['id'] ?><?= $filterMode !== 'semua' ? '&filter=' . $filterMode : '' ?>"
                                        class="block p-4 transition-colors <?= $isActive ? 'bg-[#E8F5E9]' : 'hover:bg-stone-50' ?>">
@@ -293,8 +314,11 @@ $editId = (int)($_GET['edit'] ?? 0);
                                                         <span class="bg-[#D97706] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0"><?= $unread ?></span>
                                                     <?php endif; ?>
                                                 </div>
-                                                <p class="text-[11px] text-stone-500 truncate mt-0.5">
-                                                    <?= htmlspecialchars($c['last_message'] ?? 'Belum ada pesan') ?>
+                                                <p class="text-[11px] text-stone-500 truncate mt-0.5 flex items-center gap-1">
+                                                    <?php if ($hasLastAttach): ?>
+                                                        <i data-lucide="image" class="w-3 h-3 shrink-0 text-stone-400"></i>
+                                                    <?php endif; ?>
+                                                    <?= htmlspecialchars($c['last_message'] ?? ($hasLastAttach ? 'Mengirim gambar' : 'Belum ada pesan')) ?>
                                                 </p>
                                                 <p class="text-[10px] text-stone-400 mt-1">
                                                     <?= !empty($c['last_time']) ? date('d M H:i', strtotime($c['last_time'])) : '' ?>
@@ -350,6 +374,7 @@ $editId = (int)($_GET['edit'] ?? 0);
                                         $isAdmin = ($msg['sender_type'] === 'admin');
                                         $msgId   = (int)$msg['id'];
                                         $isEdit  = ($editId === $msgId && $isAdmin);
+                                        $hasAttachment = !empty($msg['attachment']) && file_exists('../uploads/chats/' . $msg['attachment']);
                                     ?>
                                         <div class="flex <?= $isAdmin ? 'justify-end' : 'justify-start' ?>" id="msg-<?= $msgId ?>">
                                             <div class="max-w-xs sm:max-w-md md:max-w-lg">
@@ -367,7 +392,21 @@ $editId = (int)($_GET['edit'] ?? 0);
                                                     <div class="p-3 rounded-2xl text-xs relative <?= $isAdmin 
                                                         ? 'bg-[#2E7D32] text-white rounded-tr-none shadow-sm' 
                                                         : 'bg-white text-stone-800 rounded-tl-none border border-stone-200/80 shadow-sm' ?>">
-                                                        <p class="leading-relaxed whitespace-pre-wrap"><?= htmlspecialchars($msg['message']) ?></p>
+
+                                                        <!-- GAMBAR ATTACHMENT -->
+                                                        <?php if ($hasAttachment): ?>
+                                                            <div class="mb-2 rounded-lg overflow-hidden">
+                                                                <img src="../uploads/chats/<?= htmlspecialchars($msg['attachment']) ?>" 
+                                                                     alt="Attachment" 
+                                                                     class="max-w-full max-h-64 rounded-lg cursor-pointer hover:opacity-90 transition"
+                                                                     onclick="openLightbox('../uploads/chats/<?= htmlspecialchars($msg['attachment']) ?>')">
+                                                            </div>
+                                                        <?php endif; ?>
+
+                                                        <?php if (!empty($msg['message'])): ?>
+                                                            <p class="leading-relaxed whitespace-pre-wrap"><?= htmlspecialchars($msg['message']) ?></p>
+                                                        <?php endif; ?>
+
                                                         <div class="flex items-center justify-end gap-2 mt-1.5">
                                                             <?php if (!empty($msg['edited_at'])): ?>
                                                                 <span class="text-[9px] italic <?= $isAdmin ? 'text-emerald-100' : 'text-stone-400' ?>">(diedit)</span>
@@ -379,9 +418,11 @@ $editId = (int)($_GET['edit'] ?? 0);
                                                     </div>
                                                     <?php if ($isAdmin): ?>
                                                         <div class="flex items-center justify-end gap-1 mt-1.5">
-                                                            <a href="chat.php?user_id=<?= $selected_id ?>&edit=<?= $msgId ?>" class="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-md border border-stone-200">
-                                                                <i data-lucide="edit-3" class="w-3 h-3"></i> Edit
-                                                            </a>
+                                                            <?php if (!$hasAttachment): ?>
+                                                                <a href="chat.php?user_id=<?= $selected_id ?>&edit=<?= $msgId ?>" class="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-stone-600 hover:text-stone-900 hover:bg-stone-100 rounded-md border border-stone-200">
+                                                                    <i data-lucide="edit-3" class="w-3 h-3"></i> Edit
+                                                                </a>
+                                                            <?php endif; ?>
                                                             <form method="POST" action="chat.php?user_id=<?= $selected_id ?>" onsubmit="return confirm('Hapus pesan ini?');" class="inline">
                                                                 <input type="hidden" name="action" value="hapus">
                                                                 <input type="hidden" name="id" value="<?= $msgId ?>">
@@ -418,13 +459,18 @@ $editId = (int)($_GET['edit'] ?? 0);
         </main>
     </div>
 
+    <!-- LIGHTBOX -->
+    <div id="lightbox" class="lightbox" onclick="closeLightbox()">
+        <img id="lightboxImg" src="" alt="Preview">
+    </div>
+
     <script>
         lucide.createIcons();
 
         // ========================================================
         // AUTO-REFRESH 10 DETIK
         // ========================================================
-        const REFRESH_INTERVAL = 10000; // 10 detik
+        const REFRESH_INTERVAL = 10000;
         let autoRefreshTimer = null;
         let isAutoRefreshOn = true;
         const currentUserId = <?= (int)$selected_id ?>;
@@ -434,12 +480,8 @@ $editId = (int)($_GET['edit'] ?? 0);
         function startAutoRefresh() {
             if (autoRefreshTimer) clearInterval(autoRefreshTimer);
             autoRefreshTimer = setInterval(() => {
-                // Skip kalau user sedang edit pesan
                 if (editIdAktif > 0) return;
-
-                // Skip kalau ada modal / dialog terbuka
                 if (document.querySelector('textarea:focus')) return;
-
                 refreshChat();
             }, REFRESH_INTERVAL);
         }
@@ -470,14 +512,12 @@ $editId = (int)($_GET['edit'] ?? 0);
         }
 
         function refreshChat() {
-            // Simpan posisi scroll
             const chatBox = document.getElementById('chat-box');
             if (!chatBox) return;
 
             const isAtBottom = (chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight) < 50;
             const oldScrollTop = chatBox.scrollTop;
 
-            // Fetch halaman ini sendiri dengan flag ajax=1
             const url = new URL(window.location.href);
             url.searchParams.set('ajax', '1');
 
@@ -500,10 +540,8 @@ $editId = (int)($_GET['edit'] ?? 0);
                         chatBox.innerHTML = newChatBox.innerHTML;
                     }
 
-                    // Re-render icons
                     lucide.createIcons();
 
-                    // Restore scroll: kalau user di bawah, scroll ke bawah. Kalau tidak, biarkan.
                     if (isAtBottom) {
                         chatBox.scrollTop = chatBox.scrollHeight;
                     } else {
@@ -513,14 +551,11 @@ $editId = (int)($_GET['edit'] ?? 0);
                 .catch(err => console.warn('Auto-refresh gagal:', err));
         }
 
-        // Auto scroll ke bawah saat pertama load
         const chatBox = document.getElementById('chat-box');
         if (chatBox) chatBox.scrollTop = chatBox.scrollHeight;
 
-        // Mulai auto-refresh
         startAutoRefresh();
 
-        // Pause saat tab tidak aktif (hemat resource)
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
                 stopAutoRefresh();
@@ -528,6 +563,22 @@ $editId = (int)($_GET['edit'] ?? 0);
                 startAutoRefresh();
                 refreshChat();
             }
+        });
+
+        // ========================================================
+        // LIGHTBOX
+        // ========================================================
+        function openLightbox(src) {
+            document.getElementById('lightboxImg').src = src;
+            document.getElementById('lightbox').classList.add('active');
+        }
+
+        function closeLightbox() {
+            document.getElementById('lightbox').classList.remove('active');
+        }
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeLightbox();
         });
 
         // ========================================================

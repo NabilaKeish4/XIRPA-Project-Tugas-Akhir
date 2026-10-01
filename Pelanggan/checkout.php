@@ -28,7 +28,7 @@ $cart_items   = $_SESSION['cart'];
 $items        = [];
 $subtotal     = 0;
 $cart_count   = 0;
-$stokBermasalah = []; // Item yang stoknya bermasalah
+$stokBermasalah = [];
 
 $ids = implode(',', array_map('intval', array_keys($cart_items)));
 if ($ids !== '') {
@@ -47,7 +47,6 @@ if ($ids !== '') {
             $stok  = (int)$row['stok'];
             $harga = (float)$row['harga_jual'];
 
-            // Validasi stok
             if ($stok <= 0) {
                 $stokBermasalah[] = ['nama' => $row['nama_tanaman'], 'masalah' => 'habis'];
                 continue;
@@ -59,7 +58,6 @@ if ($ids !== '') {
                     'qty'  => $qty,
                     'stok' => $stok,
                 ];
-                // Auto-adjust
                 $_SESSION['cart'][$pid] = $stok;
                 $qty = $stok;
             }
@@ -93,7 +91,7 @@ $ppn   = $subtotal * 0.11;
 $total = $subtotal + $ppn;
 
 // =========================================================
-// AMBIL PROFIL USER (untuk autofill form)
+// AMBIL PROFIL USER
 // =========================================================
 $profil = null;
 $qUser = mysqli_query($conn, "SELECT * FROM users WHERE id = $user_id LIMIT 1");
@@ -111,17 +109,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
     $metode        = mysqli_real_escape_string($conn, $_POST['metode_pembayaran'] ?? 'transfer');
     $catatan       = mysqli_real_escape_string($conn, trim($_POST['catatan'] ?? ''));
 
-    // Validasi
     if ($nama_penerima === '' || $telepon === '' || $alamat === '') {
         $error = "Semua field wajib diisi.";
     } elseif (strlen($telepon) < 8) {
         $error = "Nomor telepon minimal 8 digit.";
     } else {
-        // Validasi metode
         $metodeValid = ['tunai', 'qris', 'debit', 'transfer', 'ewallet', 'cod'];
         if (!in_array($metode, $metodeValid)) $metode = 'transfer';
 
-        // ----- VALIDASI STOK FINAL (jaga-jaga) -----
+        // Validasi stok final
         $stokError = false;
         foreach ($items as $it) {
             $pid = (int)$it['id'];
@@ -193,7 +189,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
 
             } catch (Exception $e) {
                 mysqli_rollback($conn);
-                $error = $e->getMessage();
+                $error = "DEBUG CHECKOUT: " . $e->getMessage() . " (line " . $e->getLine() . ")";
+                error_log("CHECKOUT GAGAL: " . $e->getMessage());
             }
         }
     }
@@ -287,7 +284,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
                 <p class="text-sm text-stone-500 mt-0.5">Lengkapi data pengiriman dan pilih metode pembayaran.</p>
             </div>
 
-            <!-- NOTIFIKASI STOK BERUBAH -->
             <?php if (!empty($stokBermasalah)): ?>
                 <div class="bg-amber-50 border-2 border-amber-200 rounded-2xl p-5">
                     <div class="flex items-start gap-3">
@@ -296,7 +292,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
                         </div>
                         <div class="flex-1">
                             <p class="text-sm font-bold text-amber-900">Stok produk berubah</p>
-                            <p class="text-xs text-amber-700 mt-0.5">Beberapa item disesuaikan karena stok berkurang. Mohon periksa kembali pesanan Anda.</p>
+                            <p class="text-xs text-amber-700 mt-0.5">Beberapa item disesuaikan karena stok berkurang. Mohon periksa kembali.</p>
                             <ul class="mt-3 space-y-1 text-xs text-amber-800">
                                 <?php foreach ($stokBermasalah as $sb): ?>
                                     <li>
@@ -337,7 +333,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
 
             <form id="formCheckout" method="POST" action="checkout.php" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-                <!-- FORM PENGIRIMAN -->
                 <div class="lg:col-span-2 bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-5">
                     <div class="border-b border-stone-100 pb-3">
                         <h2 class="text-sm font-bold text-stone-800 uppercase tracking-wider">Data Pengiriman</h2>
@@ -389,7 +384,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
                     </div>
                 </div>
 
-                <!-- RINGKASAN PESANAN -->
                 <div class="lg:col-span-1">
                     <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4 sticky top-24">
                         <h2 class="text-sm font-bold text-stone-800 uppercase tracking-wider border-b border-stone-100 pb-3">Ringkasan Pesanan</h2>
@@ -461,7 +455,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
 
             <div class="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
 
-                <!-- Info Pengiriman -->
                 <div class="bg-stone-50 border border-stone-100 rounded-xl p-4 space-y-2">
                     <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Dikirim ke</p>
                     <div>
@@ -471,19 +464,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
                     </div>
                 </div>
 
-                <!-- Info Metode -->
                 <div class="bg-stone-50 border border-stone-100 rounded-xl p-4 space-y-2">
                     <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Metode Pembayaran</p>
                     <p id="kfMetode" class="text-sm font-bold text-stone-800">-</p>
                 </div>
 
-                <!-- Catatan -->
                 <div id="kfCatatanWrap" class="bg-stone-50 border border-stone-100 rounded-xl p-4 space-y-2 hidden">
                     <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Catatan</p>
                     <p id="kfCatatan" class="text-xs text-stone-600 italic">-</p>
                 </div>
 
-                <!-- Preview Item -->
                 <div class="bg-stone-50 border border-stone-100 rounded-xl p-4 space-y-2">
                     <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Item (<?= $cart_count ?>)</p>
                     <div class="space-y-1.5 max-h-40 overflow-y-auto">
@@ -496,7 +486,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
                     </div>
                 </div>
 
-                <!-- Total -->
                 <div class="bg-[#E8F5E9] border-2 border-[#2E7D32]/30 rounded-xl p-4 space-y-1.5">
                     <div class="flex justify-between text-xs text-stone-600">
                         <span>Subtotal</span>
@@ -512,7 +501,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
                     </div>
                 </div>
 
-                <!-- Warning -->
                 <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
                     <i data-lucide="info" class="w-4 h-4 text-amber-600 shrink-0 mt-0.5"></i>
                     <p class="text-[11px] text-amber-800 leading-relaxed">
@@ -522,10 +510,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
             </div>
 
             <div class="p-4 border-t border-stone-100 flex gap-2">
-                <button onclick="tutupKonfirmasi()" class="flex-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold py-2.5 rounded-xl text-sm transition">
+                <button type="button" onclick="tutupKonfirmasi()" class="flex-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold py-2.5 rounded-xl text-sm transition">
                     Kembali
                 </button>
-                <button id="btnKonfirmasi" onclick="submitCheckout()" class="flex-1 bg-[#2E7D32] hover:bg-emerald-800 text-white font-bold py-2.5 rounded-xl text-sm inline-flex items-center justify-center gap-2 transition">
+                <button type="button" id="btnKonfirmasi" onclick="submitCheckout()" class="flex-1 bg-[#2E7D32] hover:bg-emerald-800 text-white font-bold py-2.5 rounded-xl text-sm inline-flex items-center justify-center gap-2 transition">
                     <i data-lucide="check" class="w-4 h-4"></i>
                     <span>Ya, Buat Pesanan</span>
                 </button>
@@ -546,7 +534,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
         }
 
         // ========================================================
-        // BUKA MODAL KONFIRMASI + VALIDASI FORM
+        // BUKA MODAL KONFIRMASI
         // ========================================================
         function bukaKonfirmasi() {
             const nama    = document.getElementById('inNama').value.trim();
@@ -555,18 +543,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
             const metode  = document.getElementById('inMetode').value;
             const catatan = document.getElementById('inCatatan').value.trim();
 
-            // Validasi
             if (!nama)    { alert('Nama penerima wajib diisi.'); document.getElementById('inNama').focus(); return; }
             if (!telepon) { alert('Nomor telepon wajib diisi.'); document.getElementById('inTelepon').focus(); return; }
             if (telepon.length < 8) { alert('Nomor telepon minimal 8 digit.'); document.getElementById('inTelepon').focus(); return; }
             if (!alamat)  { alert('Alamat pengiriman wajib diisi.'); document.getElementById('inAlamat').focus(); return; }
 
-            // Isi modal
             document.getElementById('kfNama').innerText    = nama;
             document.getElementById('kfTelepon').innerText = telepon;
             document.getElementById('kfAlamat').innerText  = alamat;
 
-            // Metode label
             const metodeLabel = {
                 'transfer': 'Transfer Bank',
                 'ewallet':  'E-Wallet (GoPay / OVO / Dana)',
@@ -575,7 +560,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
             }[metode] || metode;
             document.getElementById('kfMetode').innerText = metodeLabel;
 
-            // Catatan
             const catatanWrap = document.getElementById('kfCatatanWrap');
             if (catatan) {
                 document.getElementById('kfCatatan').innerText = catatan;
@@ -584,7 +568,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
                 catatanWrap.classList.add('hidden');
             }
 
-            // Buka modal
             const modal = document.getElementById('modalKonfirmasi');
             modal.classList.remove('hidden');
             modal.classList.add('flex');
@@ -597,16 +580,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
         }
 
         // ========================================================
-        // SUBMIT FORM SETELAH KONFIRMASI
+        // SUBMIT CHECKOUT — VERSI FIX
         // ========================================================
         function submitCheckout() {
-            const btn = document.getElementById('btnKonfirmasi');
-            btn.disabled = true;
-            btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin"></i> <span>Memproses...</span>';
-            lucide.createIcons();
+            // 1. Ambil form
+            const form = document.getElementById('formCheckout');
+            if (!form) {
+                alert('ERROR: Form checkout tidak ditemukan!');
+                return;
+            }
 
-            // Submit form
-            document.getElementById('formCheckout').submit();
+            // 2. Cari tombol dan nonaktifkan visual (TANPA disable)
+            const btn = document.getElementById('btnKonfirmasi');
+            if (btn) {
+                btn.innerText = 'Memproses...';
+                btn.style.pointerEvents = 'none';
+                btn.style.opacity = '0.7';
+            }
+
+            // 3. Set hidden input biar PHP tahu ini POST checkout
+            let hiddenInput = document.getElementById('hiddenProsesCheckout');
+            if (!hiddenInput) {
+                hiddenInput = document.createElement('input');
+                hiddenInput.type = 'hidden';
+                hiddenInput.name = 'proses_checkout';
+                hiddenInput.id = 'hiddenProsesCheckout';
+                hiddenInput.value = '1';
+                form.appendChild(hiddenInput);
+            }
+
+            // 4. Submit form — langsung!
+            form.submit();
         }
 
         // Tutup modal kalau klik overlay

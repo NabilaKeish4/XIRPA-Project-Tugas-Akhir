@@ -21,7 +21,7 @@ if ($id <= 0) {
 }
 
 // =========================================================
-// AMBIL TRANSAKSI (pastikan milik user ini)
+// AMBIL TRANSAKSI
 // =========================================================
 $qTx = mysqli_query($conn, "
     SELECT * FROM transaksi 
@@ -61,7 +61,7 @@ foreach ($details as $d) {
 $ppn    = $subtotal * 0.11;
 $total  = $subtotal + $ppn;
 
-// Info toko dari tabel pengaturan (kalau ada)
+// Info toko
 $toko = null;
 $qToko = mysqli_query($conn, "SELECT * FROM pengaturan WHERE id = 1 LIMIT 1");
 if ($qToko && mysqli_num_rows($qToko) > 0) $toko = mysqli_fetch_assoc($qToko);
@@ -74,15 +74,33 @@ $alamat_toko  = $toko['alamat_toko']  ?? '-';
 $catatan_nota = $toko['catatan_nota'] ?? 'Terima kasih telah berbelanja di PlantHub!';
 
 // Helper badge status
-function badgeStatusNote($status) {
-    switch ($status) {
-        case 'Diproses': return 'bg-amber-100 text-amber-700';
-        case 'Dikirim':  return 'bg-blue-100 text-blue-700';
-        case 'Selesai':  return 'bg-emerald-100 text-emerald-700';
-        case 'Batal':    return 'bg-rose-100 text-rose-700';
-        default:         return 'bg-stone-100 text-stone-600';
+if (!function_exists('badgeStatusNote')) {
+    function badgeStatusNote($status) {
+        switch ($status) {
+            case 'Diproses': return 'bg-amber-100 text-amber-700';
+            case 'Dikirim':  return 'bg-blue-100 text-blue-700';
+            case 'Selesai':  return 'bg-emerald-100 text-emerald-700';
+            case 'Batal':    return 'bg-rose-100 text-rose-700';
+            default:         return 'bg-stone-100 text-stone-600';
+        }
     }
 }
+
+// =========================================================
+// QR CODE + LINK SHARE
+// =========================================================
+$baseUrl = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http')
+         . '://' . ($_SERVER['HTTP_HOST'] ?? 'localhost')
+         . dirname($_SERVER['REQUEST_URI']);
+
+$noteUrl = $baseUrl . '/note.php?id=' . $id;
+
+// QR Code pakai qrserver.com (gratis, tanpa API key)
+$qrCodeUrl = 'https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=' . urlencode($noteUrl);
+
+$waText = urlencode("Nota PlantHub " . $tx['kode_transaksi'] . ":\n" . $noteUrl);
+
+$timestampCetak = date('d M Y, H:i:s') . ' WIB';
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -111,7 +129,7 @@ function badgeStatusNote($status) {
 </head>
 <body class="antialiased min-h-screen flex flex-col">
 
-    <!-- HEADER (hilang saat print) -->
+    <!-- HEADER -->
     <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm no-print">
         <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
             <div class="flex items-center gap-3">
@@ -150,7 +168,7 @@ function badgeStatusNote($status) {
     </header>
 
     <div class="flex flex-1">
-        <!-- SIDEBAR (hilang saat print) -->
+        <!-- SIDEBAR -->
         <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4 no-print">
             <div class="space-y-6">
                 <nav class="space-y-1">
@@ -190,7 +208,7 @@ function badgeStatusNote($status) {
         <!-- MAIN -->
         <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-4xl mx-auto w-full space-y-6">
 
-            <!-- Breadcrumb (hilang saat print) -->
+            <!-- Breadcrumb -->
             <nav class="no-print flex items-center gap-1.5 text-xs text-stone-500">
                 <a href="dashboard.php" class="hover:text-[#2E7D32]">Beranda</a>
                 <i data-lucide="chevron-right" class="w-3 h-3"></i>
@@ -199,20 +217,31 @@ function badgeStatusNote($status) {
                 <span class="text-stone-800 font-semibold truncate">Nota</span>
             </nav>
 
-            <!-- Aksi (hilang saat print) -->
+            <!-- Aksi Header -->
             <div class="no-print flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                 <div>
                     <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Nota Pesanan</h1>
                     <p class="text-sm text-stone-500 mt-0.5">Detail transaksi <?= htmlspecialchars($tx['kode_transaksi']) ?>.</p>
                 </div>
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
                     <a href="riwayat.php" class="inline-flex items-center gap-2 bg-white border border-stone-300 hover:bg-stone-50 px-3.5 py-2.5 rounded-xl text-xs font-semibold text-stone-700 transition">
                         <i data-lucide="arrow-left" class="w-4 h-4"></i>
                         Kembali
                     </a>
+
+                    <button onclick="copyLink()" class="inline-flex items-center gap-2 bg-white border border-stone-300 hover:bg-stone-50 px-3.5 py-2.5 rounded-xl text-xs font-semibold text-stone-700 transition">
+                        <i data-lucide="link" class="w-4 h-4"></i>
+                        <span id="copyLinkText">Copy Link</span>
+                    </button>
+
+                    <a href="https://wa.me/?text=<?= $waText ?>" target="_blank" class="inline-flex items-center gap-2 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 px-3.5 py-2.5 rounded-xl text-xs font-semibold text-emerald-700 transition">
+                        <i data-lucide="message-circle" class="w-4 h-4"></i>
+                        Share WA
+                    </a>
+
                     <button onclick="window.print()" class="inline-flex items-center gap-2 bg-[#2E7D32] hover:bg-emerald-800 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition shadow-sm">
-                        <i data-lucide="printer" class="w-4 h-4"></i>
-                        Cetak Nota
+                        <i data-lucide="download" class="w-4 h-4"></i>
+                        Download PDF
                     </button>
                 </div>
             </div>
@@ -239,12 +268,20 @@ function badgeStatusNote($status) {
                             </p>
                         </div>
 
-                        <div class="text-left sm:text-right">
-                            <p class="text-[10px] font-bold uppercase tracking-widest text-stone-400">Nota Transaksi</p>
-                            <p class="text-lg font-bold font-mono text-stone-800 mt-0.5"><?= htmlspecialchars($tx['kode_transaksi']) ?></p>
-                            <span class="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide mt-1 <?= badgeStatusNote($tx['status']) ?>">
-                                <?= htmlspecialchars($tx['status']) ?>
-                            </span>
+                        <div class="flex flex-col items-start sm:items-end gap-3">
+                            <div class="text-left sm:text-right">
+                                <p class="text-[10px] font-bold uppercase tracking-widest text-stone-400">Nota Transaksi</p>
+                                <p class="text-lg font-bold font-mono text-stone-800 mt-0.5"><?= htmlspecialchars($tx['kode_transaksi']) ?></p>
+                                <span class="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wide mt-1 <?= badgeStatusNote($tx['status']) ?>">
+                                    <?= htmlspecialchars($tx['status']) ?>
+                                </span>
+                            </div>
+
+                            <!-- QR Code (muncul di semua mode, termasuk print) -->
+                            <div class="flex flex-col items-center gap-1">
+                                <img src="<?= $qrCodeUrl ?>" alt="QR Nota" class="w-20 h-20 rounded-lg border border-stone-200 p-1 bg-white" crossorigin="anonymous">
+                                <p class="text-[8px] text-stone-400 text-center leading-tight">Scan untuk<br>verifikasi nota</p>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -327,16 +364,19 @@ function badgeStatusNote($status) {
                     </div>
                 </div>
 
-                <!-- Catatan Kaki -->
+                <!-- Catatan Kaki + Timestamp -->
                 <div class="p-6 sm:p-8 border-t border-stone-100 bg-stone-50/60">
                     <p class="text-[11px] text-stone-500 leading-relaxed text-center italic">
                         <?= nl2br(htmlspecialchars($catatan_nota)) ?>
+                    </p>
+                    <p class="text-[9px] text-stone-400 text-center mt-3">
+                        Dokumen ini dicetak dari sistem PlantHub pada <?= $timestampCetak ?>
                     </p>
                 </div>
 
             </div>
 
-            <!-- Tombol Bawah (hilang saat print) -->
+            <!-- Tombol Bawah -->
             <div class="no-print flex items-center justify-between gap-3 pt-2">
                 <a href="riwayat.php" class="inline-flex items-center gap-2 text-xs font-semibold text-stone-500 hover:text-stone-800">
                     <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i>
@@ -353,6 +393,7 @@ function badgeStatusNote($status) {
 
     <script>
         lucide.createIcons();
+
         function toggleMobileSidebar() {
             const s = document.getElementById('sidebar');
             s?.classList.toggle('hidden');
@@ -360,6 +401,43 @@ function badgeStatusNote($status) {
             s?.classList.toggle('inset-y-0');
             s?.classList.toggle('left-0');
             s?.classList.toggle('z-40');
+        }
+
+        // ========================================================
+        // COPY LINK NOTA
+        // ========================================================
+        function copyLink() {
+            const link = '<?= $noteUrl ?>';
+            const btnText = document.getElementById('copyLinkText');
+
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(link).then(() => {
+                    btnText.innerText = 'Tersalin!';
+                    setTimeout(() => { btnText.innerText = 'Copy Link'; }, 2000);
+                }).catch(() => {
+                    fallbackCopy(link, btnText);
+                });
+            } else {
+                fallbackCopy(link, btnText);
+            }
+        }
+
+        function fallbackCopy(text, btnText) {
+            // Fallback untuk browser lama / non-HTTPS
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            try {
+                document.execCommand('copy');
+                btnText.innerText = 'Tersalin!';
+                setTimeout(() => { btnText.innerText = 'Copy Link'; }, 2000);
+            } catch (e) {
+                alert('Gagal copy. Silakan copy manual:\n' + text);
+            }
+            document.body.removeChild(ta);
         }
     </script>
 </body>
