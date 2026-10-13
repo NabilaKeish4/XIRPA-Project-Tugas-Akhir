@@ -71,7 +71,7 @@ $qKat = mysqli_query($conn, "
 if ($qKat) while ($r = mysqli_fetch_assoc($qKat)) $kategoriList[] = $r;
 
 // =========================================================
-// PRODUK TERLARIS
+// PRODUK TERLARIS (5 untuk 1 besar + 4 kecil)
 // =========================================================
 $produkTerlaris = [];
 $qProduk = mysqli_query($conn, "
@@ -83,7 +83,7 @@ $qProduk = mysqli_query($conn, "
     LEFT JOIN kategori k ON p.kategori_id = k.id
     WHERE p.stok > 0
     ORDER BY total_terjual DESC, p.id DESC
-    LIMIT 3
+    LIMIT 5
 ");
 if ($qProduk) while ($r = mysqli_fetch_assoc($qProduk)) $produkTerlaris[] = $r;
 
@@ -94,7 +94,7 @@ if (empty($produkTerlaris)) {
         LEFT JOIN kategori k ON p.kategori_id = k.id
         WHERE p.stok > 0
         ORDER BY p.id DESC
-        LIMIT 3
+        LIMIT 5
     ");
     if ($qProduk) while ($r = mysqli_fetch_assoc($qProduk)) $produkTerlaris[] = $r;
 }
@@ -238,24 +238,24 @@ function gambarLanding($nama) {
     </nav>
 
     <!-- ========================================================= -->
-    <!-- HERO                                                      -->
+    <!-- HERO — Layout diperbaiki                                  -->
     <!-- ========================================================= -->
     <section class="relative overflow-hidden">
         <svg class="absolute -top-16 -left-16 w-56 h-56 text-[#4A8B2C]/8 pointer-events-none gentle-rotate" viewBox="0 0 200 200" fill="currentColor">
             <path d="M100 20c-20 30-50 50-80 60 20 20 50 30 80 20 30 10 60 0 80-20-30-10-60-30-80-60z"/>
         </svg>
 
-        <div class="max-w-7xl mx-auto px-5 lg:px-8 pt-10 pb-16 lg:pt-16 lg:pb-24">
-            <div class="grid grid-cols-1 lg:grid-cols-12 gap-8 lg:gap-10 items-center">
+        <div class="max-w-7xl mx-auto px-5 lg:px-8 pt-10 pb-16 lg:pt-16 lg:pb-20">
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-16 items-center">
 
-                <!-- Left -->
-                <div class="lg:col-span-6 xl:col-span-6 reveal">
+                <!-- Left: Teks -->
+                <div class="lg:col-span-7 reveal">
                     <div class="flex items-center gap-3 mb-6">
                         <span class="w-10 h-px bg-[#2D5016]/40"></span>
                         <span class="text-[10px] tracking-[0.3em] font-medium text-[#2D5016] uppercase">Est. 2024 — Kurasi Musiman</span>
                     </div>
 
-                    <h1 class="font-serif text-4xl sm:text-5xl lg:text-6xl leading-[1.05] font-medium text-[#2D5016] tracking-tight">
+                    <h1 class="font-serif text-4xl sm:text-5xl lg:text-[3.75rem] leading-[1.05] font-medium text-[#2D5016] tracking-tight">
                         Rumah yang <em class="italic font-normal" style="color:#4A8B2C;">hidup</em>,<br>
                         dimulai dari<br>
                         sehelai daun.
@@ -277,7 +277,7 @@ function gambarLanding($nama) {
                         </a>
                     </div>
 
-                    <div class="mt-10 pt-6 border-t border-[#2D5016]/10 grid grid-cols-3 gap-4">
+                    <div class="mt-10 pt-6 border-t border-[#2D5016]/10 grid grid-cols-3 gap-4 max-w-md">
                         <div>
                             <p class="font-serif text-2xl lg:text-3xl text-[#2D5016]"><?= $statProduk ?><span class="text-[#4A8B2C] text-lg align-top">+</span></p>
                             <p class="text-[10px] text-[#5C4033]/60 mt-1 uppercase tracking-wider">Varian tanaman</p>
@@ -293,27 +293,28 @@ function gambarLanding($nama) {
                     </div>
                 </div>
 
-                <!-- Right: image SQUARE -->
-                <div class="lg:col-span-6 xl:col-span-6 relative reveal">
-                    <div class="absolute -top-3 -right-2 w-20 h-20 rounded-full border border-[#2D5016]/15 pointer-events-none hidden lg:block"></div>
-                    <div class="absolute -bottom-5 -left-5 w-28 h-28 rounded-full border border-[#4A8B2C]/15 pointer-events-none hidden lg:block"></div>
+                <!-- Right: Gambar lebih kecil & proporsional -->
+                <div class="lg:col-span-5 relative reveal">
+                    <div class="absolute -top-4 -right-4 w-24 h-24 rounded-full border border-[#2D5016]/15 pointer-events-none hidden lg:block"></div>
+                    <div class="absolute -bottom-6 -left-6 w-32 h-32 rounded-full border border-[#4A8B2C]/15 pointer-events-none hidden lg:block"></div>
 
-                    <div class="relative img-zoom rounded-sm shadow-[0_25px_60px_-25px_rgba(45,80,22,0.4)] max-w-[560px] mx-auto lg:mx-0 lg:ml-auto">
-                        <img src="https://images.unsplash.com/photo-1485955900006-10f4d324d411?auto=format&fit=crop&q=85&w=1200"
+                    <div class="relative img-zoom rounded-sm shadow-[0_25px_60px_-25px_rgba(45,80,22,0.4)] max-w-[400px] mx-auto lg:mx-0 lg:ml-auto">
+                        <img src="https://images.unsplash.com/photo-1485955900006-10f4d324d411?auto=format&fit=crop&q=85&w=800"
                              alt="Koleksi tanaman hias"
-                             class="w-full aspect-square object-cover">
+                             class="w-full aspect-[4/5] object-cover">
 
                         <div class="absolute bottom-4 left-4 right-4 flex items-end justify-between text-[#FAF6EE] z-10">
                             <div>
                                 <p class="text-[9px] tracking-[0.3em] uppercase opacity-70">Volume 01</p>
-                                <p class="font-serif text-base lg:text-lg mt-1 italic">Musim Kemarau</p>
+                                <p class="font-serif text-sm lg:text-base mt-0.5 italic">Musim Kemarau</p>
                             </div>
                             <p class="text-[9px] tracking-[0.3em] uppercase opacity-70">PH — 001</p>
                         </div>
                         <div class="absolute inset-0 bg-gradient-to-t from-[#2D5016]/45 via-transparent to-transparent"></div>
                     </div>
 
-                    <div class="absolute bottom-4 -right-3 lg:-right-6 bg-[#FAF6EE] border border-[#2D5016]/10 rounded-2xl p-3 shadow-xl hidden sm:block">
+                    <!-- Floating card -->
+                    <div class="absolute bottom-2 -left-2 lg:bottom-6 lg:-left-4 bg-[#FAF6EE] border border-[#2D5016]/10 rounded-2xl p-3 shadow-xl hidden sm:block">
                         <div class="flex items-center gap-2.5">
                             <div class="w-9 h-9 rounded-full bg-[#B8D96C]/40 flex items-center justify-center">
                                 <i data-lucide="leaf" class="w-4 h-4 text-[#2D5016]" stroke-width="1.8"></i>
@@ -441,12 +442,13 @@ function gambarLanding($nama) {
     <?php endif; ?>
 
     <!-- ========================================================= -->
-    <!-- PILIHAN KURATOR                                           -->
+    <!-- PILIHAN KURATOR — 1 besar landscape + 4 kecil grid 2x2    -->
     <!-- ========================================================= -->
     <?php if (!empty($produkTerlaris)): ?>
     <section id="pilihan" class="relative py-16 lg:py-24">
         <div class="max-w-7xl mx-auto px-5 lg:px-8">
 
+            <!-- Header -->
             <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-10">
                 <div class="lg:col-span-3">
                     <p class="font-serif text-[#4A8B2C]/40 text-5xl lg:text-6xl leading-none">03</p>
@@ -464,15 +466,17 @@ function gambarLanding($nama) {
                 </div>
             </div>
 
-            <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+            <!-- Grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
 
+                <!-- Produk Besar: landscape 4:3, col-5 -->
                 <?php $first = $produkTerlaris[0] ?? null; ?>
                 <?php if ($first): $imgFirst = gambarLanding($first['gambar']); ?>
-                    <div class="lg:col-span-7 group cursor-pointer reveal">
+                    <div class="lg:col-span-5 group cursor-pointer reveal">
                         <div class="relative overflow-hidden rounded-sm bg-[#2D5016]/5 img-zoom">
                             <img src="<?= htmlspecialchars($imgFirst) ?>" 
                                  alt="<?= htmlspecialchars($first['nama_tanaman']) ?>"
-                                 class="w-full aspect-square object-cover">
+                                 class="w-full aspect-[4/5] object-cover">
                             <?php if ((int)$first['total_terjual'] > 0): ?>
                                 <span class="absolute top-4 left-4 bg-[#FAF6EE] text-[#2D5016] text-[9px] tracking-[0.25em] font-medium px-2.5 py-1 rounded-full uppercase">
                                     Terlaris
@@ -480,18 +484,18 @@ function gambarLanding($nama) {
                             <?php endif; ?>
                         </div>
 
-                        <div class="mt-5 flex items-start justify-between gap-4">
-                            <div>
+                        <div class="mt-4 flex items-start justify-between gap-4">
+                            <div class="min-w-0">
                                 <p class="text-[9px] tracking-[0.25em] uppercase text-[#4A8B2C] mb-1.5">
                                     <?= htmlspecialchars($first['nama_kategori'] ?? 'Tanaman') ?>
                                 </p>
-                                <h3 class="font-serif text-xl lg:text-2xl text-[#2D5016] leading-tight">
+                                <h3 class="font-serif text-lg lg:text-xl text-[#2D5016] leading-tight truncate">
                                     <?= htmlspecialchars($first['nama_tanaman']) ?>
                                 </h3>
                             </div>
                             <div class="text-right shrink-0">
                                 <p class="text-[9px] tracking-[0.25em] uppercase text-[#5C4033]/50 mb-1">Mulai dari</p>
-                                <p class="font-serif text-lg text-[#2D5016]">
+                                <p class="font-serif text-base lg:text-lg text-[#2D5016]">
                                     Rp <?= number_format($first['harga_jual'], 0, ',', '.') ?>
                                 </p>
                             </div>
@@ -499,8 +503,9 @@ function gambarLanding($nama) {
                     </div>
                 <?php endif; ?>
 
-                <div class="lg:col-span-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
-                    <?php for ($i = 1; $i < 3; $i++): 
+                <!-- 4 Produk Kecil: grid 2x2, col-7 -->
+                <div class="lg:col-span-7 grid grid-cols-2 gap-4 lg:gap-5">
+                    <?php for ($i = 1; $i < 5; $i++): 
                         if (!isset($produkTerlaris[$i])) continue;
                         $p = $produkTerlaris[$i];
                         $imgP = gambarLanding($p['gambar']);
@@ -511,16 +516,16 @@ function gambarLanding($nama) {
                                      alt="<?= htmlspecialchars($p['nama_tanaman']) ?>"
                                      class="w-full aspect-square object-cover">
                             </div>
-                            <div class="mt-3.5 flex items-start justify-between gap-3">
-                                <div>
+                            <div class="mt-3 flex items-start justify-between gap-2">
+                                <div class="min-w-0">
                                     <p class="text-[9px] tracking-[0.25em] uppercase text-[#4A8B2C] mb-1">
                                         <?= htmlspecialchars($p['nama_kategori'] ?? 'Tanaman') ?>
                                     </p>
-                                    <h3 class="font-serif text-base text-[#2D5016] leading-tight">
+                                    <h3 class="font-serif text-sm text-[#2D5016] leading-tight truncate">
                                         <?= htmlspecialchars($p['nama_tanaman']) ?>
                                     </h3>
                                 </div>
-                                <p class="font-serif text-sm text-[#2D5016] shrink-0">
+                                <p class="font-serif text-xs text-[#2D5016] shrink-0 pt-3">
                                     Rp <?= number_format($p['harga_jual'], 0, ',', '.') ?>
                                 </p>
                             </div>
