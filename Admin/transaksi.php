@@ -10,13 +10,17 @@ if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
 $admin_nama = $_SESSION['nama_user'] ?? 'Admin';
 
 // =========================================================
+// TAB AKTIF (Default: penjualan)
+// =========================================================
+$tab = $_GET['tab'] ?? 'penjualan';
+if (!in_array($tab, ['penjualan', 'pembelian'])) $tab = 'penjualan';
+
+// =========================================================
 // FILTER & SEARCH
 // =========================================================
 $search       = isset($_GET['search']) ? trim($_GET['search']) : '';
-$filterJenis  = $_GET['jenis']  ?? 'semua';
 $filterStatus = $_GET['status'] ?? 'semua';
 
-// Filter tanggal
 $range       = $_GET['range'] ?? '';
 $tgl_mulai   = $_GET['tgl_mulai']   ?? date('Y-m-01');
 $tgl_selesai = $_GET['tgl_selesai'] ?? date('Y-m-d');
@@ -30,47 +34,40 @@ if ($range === 'today') {
     $tgl_mulai   = date('Y-m-d', strtotime('-30 days'));
     $tgl_selesai = date('Y-m-d');
 } elseif ($range === 'all') {
-    // Tanpa filter tanggal
     $tgl_mulai = $tgl_selesai = null;
 } elseif ($range === 'custom') {
-    // Pakai tgl_mulai & tgl_selesai dari input
+    // custom
 } else {
-    // Default: bulan ini
     $tgl_mulai   = date('Y-m-01');
     $tgl_selesai = date('Y-m-d');
 }
 
-$allowedJenis  = ['semua', 'penjualan', 'pembelian'];
 $allowedStatus = ['semua', 'Diproses', 'Dikirim', 'Selesai', 'Batal'];
-if (!in_array($filterJenis, $allowedJenis))   $filterJenis  = 'semua';
 if (!in_array($filterStatus, $allowedStatus)) $filterStatus = 'semua';
 
-// =========================================================
-// PAGINATION
-// =========================================================
+// Pagination
 $perPage     = (int)($_GET['per_page'] ?? 25);
 $allowedPer  = [10, 25, 50, 100];
 if (!in_array($perPage, $allowedPer)) $perPage = 25;
-
 $page = max(1, (int)($_GET['page'] ?? 1));
 $offset = ($page - 1) * $perPage;
 
 // =========================================================
-// BUILD WHERE
+// BUILD WHERE (Berdasarkan TAB)
 // =========================================================
-$where = "WHERE 1=1";
+$where = "WHERE t.jenis_transaksi = '$tab'"; // KUNCI UTAMA
 
-if ($filterJenis !== 'semua') {
-    $jenisEsc = mysqli_real_escape_string($conn, $filterJenis);
-    $where .= " AND t.jenis_transaksi = '$jenisEsc'";
-}
 if ($filterStatus !== 'semua') {
     $statusEsc = mysqli_real_escape_string($conn, $filterStatus);
     $where .= " AND t.status = '$statusEsc'";
 }
 if ($search !== '') {
     $searchEsc = mysqli_real_escape_string($conn, $search);
-    $where .= " AND (t.kode_transaksi LIKE '%$searchEsc%' OR t.nama_penerima LIKE '%$searchEsc%' OR u.nama_lengkap LIKE '%$searchEsc%')";
+    if ($tab === 'penjualan') {
+        $where .= " AND (t.kode_transaksi LIKE '%$searchEsc%' OR t.nama_penerima LIKE '%$searchEsc%' OR u.nama_lengkap LIKE '%$searchEsc%')";
+    } else {
+        $where .= " AND (t.kode_transaksi LIKE '%$searchEsc%' OR s.nama_supplier LIKE '%$searchEsc%')";
+    }
 }
 if ($tgl_mulai !== null && $tgl_selesai !== null) {
     $mulaiEsc   = mysqli_real_escape_string($conn, $tgl_mulai);
@@ -79,62 +76,13 @@ if ($tgl_mulai !== null && $tgl_selesai !== null) {
 }
 
 // =========================================================
-// EXPORT CSV
-// =========================================================
-if (isset($_GET['export']) && $_GET['export'] === 'csv') {
-    $qExport = mysqli_query($conn, "
-        SELECT t.kode_transaksi, 
-               COALESCE(u.nama_lengkap, 'Walk-in / Supplier') AS pelanggan,
-               COALESCE(t.nama_penerima, '-') AS penerima,
-               t.created_at, t.jenis_transaksi, t.status, 
-               (SELECT COUNT(*) FROM transaksi_detail td WHERE td.transaksi_id = t.id) AS jml_item,
-               t.metode_pembayaran, t.total_harga
-        FROM transaksi t
-        LEFT JOIN users u ON t.user_id = u.id
-        $where
-        ORDER BY t.created_at DESC
-    ");
-
-    $filename = 'transaksi_planthub_' . date('Ymd_His') . '.csv';
-    header('Content-Type: text/csv; charset=utf-8');
-    header('Content-Disposition: attachment; filename="' . $filename . '"');
-    header('Pragma: no-cache');
-    header('Expires: 0');
-
-    $out = fopen('php://output', 'w');
-    // BOM UTF-8 biar Excel baca bener
-    fputs($out, "\xEF\xBB\xBF");
-
-    fputcsv($out, [
-        'Kode Transaksi', 'Pelanggan', 'Penerima', 'Tanggal', 'Jenis',
-        'Status', 'Jumlah Item', 'Metode', 'Total (Rp)'
-    ]);
-
-    while ($r = mysqli_fetch_assoc($qExport)) {
-        fputcsv($out, [
-            $r['kode_transaksi'],
-            $r['pelanggan'],
-            $r['penerima'],
-            date('d/m/Y H:i', strtotime($r['created_at'])),
-            $r['jenis_transaksi'],
-            $r['status'],
-            (int)$r['jml_item'],
-            $r['metode_pembayaran'] ?? '-',
-            (float)$r['total_harga'],
-        ]);
-    }
-
-    fclose($out);
-    exit;
-}
-
-// =========================================================
-// HITUNG TOTAL ROW (untuk pagination)
+// HITUNG TOTAL
 // =========================================================
 $qCount = mysqli_query($conn, "
     SELECT COUNT(*) AS total
     FROM transaksi t
     LEFT JOIN users u ON t.user_id = u.id
+    LEFT JOIN supplier s ON t.supplier_id = s.id
     $where
 ");
 $totalRows  = $qCount ? (int)mysqli_fetch_assoc($qCount)['total'] : 0;
@@ -143,15 +91,17 @@ if ($page > $totalPages) $page = $totalPages;
 $offset = ($page - 1) * $perPage;
 
 // =========================================================
-// AMBIL TRANSAKSI (dengan pagination)
+// AMBIL DATA TRANSAKSI
 // =========================================================
 $transaksi = [];
 $qTrx = mysqli_query($conn, "
     SELECT t.*, 
-           COALESCE(u.nama_lengkap, 'Walk-in / Supplier') AS pelanggan,
+           COALESCE(u.nama_lengkap, 'Pelanggan Walk-in') AS nama_pelanggan,
+           COALESCE(s.nama_supplier, 'Supplier Tidak Diketahui') AS nama_supplier,
            (SELECT COUNT(*) FROM transaksi_detail td WHERE td.transaksi_id = t.id) AS jml_item
     FROM transaksi t
     LEFT JOIN users u ON t.user_id = u.id
+    LEFT JOIN supplier s ON t.supplier_id = s.id
     $where
     ORDER BY t.created_at DESC
     LIMIT $perPage OFFSET $offset
@@ -159,17 +109,16 @@ $qTrx = mysqli_query($conn, "
 if ($qTrx) while ($r = mysqli_fetch_assoc($qTrx)) $transaksi[] = $r;
 
 // =========================================================
-// STATISTIK (dari filter aktif, bukan semua)
+// STATISTIK
 // =========================================================
-$stat = ['penjualan' => 0, 'pembelian' => 0, 'trx_jual' => 0, 'trx_beli' => 0];
+$stat = ['total_uang' => 0, 'total_trx' => 0];
 $qStat = mysqli_query($conn, "
     SELECT 
-        COALESCE(SUM(CASE WHEN t.jenis_transaksi='penjualan' THEN t.total_harga ELSE 0 END),0) AS penjualan,
-        COALESCE(SUM(CASE WHEN t.jenis_transaksi='pembelian' THEN t.total_harga ELSE 0 END),0) AS pembelian,
-        COALESCE(SUM(CASE WHEN t.jenis_transaksi='penjualan' THEN 1 ELSE 0 END),0) AS trx_jual,
-        COALESCE(SUM(CASE WHEN t.jenis_transaksi='pembelian' THEN 1 ELSE 0 END),0) AS trx_beli
+        COALESCE(SUM(t.total_harga),0) AS total_uang,
+        COUNT(*) AS total_trx
     FROM transaksi t
     LEFT JOIN users u ON t.user_id = u.id
+    LEFT JOIN supplier s ON t.supplier_id = s.id
     $where
 ");
 if ($qStat) $stat = mysqli_fetch_assoc($qStat);
@@ -184,7 +133,7 @@ function badgeStatus($status) {
     }
 }
 
-// Helper untuk build URL pagination (pertahankan semua filter)
+// Helper untuk build URL pagination (pertahankan filter & tab)
 function buildUrl($overrides = []) {
     $params = array_merge($_GET, $overrides);
     return 'transaksi.php?' . http_build_query($params);
@@ -203,7 +152,6 @@ function buildUrl($overrides = []) {
 </head>
 <body class="antialiased min-h-screen flex flex-col">
 
-    <!-- HEADER -->
     <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
         <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
             <div class="flex items-center gap-3">
@@ -217,11 +165,9 @@ function buildUrl($overrides = []) {
                     <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
                 </a>
             </div>
-
             <div class="hidden md:flex flex-1 max-w-md">
                 <span class="text-xs text-stone-500 self-center">Riwayat Transaksi</span>
             </div>
-
             <div class="flex items-center gap-3">
                 <a href="dashboard.php" class="flex items-center gap-3 pl-1">
                     <img src="https://ui-avatars.com/api/?name=<?= urlencode($admin_nama) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
@@ -264,9 +210,7 @@ function buildUrl($overrides = []) {
                             <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
                         </a>
                     <?php endforeach; ?>
-
                     <hr class="border-stone-100 my-3">
-
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">PENGATURAN</p>
                     <?php
                     $menu2 = [
@@ -282,7 +226,6 @@ function buildUrl($overrides = []) {
                     <?php endforeach; ?>
                 </nav>
             </div>
-
             <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3 mt-auto">
                 <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
                     <i data-lucide="store" class="w-5 h-5"></i>
@@ -300,56 +243,60 @@ function buildUrl($overrides = []) {
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                     <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Riwayat Transaksi</h1>
-                    <p class="text-sm text-stone-500 mt-0.5">Semua transaksi penjualan & pembelian dari pelanggan dan supplier.</p>
+                    <p class="text-sm text-stone-500 mt-0.5">Pilih modul di bawah untuk melihat detail transaksi.</p>
                 </div>
-                <a href="<?= buildUrl(['export' => 'csv']) ?>" class="inline-flex items-center gap-2 bg-white border border-stone-300 px-4 py-2.5 rounded-xl text-sm font-semibold text-stone-700 hover:bg-stone-50 shadow-sm self-start sm:self-auto">
-                    <i data-lucide="download" class="w-4 h-4 text-stone-500"></i>
-                    Export CSV
+                <!-- TOMBOL EXPORT PDF (Bawa parameter tab aktif) -->
+                <a href="export/rekap_transaksi_pdf.php?<?= http_build_query(array_merge($_GET, ['jenis' => $tab])) ?>" target="_blank" class="inline-flex items-center gap-2 bg-white border border-stone-300 px-4 py-2.5 rounded-xl text-sm font-semibold text-stone-700 hover:bg-stone-50 shadow-sm self-start sm:self-auto">
+                    <i data-lucide="file-text" class="w-4 h-4 text-stone-500"></i>
+                    Export PDF (<?= $tab === 'penjualan' ? 'Penjualan' : 'Pembelian' ?>)
                 </a>
             </div>
 
-            <!-- STATISTIK -->
-            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32]">
-                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Total Penjualan</p>
-                    <p class="text-lg font-bold text-stone-800 mt-1">Rp <?= number_format($stat['penjualan'], 0, ',', '.') ?></p>
-                    <p class="text-[11px] text-stone-400 mt-1"><?= (int)$stat['trx_jual'] ?> transaksi</p>
-                </div>
-                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#D97706]">
-                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Total Pembelian</p>
-                    <p class="text-lg font-bold text-stone-800 mt-1">Rp <?= number_format($stat['pembelian'], 0, ',', '.') ?></p>
-                    <p class="text-[11px] text-stone-400 mt-1"><?= (int)$stat['trx_beli'] ?> restock</p>
+            <!-- NAVIGASI TAB (PENJUALAN vs PEMBELIAN) -->
+            <div class="flex items-center p-1 bg-stone-200/70 rounded-2xl w-full max-w-md">
+                <a href="transaksi.php?tab=penjualan" class="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition-all <?= $tab === 'penjualan' ? 'bg-white text-[#2E7D32] shadow-sm' : 'text-stone-500 hover:text-stone-800' ?>">
+                    <i data-lucide="shopping-bag" class="w-4 h-4"></i> Penjualan (Pelanggan)
+                </a>
+                <a href="transaksi.php?tab=pembelian" class="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition-all <?= $tab === 'pembelian' ? 'bg-white text-[#D97706] shadow-sm' : 'text-stone-500 hover:text-stone-800' ?>">
+                    <i data-lucide="truck" class="w-4 h-4"></i> Pembelian (Supplier)
+                </a>
+            </div>
+
+            <!-- STATISTIK (Warna berubah sesuai tab) -->
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 <?= $tab === 'penjualan' ? 'border-t-[#2E7D32]' : 'border-t-[#D97706]' ?>">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">
+                        <?= $tab === 'penjualan' ? 'Total Pendapatan' : 'Total Pengeluaran' ?>
+                    </p>
+                    <p class="text-lg font-bold text-stone-800 mt-1">Rp <?= number_format($stat['total_uang'], 0, ',', '.') ?></p>
                 </div>
                 <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-emerald-500">
-                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Transaksi Tampil</p>
-                    <p class="text-lg font-bold text-stone-800 mt-1"><?= $totalRows ?></p>
-                    <p class="text-[11px] text-stone-400 mt-1">Setelah filter</p>
+                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Jumlah Transaksi</p>
+                    <p class="text-lg font-bold text-stone-800 mt-1"><?= (int)$stat['total_trx'] ?></p>
                 </div>
                 <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-blue-500">
                     <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Periode</p>
                     <p class="text-sm font-bold text-stone-800 mt-1">
                         <?= $tgl_mulai ? date('d/m/y', strtotime($tgl_mulai)) : '—' ?> s.d. <?= $tgl_selesai ? date('d/m/y', strtotime($tgl_selesai)) : '—' ?>
                     </p>
-                    <a href="transaksi.php?range=all" class="text-[11px] text-[#2E7D32] font-semibold hover:underline mt-1 inline-block">Lihat semua</a>
+                    <a href="transaksi.php?tab=<?= $tab ?>&range=all" class="text-[11px] font-semibold hover:underline mt-1 inline-block <?= $tab === 'penjualan' ? 'text-[#2E7D32]' : 'text-[#D97706]' ?>">Lihat semua</a>
                 </div>
             </div>
 
             <!-- FILTER BAR -->
             <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-5 space-y-4">
-
-                <!-- FILTER TANGGAL CEPAT -->
                 <div class="flex items-center justify-between flex-wrap gap-2">
                     <p class="text-xs font-bold text-stone-400 uppercase tracking-wider">Filter Cepat</p>
                     <div class="flex items-center gap-2 flex-wrap">
-                        <a href="<?= buildUrl(['range' => 'today',  'page' => 1]) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range==='today'  ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>">Hari Ini</a>
-                        <a href="<?= buildUrl(['range' => '7days',  'page' => 1]) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range==='7days'  ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>">7 Hari</a>
-                        <a href="<?= buildUrl(['range' => '30days', 'page' => 1]) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range==='30days' ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>">30 Hari</a>
-                        <a href="<?= buildUrl(['range' => 'all',    'page' => 1]) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range==='all'    ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>">Semua</a>
+                        <a href="<?= buildUrl(['tab' => $tab, 'range' => 'today',  'page' => 1]) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range==='today'  ? 'bg-stone-800 text-white border-stone-800' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>">Hari Ini</a>
+                        <a href="<?= buildUrl(['tab' => $tab, 'range' => '7days',  'page' => 1]) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range==='7days'  ? 'bg-stone-800 text-white border-stone-800' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>">7 Hari</a>
+                        <a href="<?= buildUrl(['tab' => $tab, 'range' => '30days', 'page' => 1]) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range==='30days' ? 'bg-stone-800 text-white border-stone-800' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>">30 Hari</a>
+                        <a href="<?= buildUrl(['tab' => $tab, 'range' => 'all',    'page' => 1]) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range==='all'    ? 'bg-stone-800 text-white border-stone-800' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>">Semua</a>
                     </div>
                 </div>
 
-                <!-- FORM FILTER -->
-                <form method="GET" action="transaksi.php" class="grid grid-cols-1 md:grid-cols-6 gap-3 pt-3 border-t border-stone-100">
+                <form method="GET" action="transaksi.php" class="grid grid-cols-1 md:grid-cols-5 gap-3 pt-3 border-t border-stone-100">
+                    <input type="hidden" name="tab" value="<?= $tab ?>">
                     <input type="hidden" name="range" value="custom">
                     <input type="hidden" name="per_page" value="<?= $perPage ?>">
 
@@ -357,31 +304,13 @@ function buildUrl($overrides = []) {
                         <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Cari</label>
                         <div class="relative">
                             <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
-                            <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Kode / penerima..." class="w-full pl-10 pr-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                            <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Kode / nama <?= $tab === 'penjualan' ? 'pelanggan' : 'supplier' ?>..." class="w-full pl-10 pr-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-stone-400">
                         </div>
                     </div>
 
                     <div>
-                        <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Mulai</label>
-                        <input type="date" name="tgl_mulai" value="<?= htmlspecialchars($tgl_mulai ?? '') ?>" class="w-full px-3 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                    </div>
-                    <div>
-                        <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Sampai</label>
-                        <input type="date" name="tgl_selesai" value="<?= htmlspecialchars($tgl_selesai ?? '') ?>" class="w-full px-3 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                    </div>
-
-                    <div>
-                        <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Jenis</label>
-                        <select name="jenis" class="w-full px-3 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                            <option value="semua" <?= $filterJenis === 'semua' ? 'selected' : '' ?>>Semua</option>
-                            <option value="penjualan" <?= $filterJenis === 'penjualan' ? 'selected' : '' ?>>Penjualan</option>
-                            <option value="pembelian" <?= $filterJenis === 'pembelian' ? 'selected' : '' ?>>Pembelian</option>
-                        </select>
-                    </div>
-
-                    <div>
                         <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Status</label>
-                        <select name="status" class="w-full px-3 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                        <select name="status" class="w-full px-3 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-stone-400">
                             <option value="semua" <?= $filterStatus === 'semua' ? 'selected' : '' ?>>Semua</option>
                             <option value="Diproses" <?= $filterStatus === 'Diproses' ? 'selected' : '' ?>>Diproses</option>
                             <option value="Dikirim"  <?= $filterStatus === 'Dikirim'  ? 'selected' : '' ?>>Dikirim</option>
@@ -390,25 +319,33 @@ function buildUrl($overrides = []) {
                         </select>
                     </div>
 
-                    <div class="md:col-span-6 flex items-center gap-2 justify-end">
-                        <a href="transaksi.php" class="px-4 py-2.5 bg-stone-100 text-stone-600 rounded-xl text-sm font-semibold hover:bg-stone-200 transition">Reset</a>
-                        <button type="submit" class="bg-[#2E7D32] hover:bg-emerald-800 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition inline-flex items-center gap-2">
+                    <div>
+                        <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Mulai</label>
+                        <input type="date" name="tgl_mulai" value="<?= htmlspecialchars($tgl_mulai ?? '') ?>" class="w-full px-3 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-stone-400">
+                    </div>
+                    <div>
+                        <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Sampai</label>
+                        <input type="date" name="tgl_selesai" value="<?= htmlspecialchars($tgl_selesai ?? '') ?>" class="w-full px-3 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-stone-400">
+                    </div>
+
+                    <div class="md:col-span-5 flex items-center gap-2 justify-end mt-2">
+                        <a href="transaksi.php?tab=<?= $tab ?>" class="px-4 py-2.5 bg-stone-100 text-stone-600 rounded-xl text-sm font-semibold hover:bg-stone-200 transition">Reset</a>
+                        <button type="submit" class="bg-stone-800 hover:bg-stone-900 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition inline-flex items-center gap-2">
                             <i data-lucide="filter" class="w-4 h-4"></i> Terapkan
                         </button>
                     </div>
                 </form>
             </div>
 
-            <!-- TABEL -->
+            <!-- TABEL DATA -->
             <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
                 <div class="overflow-x-auto">
                     <table class="w-full text-left border-collapse">
                         <thead>
                             <tr class="border-b border-stone-200 bg-stone-50/50 text-[11px] font-bold text-stone-500 uppercase tracking-wider">
                                 <th class="py-3.5 px-6">Kode</th>
-                                <th class="py-3.5 px-4">Pelanggan / Supplier</th>
+                                <th class="py-3.5 px-4"><?= $tab === 'penjualan' ? 'Pelanggan' : 'Supplier' ?></th>
                                 <th class="py-3.5 px-4">Tanggal</th>
-                                <th class="py-3.5 px-4">Jenis</th>
                                 <th class="py-3.5 px-4">Status</th>
                                 <th class="py-3.5 px-4 text-center">Item</th>
                                 <th class="py-3.5 px-4 text-right">Total</th>
@@ -418,30 +355,22 @@ function buildUrl($overrides = []) {
                         <tbody class="divide-y divide-stone-100 text-xs">
                             <?php if (empty($transaksi)): ?>
                                 <tr>
-                                    <td colspan="8" class="py-12 text-center">
-                                        <div class="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                                            <i data-lucide="receipt" class="w-6 h-6 text-stone-400"></i>
-                                        </div>
-                                        <p class="text-sm font-semibold text-stone-700">Belum ada transaksi</p>
-                                        <p class="text-xs text-stone-500 mt-1">Coba ubah filter atau periode tanggal.</p>
+                                    <td colspan="7" class="py-12 text-center">
+                                        <p class="text-sm font-semibold text-stone-700">Belum ada transaksi <?= $tab ?></p>
                                     </td>
                                 </tr>
                             <?php else: ?>
                                 <?php 
                                 $sumPage = 0;
                                 foreach ($transaksi as $t): 
-                                    $isJual = ($t['jenis_transaksi'] === 'penjualan');
                                     $sumPage += (float)$t['total_harga'];
                                 ?>
                                     <tr class="hover:bg-stone-50/60 transition-colors">
                                         <td class="py-3.5 px-6 font-mono text-[11px] font-semibold text-stone-700"><?= htmlspecialchars($t['kode_transaksi']) ?></td>
-                                        <td class="py-3.5 px-4 font-semibold text-stone-800"><?= htmlspecialchars($t['pelanggan']) ?></td>
-                                        <td class="py-3.5 px-4 text-stone-500"><?= date('d M Y, H:i', strtotime($t['created_at'])) ?></td>
-                                        <td class="py-3.5 px-4">
-                                            <span class="inline-flex items-center px-2.5 py-1 rounded-md text-[10px] font-bold uppercase <?= $isJual ? 'bg-emerald-50 text-[#2E7D32] border border-emerald-100' : 'bg-amber-50 text-[#D97706] border border-amber-100' ?>">
-                                                <?= htmlspecialchars($t['jenis_transaksi']) ?>
-                                            </span>
+                                        <td class="py-3.5 px-4 font-semibold text-stone-800">
+                                            <?= htmlspecialchars($tab === 'penjualan' ? $t['nama_pelanggan'] : $t['nama_supplier']) ?>
                                         </td>
+                                        <td class="py-3.5 px-4 text-stone-500"><?= date('d M Y, H:i', strtotime($t['created_at'])) ?></td>
                                         <td class="py-3.5 px-4">
                                             <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold uppercase border <?= badgeStatus($t['status']) ?>">
                                                 <?= htmlspecialchars($t['status']) ?>
@@ -450,7 +379,7 @@ function buildUrl($overrides = []) {
                                         <td class="py-3.5 px-4 text-center font-semibold text-stone-700"><?= (int)$t['jml_item'] ?></td>
                                         <td class="py-3.5 px-4 text-right font-bold text-stone-800">Rp <?= number_format($t['total_harga'], 0, ',', '.') ?></td>
                                         <td class="py-3.5 px-6 text-center">
-                                            <a href="detail_transaksi.php?id=<?= (int)$t['id'] ?>" class="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-[#2E7D32] hover:bg-emerald-50 rounded-lg transition">
+                                            <a href="detail_transaksi.php?id=<?= (int)$t['id'] ?>" class="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold <?= $tab === 'penjualan' ? 'text-[#2E7D32] hover:bg-emerald-50' : 'text-[#D97706] hover:bg-amber-50' ?> rounded-lg transition">
                                                 <i data-lucide="eye" class="w-3.5 h-3.5"></i> Detail
                                             </a>
                                         </td>
@@ -461,8 +390,8 @@ function buildUrl($overrides = []) {
                         <?php if (!empty($transaksi)): ?>
                             <tfoot>
                                 <tr class="bg-stone-50 border-t-2 border-stone-200 text-xs">
-                                    <td colspan="6" class="py-3 px-6 font-bold text-stone-600 text-right">Total Halaman Ini:</td>
-                                    <td class="py-3 px-4 text-right font-bold text-[#2E7D32] text-sm">Rp <?= number_format($sumPage, 0, ',', '.') ?></td>
+                                    <td colspan="5" class="py-3 px-6 font-bold text-stone-600 text-right">Total Halaman Ini:</td>
+                                    <td class="py-3 px-4 text-right font-bold text-sm <?= $tab === 'penjualan' ? 'text-[#2E7D32]' : 'text-[#D97706]' ?>">Rp <?= number_format($sumPage, 0, ',', '.') ?></td>
                                     <td></td>
                                 </tr>
                             </tfoot>
@@ -473,13 +402,9 @@ function buildUrl($overrides = []) {
                 <!-- PAGINATION -->
                 <div class="p-4 bg-stone-50/60 border-t border-stone-100 flex flex-col sm:flex-row items-center justify-between gap-3">
                     <div class="text-xs text-stone-500">
-                        <?php 
-                        $start = $totalRows > 0 ? $offset + 1 : 0;
-                        $end   = min($offset + $perPage, $totalRows);
-                        ?>
-                        Menampilkan <b class="text-stone-700"><?= $start ?>–<?= $end ?></b> dari <b class="text-stone-700"><?= $totalRows ?></b> transaksi
+                        Menampilkan <b class="text-stone-700"><?= ($totalRows > 0 ? $offset + 1 : 0) ?>–<?= min($offset + $perPage, $totalRows) ?></b> dari <b class="text-stone-700"><?= $totalRows ?></b> transaksi
                     </div>
-
+                    
                     <div class="flex items-center gap-2 flex-wrap">
                         <!-- Per page selector -->
                         <form method="GET" action="transaksi.php" class="inline-flex items-center gap-1">
@@ -487,7 +412,7 @@ function buildUrl($overrides = []) {
                                 <input type="hidden" name="<?= htmlspecialchars($k) ?>" value="<?= htmlspecialchars($v) ?>">
                             <?php endif; endforeach; ?>
                             <label class="text-xs text-stone-500">Per halaman:</label>
-                            <select name="per_page" onchange="this.form.submit()" class="px-2 py-1 text-xs bg-white border border-stone-200 rounded-lg focus:outline-none focus:border-[#2E7D32]">
+                            <select name="per_page" onchange="this.form.submit()" class="px-2 py-1 text-xs bg-white border border-stone-200 rounded-lg focus:outline-none focus:border-stone-400">
                                 <?php foreach ($allowedPer as $n): ?>
                                     <option value="<?= $n ?>" <?= $perPage === $n ? 'selected' : '' ?>><?= $n ?></option>
                                 <?php endforeach; ?>
@@ -496,7 +421,7 @@ function buildUrl($overrides = []) {
 
                         <!-- Prev / Next -->
                         <div class="flex items-center gap-1">
-                            <a href="<?= $page > 1 ? buildUrl(['page' => $page - 1]) : '#' ?>" 
+                            <a href="<?= $page > 1 ? buildUrl(['tab' => $tab, 'page' => $page - 1]) : '#' ?>" 
                                class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $page > 1 ? 'bg-white text-stone-700 hover:bg-stone-100 border-stone-200' : 'bg-stone-100 text-stone-400 border-stone-100 cursor-not-allowed' ?>">
                                 <i data-lucide="chevron-left" class="w-3.5 h-3.5 inline"></i> Prev
                             </a>
@@ -507,15 +432,15 @@ function buildUrl($overrides = []) {
                             if ($startPage > 1) echo '<span class="text-xs text-stone-400 px-1">...</span>';
                             for ($i = $startPage; $i <= $endPage; $i++):
                             ?>
-                                <a href="<?= buildUrl(['page' => $i]) ?>" 
-                                   class="px-3 py-1.5 text-xs font-bold rounded-lg border <?= $i === $page ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-white text-stone-700 hover:bg-stone-100 border-stone-200' ?>">
+                                <a href="<?= buildUrl(['tab' => $tab, 'page' => $i]) ?>" 
+                                   class="px-3 py-1.5 text-xs font-bold rounded-lg border <?= $i === $page ? 'bg-stone-800 text-white border-stone-800' : 'bg-white text-stone-700 hover:bg-stone-100 border-stone-200' ?>">
                                     <?= $i ?>
                                 </a>
                             <?php endfor;
                             if ($endPage < $totalPages) echo '<span class="text-xs text-stone-400 px-1">...</span>';
                             ?>
 
-                            <a href="<?= $page < $totalPages ? buildUrl(['page' => $page + 1]) : '#' ?>" 
+                            <a href="<?= $page < $totalPages ? buildUrl(['tab' => $tab, 'page' => $page + 1]) : '#' ?>" 
                                class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $page < $totalPages ? 'bg-white text-stone-700 hover:bg-stone-100 border-stone-200' : 'bg-stone-100 text-stone-400 border-stone-100 cursor-not-allowed' ?>">
                                 Next <i data-lucide="chevron-right" class="w-3.5 h-3.5 inline"></i>
                             </a>

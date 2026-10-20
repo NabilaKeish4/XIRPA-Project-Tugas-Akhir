@@ -8,12 +8,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $fullname = mysqli_real_escape_string($conn, $_POST['fullname']);
     $email    = mysqli_real_escape_string($conn, $_POST['email']);
     $password = $_POST['password'];
-    $role     = $_POST['role'] ?? 'customer'; // default customer
-
-    // Validasi role
-    if (!in_array($role, ['admin', 'customer'])) {
-        $role = 'customer';
-    }
+    
+    // PAKSA ROLE JADI CUSTOMER (Pelanggan)
+    $role     = 'customer'; 
 
     $cek = mysqli_query($conn, "SELECT * FROM users WHERE username = '$email' OR email = '$email'");
 
@@ -63,7 +60,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="max-w-lg z-10 space-y-6">
             <h1 class="text-5xl font-extrabold text-white leading-[1.15] tracking-tight">Bergabung dengan Sistem</h1>
             <p class="text-stone-200 text-sm leading-relaxed">
-                Buat akun baru untuk mulai berbelanja tanaman hias atau mengelola toko Anda.
+                Buat akun baru untuk mulai berbelanja tanaman hias impian Anda.
             </p>
         </div>
         <div class="z-10 text-xs text-stone-300 flex items-center justify-between border-t border-white/15 pt-5">
@@ -88,7 +85,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         <div class="my-auto max-w-sm w-full mx-auto space-y-5">
             <div>
                 <h2 class="text-3xl font-extrabold text-stone-900 tracking-tight">Daftar Akun Baru</h2>
-                <p class="text-stone-500 text-xs mt-1.5">Isi formulir berikut untuk registrasi akun</p>
+                <p class="text-stone-500 text-xs mt-1.5">Isi formulir berikut untuk registrasi akun pelanggan</p>
             </div>
 
             <?php if ($pesan): ?>
@@ -126,16 +123,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     </div>
                 </div>
 
-                <div>
-                    <label class="block text-[11px] font-bold text-stone-600 uppercase tracking-wider mb-1.5">Daftar Sebagai</label>
-                    <select name="role" class="w-full px-4 py-3 text-xs bg-white border border-stone-200 rounded-2xl focus:outline-none focus:border-[#2E7D32]">
-                        <option value="customer">Pelanggan (Belanja Tanaman)</option>
-                        <option value="admin">Admin (Kelola Toko)</option>
-                    </select>
-                </div>
+                <!-- BAGIAN PILIH ROLE SUDAH DIHAPUS -->
 
                 <button type="submit" class="w-full py-3.5 bg-[#2E7D32] hover:bg-emerald-800 text-white font-bold rounded-2xl shadow-lg shadow-emerald-900/20 text-xs transition-all flex items-center justify-center gap-2 group mt-2">
-                    <span>BUAT AKUN</span>
+                    <span>BUAT AKUN PELANGGAN</span>
                     <i data-lucide="user-plus" class="w-4 h-4 group-hover:translate-x-1 transition-transform"></i>
                 </button>
             </form>

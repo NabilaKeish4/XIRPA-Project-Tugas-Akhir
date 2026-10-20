@@ -145,9 +145,7 @@ function gambarPOS($nama) {
         .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 9999px; }
 
-        /* ========================================================= */
-        /* PRINT THERMAL 58mm — hanya struk yang ke-print            */
-        /* ========================================================= */
+        /* PRINT THERMAL 58mm */
         @media print {
             body * { visibility: hidden !important; }
             #areaCetak, #areaCetak * { visibility: visible !important; }
@@ -230,7 +228,7 @@ function gambarPOS($nama) {
                              data-harga="<?= (float)$p['harga_jual'] ?>"
                              data-stok="<?= (int)$p['stok'] ?>"
                              data-kategori="<?= (int)$p['kategori_id'] ?>"
-                             data-nama-kategori="<?= htmlspecialchars($p['nama_kategori'] ?? '') ?>"
+                             data-nama-kategori="<?= htmlspecialchars($p['nama_kategori'] ?? 'Tanaman') ?>"
                              data-gambar="<?= htmlspecialchars($imgSrc) ?>"
                              onclick="tambahKeKeranjang(this)">
                             <div class="relative bg-stone-100 aspect-square overflow-hidden">
@@ -260,105 +258,102 @@ function gambarPOS($nama) {
             </div>
         </section>
 
-        <!-- KANAN: KERANJANG -->
-        <section class="hidden lg:flex w-[40%] flex-col bg-white border-l border-stone-200 shadow-xl z-10 overflow-hidden">
-
-            <!-- Info Pelanggan + INPUT NAMA -->
-            <div class="p-4 border-b border-stone-200/80 bg-stone-50/60 shrink-0">
-                <div class="flex items-center justify-between mb-2.5">
-                    <div class="flex items-center gap-2.5">
-                        <div class="p-2 bg-stone-200/70 text-stone-600 rounded-xl">
-                            <i data-lucide="user" class="w-4 h-4"></i>
+        <!-- KANAN: KERANJANG & PEMBAYARAN (Bisa di-scroll utuh) -->
+        <section class="hidden lg:flex w-[40%] flex-col bg-white border-l border-stone-200 shadow-xl z-10">
+            
+            <div class="flex-1 overflow-y-auto custom-scrollbar flex flex-col">
+                
+                <!-- Info Pelanggan -->
+                <div class="p-4 border-b border-stone-200/80 bg-stone-50/60 shrink-0">
+                    <div class="flex items-center justify-between mb-2.5">
+                        <div class="flex items-center gap-2.5">
+                            <div class="p-2 bg-stone-200/70 text-stone-600 rounded-xl">
+                                <i data-lucide="user" class="w-4 h-4"></i>
+                            </div>
+                            <p class="text-[10px] text-stone-400 font-bold uppercase tracking-wider">Pelanggan</p>
                         </div>
-                        <p class="text-[10px] text-stone-400 font-bold uppercase tracking-wider">Pelanggan</p>
+                        <span class="text-[10px] font-bold text-[#2E7D32] bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-md">POS</span>
                     </div>
-                    <span class="text-[10px] font-bold text-[#2E7D32] bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-md">POS</span>
-                </div>
-                <input type="text" id="inNamaPelanggan" value="Pelanggan Walk-in" placeholder="Nama pelanggan..." class="w-full px-3.5 py-2 text-sm bg-white border border-stone-200 rounded-xl focus:outline-none focus:border-[#2E7D32] font-semibold text-stone-800">
-                <p class="text-[10px] text-stone-400 mt-1.5">Kosongkan untuk pelanggan walk-in.</p>
-            </div>
-
-            <!-- Cart Header -->
-            <div class="px-5 py-3 border-b border-stone-100 flex items-center justify-between shrink-0">
-                <div class="flex items-center gap-2">
-                    <h2 class="text-xs font-bold text-stone-800 uppercase tracking-wider">Keranjang</h2>
-                    <span id="cartCountBadge" class="bg-[#E8F5E9] text-[#2E7D32] text-[10px] font-bold px-2 py-0.5 rounded-full">0 Item</span>
-                </div>
-                <button onclick="kosongkanKeranjang()" class="text-[10px] text-stone-400 hover:text-rose-600 flex items-center gap-1 font-semibold">
-                    <i data-lucide="trash-2" class="w-3 h-3"></i> Kosongkan
-                </button>
-            </div>
-
-            <!-- Cart Items -->
-            <div id="cartList" class="flex-1 overflow-y-auto px-4 py-2 divide-y divide-stone-100 custom-scrollbar">
-                <div class="text-center py-12">
-                    <div class="w-14 h-14 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                        <i data-lucide="shopping-cart" class="w-6 h-6 text-stone-400"></i>
-                    </div>
-                    <p class="text-xs text-stone-500 font-medium">Keranjang kosong</p>
-                    <p class="text-[10px] text-stone-400 mt-0.5">Klik produk untuk menambah</p>
-                </div>
-            </div>
-
-            <!-- Summary & Checkout -->
-            <div class="p-5 bg-stone-50/80 border-t border-stone-200 space-y-3 shrink-0">
-
-                <div class="space-y-1.5 text-xs">
-                    <div class="flex justify-between text-stone-500">
-                        <span>Subtotal</span>
-                        <span id="subtotalText" class="font-semibold text-stone-700">Rp 0</span>
-                    </div>
-                    <div class="flex justify-between text-stone-500">
-                        <span>PPN 11%</span>
-                        <span id="ppnText" class="font-semibold text-stone-700">Rp 0</span>
-                    </div>
-                    <div class="pt-2 border-t border-stone-200 flex justify-between items-baseline">
-                        <span class="text-sm font-bold text-stone-800">Total</span>
-                        <span id="totalText" class="text-xl font-bold text-[#2E7D32]">Rp 0</span>
-                    </div>
+                    <input type="text" id="inNamaPelanggan" value="Pelanggan Walk-in" placeholder="Nama pelanggan..." class="w-full px-3.5 py-2 text-sm bg-white border border-stone-200 rounded-xl focus:outline-none focus:border-[#2E7D32] font-semibold text-stone-800">
+                    <p class="text-[10px] text-stone-400 mt-1.5">Kosongkan untuk pelanggan walk-in.</p>
                 </div>
 
-                <div>
-                    <label class="block text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-2">Metode Pembayaran</label>
-                    <div class="grid grid-cols-3 gap-2">
-                        <button type="button" onclick="setMetode('tunai', this)" class="metode-btn aktif flex flex-col items-center justify-center p-2 rounded-xl border-2 border-[#2E7D32] bg-[#E8F5E9] text-[#2E7D32] font-bold text-[11px] transition">
-                            <i data-lucide="banknote" class="w-4 h-4 mb-1"></i> Tunai
-                        </button>
-                        <button type="button" onclick="setMetode('qris', this)" class="metode-btn flex flex-col items-center justify-center p-2 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 text-stone-600 font-semibold text-[11px] transition">
-                            <i data-lucide="qr-code" class="w-4 h-4 mb-1"></i> QRIS
-                        </button>
-                        <button type="button" onclick="setMetode('debit', this)" class="metode-btn flex flex-col items-center justify-center p-2 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 text-stone-600 font-semibold text-[11px] transition">
-                            <i data-lucide="credit-card" class="w-4 h-4 mb-1"></i> Debit
-                        </button>
+                <!-- Cart Header -->
+                <div class="px-5 py-3 border-b border-stone-100 flex items-center justify-between shrink-0 bg-white">
+                    <div class="flex items-center gap-2">
+                        <h2 class="text-xs font-bold text-stone-800 uppercase tracking-wider">Keranjang</h2>
+                        <span id="cartCountBadge" class="bg-[#E8F5E9] text-[#2E7D32] text-[10px] font-bold px-2 py-0.5 rounded-full">0 Item</span>
                     </div>
+                    <button onclick="kosongkanKeranjang()" class="text-[10px] text-stone-400 hover:text-rose-600 flex items-center gap-1 font-semibold">
+                        <i data-lucide="trash-2" class="w-3 h-3"></i> Kosongkan
+                    </button>
                 </div>
 
-                <div id="wrapBayar" class="space-y-1.5">
-                    <label class="block text-[10px] font-bold text-stone-400 uppercase tracking-wider">Jumlah Bayar</label>
-                    <div class="relative">
-                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-stone-400">Rp</span>
-                        <input type="number" id="inputBayar" min="0" step="1000" placeholder="0" oninput="hitungKembalian()" class="w-full pl-9 pr-3 py-2 text-base font-bold bg-white border border-stone-200 rounded-xl focus:outline-none focus:border-[#2E7D32]">
-                    </div>
-                    <div class="flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-stone-200">
-                        <span class="text-xs font-semibold text-stone-500">Kembalian</span>
-                        <span id="kembalianText" class="text-sm font-bold text-emerald-700">Rp 0</span>
-                    </div>
-                    <div class="flex gap-1 flex-wrap">
-                        <button type="button" onclick="setBayar(50000)" class="px-2.5 py-1 text-[10px] font-semibold bg-white border border-stone-200 rounded-md hover:bg-stone-100">50rb</button>
-                        <button type="button" onclick="setBayar(100000)" class="px-2.5 py-1 text-[10px] font-semibold bg-white border border-stone-200 rounded-md hover:bg-stone-100">100rb</button>
-                        <button type="button" onclick="setBayar('pas')" class="px-2.5 py-1 text-[10px] font-semibold bg-white border border-stone-200 rounded-md hover:bg-stone-100">Uang Pas</button>
-                    </div>
+                <!-- Cart Items -->
+                <div id="cartList" class="px-4 py-2 divide-y divide-stone-100 bg-white">
+                    <!-- Diisi JS -->
                 </div>
 
-                <button onclick="prosesCheckout()" id="btnProses" class="w-full py-3.5 bg-[#2E7D32] hover:bg-emerald-800 active:scale-[0.99] text-white rounded-xl font-bold text-sm shadow-md shadow-emerald-900/20 flex items-center justify-center gap-2 transition disabled:opacity-50 disabled:cursor-not-allowed">
-                    <i data-lucide="check-circle-2" class="w-5 h-5"></i>
-                    <span id="btnProsesText">Proses Bayar</span>
-                </button>
+                <!-- Summary & Checkout -->
+                <div class="p-5 bg-stone-50/80 border-t border-stone-200 space-y-3 mt-auto shrink-0">
+
+                    <div class="space-y-1.5 text-xs">
+                        <div class="flex justify-between text-stone-500">
+                            <span>Subtotal</span>
+                            <span id="subtotalText" class="font-semibold text-stone-700">Rp 0</span>
+                        </div>
+                        <div class="flex justify-between text-stone-500">
+                            <span>PPN 11%</span>
+                            <span id="ppnText" class="font-semibold text-stone-700">Rp 0</span>
+                        </div>
+                        <div class="pt-2 border-t border-stone-200 flex justify-between items-baseline">
+                            <span class="text-sm font-bold text-stone-800">Total</span>
+                            <span id="totalText" class="text-xl font-bold text-[#2E7D32]">Rp 0</span>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="block text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-2">Metode Pembayaran</label>
+                        <div class="grid grid-cols-3 gap-2">
+                            <button type="button" onclick="setMetode('tunai', this)" class="metode-btn aktif flex flex-col items-center justify-center p-2 rounded-xl border-2 border-[#2E7D32] bg-[#E8F5E9] text-[#2E7D32] font-bold text-[11px] transition">
+                                <i data-lucide="banknote" class="w-4 h-4 mb-1"></i> Tunai
+                            </button>
+                            <button type="button" onclick="setMetode('qris', this)" class="metode-btn flex flex-col items-center justify-center p-2 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 text-stone-600 font-semibold text-[11px] transition">
+                                <i data-lucide="qr-code" class="w-4 h-4 mb-1"></i> QRIS
+                            </button>
+                            <button type="button" onclick="setMetode('debit', this)" class="metode-btn flex flex-col items-center justify-center p-2 rounded-xl border border-stone-200 bg-white hover:bg-stone-100 text-stone-600 font-semibold text-[11px] transition">
+                                <i data-lucide="credit-card" class="w-4 h-4 mb-1"></i> Debit
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="wrapBayar" class="space-y-1.5">
+                        <label class="block text-[10px] font-bold text-stone-400 uppercase tracking-wider">Jumlah Bayar</label>
+                        <div class="relative">
+                            <span class="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-stone-400">Rp</span>
+                            <input type="number" id="inputBayar" min="0" step="1000" placeholder="0" oninput="hitungKembalian()" class="w-full pl-9 pr-3 py-2 text-base font-bold bg-white border border-stone-200 rounded-xl focus:outline-none focus:border-[#2E7D32]">
+                        </div>
+                        <div class="flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-stone-200">
+                            <span class="text-xs font-semibold text-stone-500">Kembalian</span>
+                            <span id="kembalianText" class="text-sm font-bold text-emerald-700">Rp 0</span>
+                        </div>
+                        <div class="flex gap-1 flex-wrap">
+                            <button type="button" onclick="setBayar(50000)" class="px-2.5 py-1 text-[10px] font-semibold bg-white border border-stone-200 rounded-md hover:bg-stone-100">50rb</button>
+                            <button type="button" onclick="setBayar(100000)" class="px-2.5 py-1 text-[10px] font-semibold bg-white border border-stone-200 rounded-md hover:bg-stone-100">100rb</button>
+                            <button type="button" onclick="setBayar('pas')" class="px-2.5 py-1 text-[10px] font-semibold bg-white border border-stone-200 rounded-md hover:bg-stone-100">Uang Pas</button>
+                        </div>
+                    </div>
+
+                    <button onclick="prosesCheckout()" id="btnProses" class="w-full py-3.5 bg-[#2E7D32] hover:bg-emerald-800 active:scale-[0.99] text-white rounded-xl font-bold text-sm shadow-md shadow-emerald-900/20 flex items-center justify-center gap-2 transition disabled:opacity-50 disabled:cursor-not-allowed">
+                        <i data-lucide="check-circle-2" class="w-5 h-5"></i>
+                        <span id="btnProsesText">Proses Bayar</span>
+                    </button>
+                </div>
             </div>
         </section>
     </div>
 
-    <!-- MODAL STRUK (setelah checkout) -->
+    <!-- MODAL STRUK -->
     <div id="modalStruk" class="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-2xl max-w-sm w-full max-h-[90vh] flex flex-col">
             <div class="p-5 border-b border-stone-100 flex items-center justify-between">
@@ -421,6 +416,7 @@ function gambarPOS($nama) {
             const nama  = el.dataset.nama;
             const harga = parseFloat(el.dataset.harga);
             const stok  = parseInt(el.dataset.stok);
+            const kategori = el.dataset.namaKategori; 
             const gambar = el.dataset.gambar;
 
             const existing = cart.find(i => i.id === id);
@@ -431,7 +427,15 @@ function gambarPOS($nama) {
                 }
                 existing.qty++;
             } else {
-                cart.push({ id, nama, harga, qty: 1, stok, gambar });
+                cart.push({ 
+                    id: id, 
+                    nama: nama, 
+                    harga: harga, 
+                    qty: 1, 
+                    stok: stok, 
+                    kategori: kategori, 
+                    gambar: gambar 
+                });
             }
             renderCart();
         }
@@ -452,9 +456,6 @@ function gambarPOS($nama) {
             renderCart();
         }
 
-        // ========================================================
-        // KONFIRMASI HAPUS ITEM (perbaikan #2)
-        // ========================================================
         function hapusItem(id) {
             const item = cart.find(i => i.id === id);
             if (!item) return;
@@ -482,8 +483,7 @@ function gambarPOS($nama) {
 
         function renderCart() {
             const container = document.getElementById('cartList');
-            container.innerHTML = '';
-
+            
             if (cart.length === 0) {
                 container.innerHTML = `
                     <div class="text-center py-12">
@@ -495,26 +495,28 @@ function gambarPOS($nama) {
                     </div>`;
                 lucide.createIcons();
             } else {
+                let htmlContent = '';
                 cart.forEach(item => {
-                    const row = document.createElement('div');
-                    row.className = 'py-3 flex items-center gap-3';
-                    row.innerHTML = `
-                        <img src="${item.gambar}" class="w-12 h-12 rounded-lg object-cover bg-stone-100 shrink-0">
-                        <div class="flex-1 min-w-0">
-                            <p class="text-xs font-bold text-stone-800 truncate">${item.nama}</p>
-                            <p class="text-[11px] text-stone-500 mt-0.5">${formatRp(item.harga)}</p>
-                        </div>
-                        <div class="flex items-center border border-stone-200 rounded-lg overflow-hidden bg-stone-50">
-                            <button onclick="ubahQty(${item.id}, -1)" class="px-2 py-1 text-stone-600 hover:bg-stone-200 font-bold text-xs">−</button>
-                            <span class="w-8 text-center text-xs font-bold text-stone-800">${item.qty}</span>
-                            <button onclick="ubahQty(${item.id}, 1)" class="px-2 py-1 text-stone-600 hover:bg-stone-200 font-bold text-xs">+</button>
-                        </div>
-                        <div class="text-right shrink-0 min-w-[70px]">
-                            <p class="text-xs font-bold text-stone-800">${formatRp(item.harga * item.qty)}</p>
-                            <button onclick="hapusItem(${item.id})" class="text-[10px] text-stone-400 hover:text-rose-600 mt-0.5">Hapus</button>
+                    htmlContent += `
+                        <div class="py-3 flex items-center gap-3">
+                            <img src="${item.gambar}" class="w-12 h-12 rounded-lg object-cover bg-stone-100 shrink-0 border border-stone-200">
+                            <div class="flex-1 min-w-0">
+                                <p class="text-sm font-bold text-stone-800 leading-tight">${item.nama}</p>
+                                <span class="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-stone-100 text-stone-500">${item.kategori || 'Tanaman'}</span>
+                                <p class="text-[12px] text-[#2E7D32] font-bold mt-1">${formatRp(item.harga)}</p>
+                            </div>
+                            <div class="flex flex-col items-end gap-1 shrink-0 ml-2">
+                                <div class="flex items-center border border-stone-200 rounded-lg overflow-hidden bg-stone-50">
+                                    <button onclick="ubahQty(${item.id}, -1)" class="px-2.5 py-1 text-stone-600 hover:bg-stone-200 font-bold text-sm">−</button>
+                                    <span class="w-8 text-center text-sm font-bold text-stone-800">${item.qty}</span>
+                                    <button onclick="ubahQty(${item.id}, 1)" class="px-2.5 py-1 text-stone-600 hover:bg-stone-200 font-bold text-sm">+</button>
+                                </div>
+                                <p class="text-xs font-bold text-stone-800 mt-1">${formatRp(item.harga * item.qty)}</p>
+                                <button onclick="hapusItem(${item.id})" class="text-[10px] text-rose-500 hover:text-rose-700 font-bold mt-1 bg-rose-50 px-2 py-1 rounded">Hapus</button>
+                            </div>
                         </div>`;
-                    container.appendChild(row);
                 });
+                container.innerHTML = htmlContent;
                 lucide.createIcons();
             }
 
@@ -609,31 +611,23 @@ function gambarPOS($nama) {
                 });
         }
 
-        // ========================================================
-        // TAMPILKAN STRUK (format thermal 58mm)
-        // ========================================================
         function tampilkanStruk(data) {
             let itemsHtml = '';
             data.items.forEach(i => {
                 itemsHtml += `
-                    <div style="margin-bottom:4px;">
-                        <div style="display:flex;justify-content:space-between;">
-                            <span>${i.nama}</span>
-                        </div>
+                    <div style="margin-bottom:6px;">
+                        <div style="font-weight:bold;">${i.nama}</div>
+                        <div style="font-size:9px; color:#444; margin-bottom:2px;">${i.kategori || ''}</div>
                         <div style="display:flex;justify-content:space-between;font-size:10px;">
-                            <span>&nbsp;&nbsp;${i.qty} x ${formatRp(i.harga)}</span>
+                            <span>${i.qty} x ${formatRp(i.harga)}</span>
                             <span>${formatRp(i.harga * i.qty)}</span>
                         </div>
                     </div>`;
             });
 
             const metodeLabel = {
-                'tunai': 'Tunai',
-                'qris': 'QRIS',
-                'debit': 'Debit',
-                'transfer': 'Transfer',
-                'ewallet': 'E-Wallet',
-                'cod': 'COD'
+                'tunai': 'Tunai', 'qris': 'QRIS', 'debit': 'Debit',
+                'transfer': 'Transfer', 'ewallet': 'E-Wallet', 'cod': 'COD'
             }[data.metode] || data.metode;
 
             document.getElementById('areaCetak').innerHTML = `
