@@ -14,9 +14,7 @@ $cart_count = isset($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
 $sukses = '';
 $error  = '';
 
-// =========================================================
 // FUNGSI UPLOAD FOTO PROFIL
-// =========================================================
 if (!function_exists('uploadFotoProfil')) {
     function uploadFotoProfil($file, $oldFile = '', &$errors = []) {
         if (!isset($file) || $file['error'] === UPLOAD_ERR_NO_FILE) return $oldFile;
@@ -53,20 +51,16 @@ if (!function_exists('uploadFotoProfil')) {
     }
 }
 
-// =========================================================
 // AMBIL DATA USER
-// =========================================================
 $userData = null;
 $qUser = mysqli_query($conn, "SELECT * FROM users WHERE id = $user_id LIMIT 1");
 if ($qUser) $userData = mysqli_fetch_assoc($qUser);
 
-// =========================================================
 // HANDLE POST
-// =========================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
-    // ----- HAPUS FOTO PROFIL -----
+    // HAPUS FOTO PROFIL
     if ($action === 'hapus_foto') {
         $old = $userData['foto_profil'] ?? 'default_avatar.jpg';
         if ($old && $old !== 'default_avatar.jpg' && file_exists('../uploads/avatars/' . $old)) {
@@ -80,13 +74,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // ----- UPDATE PROFIL -----
+    // UPDATE PROFIL
     if ($action === 'update_profil') {
         $nama   = mysqli_real_escape_string($conn, trim($_POST['nama_lengkap'] ?? ''));
         $no_hp  = mysqli_real_escape_string($conn, trim($_POST['no_hp'] ?? ''));
         $alamat = mysqli_real_escape_string($conn, trim($_POST['alamat'] ?? ''));
 
-        // Upload foto kalau ada
         $uploadErrors = [];
         $fotoLama = $userData['foto_profil'] ?? 'default_avatar.jpg';
         $fotoBaru = $fotoLama;
@@ -118,7 +111,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // ----- GANTI PASSWORD -----
+    // GANTI PASSWORD
     if ($action === 'ganti_password') {
         $old  = $_POST['old_password'] ?? '';
         $new  = $_POST['new_password'] ?? '';
@@ -142,29 +135,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     }
 }
 
-// Refresh userData setelah update
 $qUser = mysqli_query($conn, "SELECT * FROM users WHERE id = $user_id LIMIT 1");
 if ($qUser) $userData = mysqli_fetch_assoc($qUser);
 
-// Status message dari redirect
 if (isset($_GET['status'])) {
     if ($_GET['status'] === 'profil_updated') $sukses = "Profil berhasil diperbarui.";
     if ($_GET['status'] === 'pass_updated')   $sukses = "Password berhasil diubah.";
     if ($_GET['status'] === 'foto_reset')     $sukses = "Foto profil dikembalikan ke default.";
 }
 
-// =========================================================
-// PATH FOTO PROFIL
-// =========================================================
 $foto_profil = $userData['foto_profil'] ?? 'default_avatar.jpg';
 $isFotoCustom = ($foto_profil && $foto_profil !== 'default_avatar.jpg' && file_exists('../uploads/avatars/' . $foto_profil));
 $avatarSrc = $isFotoCustom
     ? '../uploads/avatars/' . $foto_profil
     : 'https://ui-avatars.com/api/?name=' . urlencode($nama_user) . '&background=2E7D32&color=fff&size=128';
 
-// =========================================================
-// INFO LOGIN TERAKHIR
-// =========================================================
 $lastLogin = $userData['last_login'] ?? null;
 $lastLoginText = 'Belum pernah login';
 if ($lastLogin) {
@@ -313,7 +298,6 @@ if ($lastLogin) {
                 <form method="POST" enctype="multipart/form-data" class="space-y-4">
                     <input type="hidden" name="action" value="update_profil">
 
-                    <!-- Foto Profil -->
                     <div>
                         <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Foto Profil</label>
                         <div class="flex items-center gap-4">
@@ -473,7 +457,6 @@ if ($lastLogin) {
         </main>
     </div>
 
-    <!-- FORM HAPUS FOTO (hidden) -->
     <form id="formHapusFoto" method="POST" action="profil.php" class="hidden">
         <input type="hidden" name="action" value="hapus_foto">
     </form>
@@ -494,7 +477,6 @@ if ($lastLogin) {
             const file = event.target.files[0];
             if (!file) return;
 
-            // Validasi ukuran
             if (file.size > 2 * 1024 * 1024) {
                 alert('Ukuran file melebihi 2MB.');
                 event.target.value = '';
@@ -523,7 +505,6 @@ if ($lastLogin) {
             }
         }
 
-        // Auto-hide alert sukses
         const alertSukses = document.getElementById('alertSukses');
         if (alertSukses) {
             setTimeout(() => {

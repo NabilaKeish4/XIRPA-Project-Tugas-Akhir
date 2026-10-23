@@ -1,6 +1,7 @@
 <?php
 session_start();
 require_once '../Config/database.php';
+require_once 'customer_init.php';
 
 // PROTEKSI LOGIN PELANGGAN
 if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'customer') {
