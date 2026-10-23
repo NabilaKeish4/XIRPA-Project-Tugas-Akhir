@@ -135,6 +135,214 @@ function badgeStatusLaporan($status) {
         default:         return 'bg-stone-100 text-stone-600 border-stone-200';
     }
 }
+
+// =========================================================
+// LOGIKA EXPORT PDF (Jika tombol Export PDF diklik)
+// =========================================================
+if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
+    require_once '../fpdf/fpdf.php';
+
+    // Ambil info toko
+    $data_toko = null;
+    $qToko = mysqli_query($conn, "SELECT * FROM pengaturan WHERE id = 1 LIMIT 1");
+    if ($qToko && mysqli_num_rows($qToko) > 0) $data_toko = mysqli_fetch_assoc($qToko);
+
+    $nama_toko   = $data_toko['nama_toko']   ?? 'PlantHub';
+    $nama_cabang = $data_toko['nama_cabang'] ?? 'Cabang Utama';
+    $alamat_toko = $data_toko['alamat_toko'] ?? '-';
+    $logo_toko   = $data_toko['logo_toko']   ?? 'default_logo.png';
+
+    $logo_path = '../uploads/' . $logo_toko;
+    $logo_ada  = (!empty($logo_toko) && $logo_toko !== 'default_logo.png' && file_exists($logo_path));
+
+    // Mulai FPDF
+    $pdf = new FPDF('P', 'mm', 'A4'); // Pakai Portrait biar lebih rapi
+    $pdf->SetAutoPageBreak(true, 20);
+    $pdf->SetMargins(15, 15, 15);
+    $pdf->AddPage();
+
+    // -----------------------------------------
+    // HEADER PDF
+    // -----------------------------------------
+    if ($logo_ada) {
+        $pdf->Image($logo_path, 15, 15, 18, 18);
+        $text_x = 37;
+    } else {
+        $text_x = 15;
+    }
+
+    $pdf->SetXY($text_x, 15);
+    $pdf->SetFont('Arial', 'B', 16);
+    $pdf->SetTextColor(46, 125, 50); // Hijau
+    $pdf->Cell(100, 7, strtoupper($nama_toko), 0, 2, 'L');
+    
+    $pdf->SetFont('Arial', '', 9);
+    $pdf->SetTextColor(100, 100, 100);
+    $pdf->SetX($text_x);
+    $pdf->Cell(100, 4, $nama_cabang . ' | ' . $alamat_toko, 0, 2, 'L');
+
+    // Judul Kanan
+    $pdf->SetXY(-85, 15);
+    $pdf->SetFont('Arial', 'B', 14);
+    $pdf->SetTextColor(0, 0, 0);
+    $pdf->Cell(70, 7, 'LAPORAN KEUANGAN', 0, 2, 'R');
+    
+    $pdf->SetFont('Arial', '', 9);
+    $pdf->SetTextColor(100, 100, 100);
+    $pdf->SetX(-85);
+    $pdf->Cell(70, 4, 'Periode: ' . date('d/m/Y', strtotime($tgl_mulai)) . ' - ' . date('d/m/Y', strtotime($tgl_selesai)), 0, 2, 'R');
+    $pdf->SetX(-85);
+    $pdf->Cell(70, 4, 'Dicetak: ' . date('d/m/Y H:i') . ' WIB', 0, 2, 'R');
+
+    // Garis Hijau
+    $pdf->SetY(35);
+    $pdf->SetDrawColor(46, 125, 50);
+    $pdf->SetLineWidth(1);
+    $pdf->Line(15, $pdf->GetY(), 195, $pdf->GetY());
+    $pdf->Ln(8);
+
+    // -----------------------------------------
+    // RINGKASAN KEUANGAN
+    // -----------------------------------------
+    $pdf->SetFont('Arial', 'B', 11);
+    $pdf->SetTextColor(0, 0, 0);
+    $pdf->Cell(0, 6, 'RINGKASAN KEUANGAN', 0, 1, 'L');
+    $pdf->Ln(2);
+
+    // Kotak Omset
+    $pdf->SetFillColor(240, 248, 240); // Hijau sangat muda
+    $pdf->SetDrawColor(200, 220, 200);
+    $pdf->SetFont('Arial', 'B', 10);
+    $pdf->Cell(55, 8, 'TOTAL PENDAPATAN', 1, 0, 'C', true);
+    $pdf->Cell(55, 8, 'TOTAL PENGELUARAN', 1, 0, 'C', true);
+    $pdf->Cell(55, 8, 'ESTIMASI LABA KOTOR', 1, 1, 'C', true);
+    
+    $pdf->SetFont('Arial', 'B', 12);
+    $pdf->SetTextColor(46, 125, 50); // Teks hijau
+    $pdf->Cell(55, 10, 'Rp ' . number_format($omset, 0, ',', '.'), 1, 0, 'C', true);
+    $pdf->SetTextColor(217, 119, 6); // Teks oranye (pengeluaran)
+    $pdf->Cell(55, 10, 'Rp ' . number_format($pengeluaran, 0, ',', '.'), 1, 0, 'C', true);
+    $pdf->SetTextColor(46, 125, 50); // Teks hijau
+    $pdf->Cell(55, 10, 'Rp ' . number_format($estimasiLaba, 0, ',', '.'), 1, 1, 'C', true);
+    
+    $pdf->SetTextColor(100, 100, 100);
+    $pdf->SetFont('Arial', '', 8);
+    $pdf->Cell(55, 6, '(' . (int)$summary['jumlah_penjualan'] . ' Transaksi Penjualan)', 1, 0, 'C', true);
+    $pdf->Cell(55, 6, '(' . (int)$summary['jumlah_pembelian'] . ' Transaksi Pembelian)', 1, 0, 'C', true);
+    $pdf->Cell(55, 6, '(Berdasarkan Harga Beli)', 1, 1, 'C', true);
+
+    $pdf->Ln(10);
+
+    // -----------------------------------------
+    // TOP PRODUK
+    // -----------------------------------------
+    if (!empty($topProduk)) {
+        $pdf->SetFont('Arial', 'B', 11);
+        $pdf->SetTextColor(0, 0, 0);
+        $pdf->Cell(0, 6, '5 PRODUK TERLARIS', 0, 1, 'L');
+        $pdf->Ln(2);
+
+        $pdf->SetFont('Arial', 'B', 9);
+        $pdf->SetFillColor(46, 125, 50);
+        $pdf->SetTextColor(255, 255, 255);
+        $pdf->SetDrawColor(46, 125, 50);
+        
+        $pdf->Cell(10, 8, 'No', 1, 0, 'C', true);
+        $pdf->Cell(85, 8, 'Nama Produk', 1, 0, 'C', true);
+        $pdf->Cell(25, 8, 'Terjual', 1, 0, 'C', true);
+        $pdf->Cell(45, 8, 'Total Pendapatan', 1, 1, 'C', true);
+        
+        $pdf->SetTextColor(0, 0, 0);
+        $pdf->SetDrawColor(220, 220, 220);
+        $pdf->SetFont('Arial', '', 9);
+        
+        $no = 1;
+        foreach ($topProduk as $tp) {
+            $pdf->Cell(10, 7, $no++, 1, 0, 'C');
+            $pdf->Cell(85, 7, $tp['nama_tanaman'] ?? 'Produk', 1, 0, 'L');
+            $pdf->Cell(25, 7, (int)$tp['total_terjual'] . ' pcs', 1, 0, 'C');
+            $pdf->Cell(45, 7, 'Rp ' . number_format($tp['total_pendapatan'], 0, ',', '.'), 1, 1, 'R');
+        }
+        $pdf->Ln(10);
+    }
+
+    // -----------------------------------------
+    // TABEL TRANSAKSI
+    // -----------------------------------------
+    $pdf->SetFont('Arial', 'B', 11);
+    $pdf->SetTextColor(0, 0, 0);
+    $pdf->Cell(0, 6, 'RINCIAN TRANSAKSI', 0, 1, 'L');
+    $pdf->Ln(2);
+
+    function headerTabelLaporan($pdf) {
+        $pdf->SetFont('Arial', 'B', 8);
+        $pdf->SetFillColor(46, 125, 50);
+        $pdf->SetTextColor(255, 255, 255);
+        $pdf->SetDrawColor(46, 125, 50);
+        
+        $pdf->Cell(8, 8, 'No', 1, 0, 'C', true);
+        $pdf->Cell(35, 8, 'Kode Trx', 1, 0, 'C', true);
+        $pdf->Cell(30, 8, 'Tanggal', 1, 0, 'C', true);
+        $pdf->Cell(45, 8, 'Pelanggan / Supplier', 1, 0, 'C', true);
+        $pdf->Cell(20, 8, 'Jenis', 1, 0, 'C', true);
+        $pdf->Cell(20, 8, 'Status', 1, 0, 'C', true);
+        $pdf->Cell(22, 8, 'Total (Rp)', 1, 1, 'C', true);
+        
+        $pdf->SetTextColor(0, 0, 0);
+        $pdf->SetDrawColor(220, 220, 220);
+    }
+
+    headerTabelLaporan($pdf);
+    $pdf->SetFont('Arial', '', 8);
+
+    $no = 1;
+    $grandTotal = 0;
+    if (empty($trxList)) {
+        $pdf->Cell(180, 10, 'Tidak ada transaksi pada periode ini.', 1, 1, 'C');
+    } else {
+        foreach ($trxList as $t) {
+            if ($pdf->GetY() > 250) {
+                $pdf->AddPage();
+                headerTabelLaporan($pdf);
+                $pdf->SetFont('Arial', '', 8);
+            }
+            
+            $fill = ($no % 2 === 0);
+            $pdf->SetFillColor(248, 250, 252);
+            $grandTotal += (float)$t['total_harga'];
+            
+            $pdf->Cell(8, 6, $no++, 1, 0, 'C', $fill);
+            $pdf->Cell(35, 6, $t['kode_transaksi'], 1, 0, 'L', $fill);
+            $pdf->Cell(30, 6, date('d/m/Y', strtotime($t['created_at'])), 1, 0, 'C', $fill);
+            $pdf->Cell(45, 6, substr($t['pelanggan'], 0, 25), 1, 0, 'L', $fill);
+            $pdf->Cell(20, 6, ucfirst($t['jenis_transaksi']), 1, 0, 'C', $fill);
+            $pdf->Cell(20, 6, $t['status'], 1, 0, 'C', $fill);
+            $pdf->Cell(22, 6, number_format($t['total_harga'], 0, ',', '.'), 1, 1, 'R', $fill);
+        }
+        
+        // Footer Total
+        $pdf->SetFont('Arial', 'B', 9);
+        $pdf->SetFillColor(240, 248, 240);
+        $pdf->SetTextColor(46, 125, 50);
+        $pdf->Cell(158, 8, 'TOTAL KESELURUHAN', 1, 0, 'R', true);
+        $pdf->Cell(22, 8, number_format($grandTotal, 0, ',', '.'), 1, 1, 'R', true);
+    }
+
+    // Tanda Tangan (Opsional, biar keren)
+    $pdf->Ln(15);
+    $pdf->SetFont('Arial', '', 9);
+    $pdf->SetTextColor(0, 0, 0);
+    $pdf->Cell(130);
+    $pdf->Cell(50, 5, 'Dicetak Oleh,', 0, 1, 'C');
+    $pdf->Ln(12);
+    $pdf->Cell(130);
+    $pdf->SetFont('Arial', 'B', 9);
+    $pdf->Cell(50, 5, $admin_nama, 0, 1, 'C');
+
+    $filename = 'Laporan_Keuangan_' . date('Ymd_His') . '.pdf';
+    $pdf->Output('I', $filename);
+    exit;
+}
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -148,17 +356,11 @@ function badgeStatusLaporan($status) {
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; }
-
-        @media print {
-            .no-print { display: none !important; }
-            body { background-color: #ffffff; }
-            main { padding: 0 !important; max-width: 100% !important; }
-        }
     </style>
 </head>
 <body class="antialiased min-h-screen flex flex-col">
 
-    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm no-print">
+    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
         <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
             <div class="flex items-center gap-3">
                 <button onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
@@ -187,23 +389,23 @@ function badgeStatusLaporan($status) {
     </header>
 
     <div class="flex flex-1">
-        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4 no-print">
+        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
             <div class="space-y-6">
                 <nav class="space-y-1">
                     <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
                     <?php
                    $menu = [
-    ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
-    ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
-    ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
-    ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
-    ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],  // ← BARU
-    ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],  // ← BARU
-    ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
-    ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
-    ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
-    ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
-];
+                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
+                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
+                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
+                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
+                        ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],
+                        ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],
+                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
+                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
+                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
+                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => true],
+                    ];
                     foreach ($menu as $m):
                         $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
                     ?>
@@ -243,18 +445,19 @@ function badgeStatusLaporan($status) {
                     <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Laporan Keuangan Toko</h1>
                     <p class="text-sm text-stone-500 mt-0.5">Analisis arus kas, omzet, dan performa penjualan.</p>
                 </div>
-                <div class="flex items-center gap-2 no-print">
-                    <button onclick="window.print()" class="inline-flex items-center gap-2 bg-white border border-stone-300 px-3.5 py-2.5 rounded-xl text-sm font-medium text-stone-700 hover:bg-stone-50 shadow-sm">
-                        <i data-lucide="printer" class="w-4 h-4 text-stone-500"></i> Cetak
-                    </button>
-                    <a href="pos.php" class="inline-flex items-center gap-2 bg-[#2E7D32] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-emerald-800 shadow-sm">
+                <div class="flex items-center gap-2">
+                    <!-- TOMBOL EXPORT PDF (TANPA TOMBOL CETAK) -->
+                    <a href="laporan.php?export=pdf&<?= http_build_query($_GET) ?>" target="_blank" class="inline-flex items-center gap-2 bg-[#2E7D32] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-emerald-800 shadow-sm transition">
+                        <i data-lucide="download" class="w-4 h-4"></i> Export PDF
+                    </a>
+                    <a href="pos.php" class="inline-flex items-center gap-2 bg-white border border-stone-300 text-stone-700 px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-stone-50 shadow-sm">
                         <i data-lucide="plus" class="w-4 h-4"></i> Transaksi Baru
                     </a>
                 </div>
             </div>
 
             <!-- FILTER TANGGAL -->
-            <div class="bg-white p-5 rounded-2xl border border-stone-200/80 shadow-sm space-y-4 no-print">
+            <div class="bg-white p-5 rounded-2xl border border-stone-200/80 shadow-sm space-y-4">
                 <div class="flex items-center justify-between flex-wrap gap-2">
                     <p class="text-xs font-bold text-stone-400 uppercase tracking-wider">Filter Cepat</p>
                     <div class="flex items-center gap-2">
@@ -295,15 +498,15 @@ function badgeStatusLaporan($status) {
                     </span>
                 </div>
 
-                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32]">
+                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#D97706]">
                     <div class="flex items-center justify-between mb-3">
                         <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Pengeluaran Restock</p>
-                        <div class="w-10 h-10 rounded-xl bg-emerald-50 text-[#2E7D32] flex items-center justify-center">
+                        <div class="w-10 h-10 rounded-xl bg-amber-50 text-[#D97706] flex items-center justify-center">
                             <i data-lucide="truck" class="w-5 h-5"></i>
                         </div>
                     </div>
                     <p class="text-2xl font-bold text-stone-800 tracking-tight mb-2">Rp <?= number_format($pengeluaran, 0, ',', '.') ?></p>
-                    <span class="inline-flex items-center gap-1 font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100 text-xs">
+                    <span class="inline-flex items-center gap-1 font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-100 text-xs">
                         <i data-lucide="check-circle-2" class="w-3 h-3"></i> <?= (int)$summary['jumlah_pembelian'] ?> restock
                     </span>
                 </div>
@@ -321,15 +524,15 @@ function badgeStatusLaporan($status) {
                     </span>
                 </div>
 
-                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#D97706]">
+                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-blue-500">
                     <div class="flex items-center justify-between mb-3">
                         <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Periode Laporan</p>
-                        <div class="w-10 h-10 rounded-xl bg-amber-50 text-[#D97706] flex items-center justify-center">
+                        <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center">
                             <i data-lucide="calendar" class="w-5 h-5"></i>
                         </div>
                     </div>
                     <p class="text-lg font-bold text-stone-800 tracking-tight mb-2"><?= date('d/m/Y', strtotime($tgl_mulai)) ?></p>
-                    <span class="inline-flex items-center gap-1 font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-100 text-xs">
+                    <span class="inline-flex items-center gap-1 font-medium text-blue-700 bg-blue-50 px-2 py-0.5 rounded-md border border-blue-100 text-xs">
                         <i data-lucide="arrow-right" class="w-3 h-3"></i> <?= date('d/m/Y', strtotime($tgl_selesai)) ?>
                     </span>
                 </div>
@@ -520,4 +723,4 @@ function badgeStatusLaporan($status) {
         });
     </script>
 </body>
-</html>
+</html> 

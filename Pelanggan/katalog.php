@@ -36,13 +36,11 @@ if ($hargaMin !== null) $where .= " AND p.harga_jual >= $hargaMin";
 if ($hargaMax !== null) $where .= " AND p.harga_jual <= $hargaMax";
 if ($hanyaReady)     $where .= " AND p.stok > 0";
 
-// Sorting
 switch ($sortBy) {
     case 'harga_asc':  $orderBy = 'p.harga_jual ASC'; break;
     case 'harga_desc': $orderBy = 'p.harga_jual DESC'; break;
     case 'nama_asc':   $orderBy = 'p.nama_tanaman ASC'; break;
     case 'terlaris':
-        // Subquery total terjual
         $orderBy = '(SELECT COALESCE(SUM(td.jumlah), 0) FROM transaksi_detail td 
                      JOIN transaksi t ON td.transaksi_id = t.id 
                      WHERE td.produk_id = p.id AND t.status = "Selesai" AND t.jenis_transaksi = "penjualan") DESC, p.id DESC';
@@ -50,7 +48,6 @@ switch ($sortBy) {
     default:           $orderBy = 'p.stok DESC, p.id DESC';
 }
 
-// Ambil produk
 $produkList = [];
 $qProduk = mysqli_query($conn, "
     SELECT p.*, k.nama_kategori,
@@ -66,12 +63,10 @@ if ($qProduk) while ($r = mysqli_fetch_assoc($qProduk)) $produkList[] = $r;
 
 $totalProduk = count($produkList);
 
-// Ambil kategori
 $kategoriList = [];
 $qKat = mysqli_query($conn, "SELECT * FROM kategori ORDER BY id ASC");
 if ($qKat) while ($r = mysqli_fetch_assoc($qKat)) $kategoriList[] = $r;
 
-// Cari best seller untuk badge (limit 5 terlaris)
 $bestSellers = [];
 $qBest = mysqli_query($conn, "
     SELECT td.produk_id, SUM(td.jumlah) AS total 
@@ -93,13 +88,11 @@ function gambarKatalog($nama) {
     return "https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400";
 }
 
-// Helper URL
 function buildKatalogUrl($overrides = []) {
     $params = array_merge($_GET, $overrides);
     return 'katalog.php?' . http_build_query($params);
 }
 
-// Ada filter aktif?
 $adaFilterAktif = ($search !== '' || $kategori > 0 || $hargaMin !== null || $hargaMax !== null || $hanyaReady);
 ?>
 <!DOCTYPE html>
@@ -139,9 +132,7 @@ $adaFilterAktif = ($search !== '' || $kategori > 0 || $hargaMin !== null || $har
             <div class="flex items-center gap-3">
                 <a href="cart.php" class="relative p-2 text-stone-600 hover:bg-stone-100 rounded-full">
                     <i data-lucide="shopping-cart" class="w-5 h-5"></i>
-                    <?php if ($cart_count > 0): ?>
-                        <span class="absolute top-1 right-1 w-4 h-4 bg-[#2E7D32] text-white text-[9px] font-bold rounded-full flex items-center justify-center ring-2 ring-white"><?= $cart_count ?></span>
-                    <?php endif; ?>
+                    <span id="cart-badge-header" class="absolute top-1 right-1 w-4 h-4 bg-[#2E7D32] text-white text-[9px] font-bold rounded-full flex items-center justify-center ring-2 ring-white <?= $cart_count > 0 ? '' : 'hidden' ?>"><?= $cart_count ?></span>
                 </a>
                 <div class="h-6 w-px bg-stone-200 hidden sm:block"></div>
                 <a href="dashboard.php" class="flex items-center gap-3 pl-1">
@@ -188,7 +179,7 @@ $adaFilterAktif = ($search !== '' || $kategori > 0 || $hargaMin !== null || $har
                 </div>
                 <div class="overflow-hidden">
                     <p class="text-sm font-bold text-stone-800 leading-tight">Troli Belanja</p>
-                    <p class="text-[11px] text-stone-400 mt-0.5"><?= $cart_count ?> item</p>
+                    <p id="cart-count-sidebar" class="text-[11px] text-stone-400 mt-0.5"><?= $cart_count ?> item</p>
                 </div>
             </div>
         </aside>
@@ -207,7 +198,6 @@ $adaFilterAktif = ($search !== '' || $kategori > 0 || $hargaMin !== null || $har
 
             <div class="bg-white p-4 rounded-2xl border border-stone-200/80 shadow-sm space-y-3">
 
-                <!-- Search + Filter Harga (mobile friendly) -->
                 <form method="GET" action="katalog.php" class="grid grid-cols-1 md:grid-cols-12 gap-3">
                     <div class="md:col-span-5 relative">
                         <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
@@ -237,7 +227,6 @@ $adaFilterAktif = ($search !== '' || $kategori > 0 || $hargaMin !== null || $har
                     <?php if ($hanyaReady): ?><input type="hidden" name="ready" value="1"><?php endif; ?>
                 </form>
 
-                <!-- Kategori Chips -->
                 <div class="flex items-center gap-2 overflow-x-auto pb-1">
                     <a href="<?= buildKatalogUrl(['kategori' => null, 'search' => $search ?: null]) ?>" 
                        class="px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $kategori === 0 ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">
@@ -251,7 +240,6 @@ $adaFilterAktif = ($search !== '' || $kategori > 0 || $hargaMin !== null || $har
                     <?php endforeach; ?>
                 </div>
 
-                <!-- Sorting + Filter Ready -->
                 <div class="flex flex-col sm:flex-row sm:items-center gap-3 pt-3 border-t border-stone-100">
                     <div class="flex items-center gap-2 overflow-x-auto pb-1 flex-1">
                         <span class="text-xs font-bold text-stone-400 uppercase tracking-wider whitespace-nowrap">Urutkan:</span>
@@ -283,7 +271,6 @@ $adaFilterAktif = ($search !== '' || $kategori > 0 || $hargaMin !== null || $har
                     </a>
                 </div>
 
-                <!-- Info filter aktif -->
                 <?php if ($adaFilterAktif): ?>
                     <div class="pt-3 border-t border-stone-100 flex items-center flex-wrap gap-2 text-xs">
                         <span class="text-stone-500">Filter aktif:</span>
@@ -341,14 +328,12 @@ $adaFilterAktif = ($search !== '' || $kategori > 0 || $hargaMin !== null || $har
                             <div class="relative bg-stone-100 h-44 overflow-hidden">
                                 <img src="<?= htmlspecialchars($imgSrc) ?>" alt="<?= htmlspecialchars($p['nama_tanaman']) ?>" class="w-full h-full object-cover">
 
-                                <!-- Badge kiri atas: status stok -->
                                 <?php if ($isHabis): ?>
                                     <span class="absolute top-2.5 left-2.5 bg-rose-600 text-white text-[10px] font-bold px-2 py-1 rounded-md uppercase">Stok Habis</span>
                                 <?php elseif ($isKritis): ?>
                                     <span class="absolute top-2.5 left-2.5 bg-[#D97706] text-white text-[10px] font-bold px-2 py-1 rounded-md uppercase">Stok Terbatas</span>
                                 <?php endif; ?>
 
-                                <!-- Badge kanan atas: terlaris -->
                                 <?php if ($isBestSeller): ?>
                                     <span class="absolute top-2.5 right-2.5 bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] font-bold px-2 py-1 rounded-md uppercase inline-flex items-center gap-1 shadow-sm">
                                         <i data-lucide="flame" class="w-3 h-3"></i>
@@ -381,9 +366,12 @@ $adaFilterAktif = ($search !== '' || $kategori > 0 || $hargaMin !== null || $har
                                             Habis
                                         </button>
                                     <?php else: ?>
-                                        <a href="cart.php?action=add&id=<?= (int)$p['id'] ?>" class="text-center text-xs font-semibold text-white bg-[#2E7D32] hover:bg-emerald-800 py-2 rounded-lg transition">
+                                        <button type="button"
+                                                class="btn-add-cart text-center text-xs font-semibold text-white bg-[#2E7D32] hover:bg-emerald-800 py-2 rounded-lg transition"
+                                                data-id="<?= (int)$p['id'] ?>"
+                                                data-nama="<?= htmlspecialchars($p['nama_tanaman']) ?>">
                                             + Keranjang
-                                        </a>
+                                        </button>
                                     <?php endif; ?>
                                 </div>
                             </div>
@@ -395,6 +383,9 @@ $adaFilterAktif = ($search !== '' || $kategori > 0 || $hargaMin !== null || $har
         </main>
     </div>
 
+    <!-- Container Toast Notification -->
+    <div id="toast-container" class="fixed top-20 right-4 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
     <script>
         lucide.createIcons();
         function toggleMobileSidebar() {
@@ -405,6 +396,91 @@ $adaFilterAktif = ($search !== '' || $kategori > 0 || $hargaMin !== null || $har
             s?.classList.toggle('left-0');
             s?.classList.toggle('z-40');
         }
+
+        // =========================================================
+        // AJAX TAMBAH KE KERANJANG (tanpa pindah halaman)
+        // =========================================================
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            const colors = {
+                success: { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-800', icon: 'check-circle', iconColor: 'text-[#2E7D32]' },
+                warning: { bg: 'bg-amber-50',   border: 'border-amber-200',   text: 'text-amber-800',   icon: 'alert-triangle', iconColor: 'text-[#D97706]' },
+                error:   { bg: 'bg-rose-50',    border: 'border-rose-200',    text: 'text-rose-700',    icon: 'x-circle',     iconColor: 'text-rose-500' }
+            };
+            const c = colors[type] || colors.success;
+
+            const toast = document.createElement('div');
+            toast.className = `pointer-events-auto ${c.bg} border ${c.border} ${c.text} rounded-xl shadow-lg px-4 py-3 text-sm flex items-start gap-3 max-w-sm opacity-0 translate-x-4 transition-all duration-300`;
+            toast.innerHTML = `
+                <i data-lucide="${c.icon}" class="w-5 h-5 shrink-0 ${c.iconColor} mt-0.5"></i>
+                <span class="flex-1 font-medium">${message}</span>
+                <button class="shrink-0 text-stone-400 hover:text-stone-600 transition" onclick="this.parentElement.remove()">
+                    <i data-lucide="x" class="w-4 h-4"></i>
+                </button>
+            `;
+            container.appendChild(toast);
+            lucide.createIcons();
+
+            requestAnimationFrame(() => {
+                toast.classList.remove('opacity-0', 'translate-x-4');
+            });
+
+            setTimeout(() => {
+                toast.classList.add('opacity-0', 'translate-x-4');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        }
+
+        function updateCartBadge(count) {
+            const headerBadge = document.getElementById('cart-badge-header');
+            const sidebarCount = document.getElementById('cart-count-sidebar');
+
+            if (headerBadge) {
+                headerBadge.textContent = count;
+                headerBadge.classList.toggle('hidden', count <= 0);
+            }
+            if (sidebarCount) {
+                sidebarCount.textContent = count + ' item';
+            }
+        }
+
+        document.addEventListener('click', async function(e) {
+            const btn = e.target.closest('.btn-add-cart');
+            if (!btn) return;
+            e.preventDefault();
+
+            const id   = btn.dataset.id;
+            const nama = btn.dataset.nama;
+
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = '...';
+            btn.classList.add('opacity-70', 'cursor-wait');
+
+            try {
+                const formData = new FormData();
+                formData.append('ajax', '1');
+                formData.append('id', id);
+                formData.append('qty', '1');
+
+                const res = await fetch('cart.php', { method: 'POST', body: formData });
+                const data = await res.json();
+
+                updateCartBadge(data.cart_count);
+
+                if (data.status === 'success') {
+                    showToast(`"${nama}" ditambahkan ke keranjang`, 'success');
+                } else {
+                    showToast(data.message, data.status);
+                }
+            } catch (err) {
+                showToast('Gagal menambahkan ke keranjang. Coba lagi.', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+                btn.classList.remove('opacity-70', 'cursor-wait');
+            }
+        });
     </script>
 </body>
 </html>

@@ -38,6 +38,32 @@ function tambahKeKeranjang($conn, $id, $qty = 1) {
     return 'added';
 }
 
+// =========================================================
+// RESPONSE JSON UNTUK AJAX (tombol + Keranjang di katalog)
+// =========================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ajax']) && $_POST['ajax'] === '1') {
+    header('Content-Type: application/json');
+
+    $id  = (int)($_POST['id'] ?? 0);
+    $qty = (int)($_POST['qty'] ?? 1);
+    $res = tambahKeKeranjang($conn, $id, $qty);
+
+    $cartCount = isset($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
+
+    $map = [
+        'added'     => ['status' => 'success', 'message' => 'Produk berhasil ditambahkan ke keranjang!'],
+        'overstock' => ['status' => 'warning', 'message' => 'Jumlah melebihi stok yang tersedia.'],
+        'notfound'  => ['status' => 'error',   'message' => 'Produk tidak ditemukan.'],
+        'invalid'   => ['status' => 'error',   'message' => 'Produk tidak valid.'],
+    ];
+
+    $payload = $map[$res] ?? ['status' => 'error', 'message' => 'Gagal menambahkan produk.'];
+    $payload['cart_count'] = $cartCount;
+
+    echo json_encode($payload);
+    exit;
+}
+
 // HANDLE AKSI
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'add') {
     $id  = (int)($_POST['id'] ?? 0);
@@ -95,7 +121,6 @@ if (isset($_GET['action'])) {
                     $removed++;
                 }
             } else {
-                // Produk tidak ditemukan → hapus juga
                 unset($_SESSION['cart'][$pid]);
                 $removed++;
             }
@@ -117,8 +142,8 @@ $items      = [];
 $subtotal   = 0;
 $cart_count = 0;
 
-$adjustedItems = []; // Item yang qty-nya disesuaikan
-$emptyItems    = []; // Item yang stoknya habis
+$adjustedItems = [];
+$emptyItems    = [];
 
 if (!empty($cart_items)) {
     $ids = implode(',', array_map('intval', array_keys($cart_items)));
@@ -139,17 +164,14 @@ if (!empty($cart_items)) {
                 $stokMinimal  = (int)$row['stok_minimal'];
                 $harga        = (float)$row['harga_jual'];
 
-                // ---- VALIDASI STOK REAL-TIME ----
-                $statusItem = 'ok'; // ok | adjusted | empty
+                $statusItem = 'ok';
                 $qtyFinal   = $qtyInCart;
 
                 if ($stokTersedia <= 0) {
-                    // Stok habis total
                     $statusItem = 'empty';
                     $qtyFinal   = 0;
                     $emptyItems[] = $row['nama_tanaman'];
                 } elseif ($qtyInCart > $stokTersedia) {
-                    // Qty di cart > stok tersedia → auto-adjust
                     $_SESSION['cart'][$pid] = $stokTersedia;
                     $qtyFinal   = $stokTersedia;
                     $statusItem = 'adjusted';
@@ -160,7 +182,6 @@ if (!empty($cart_items)) {
                     ];
                 }
 
-                // Skip item yang habis dari perhitungan
                 if ($statusItem === 'empty') {
                     $items[] = [
                         'id'          => $pid,
@@ -200,7 +221,6 @@ if (!empty($cart_items)) {
             }
         }
 
-        // Handle produk yang sudah tidak ada di DB (dihapus admin)
         foreach ($cart_items as $pid => $qty) {
             $found = false;
             foreach ($items as $it) {
@@ -322,7 +342,6 @@ $hasEmptyItem = !empty($emptyItems);
                 <?php endif; ?>
             </div>
 
-            <!-- NOTIFIKASI STOK BERUBAH (PRIORITAS TERTINGGI) -->
             <?php if (!empty($adjustedItems) || $hasEmptyItem): ?>
                 <div class="bg-amber-50 border-2 border-amber-200 rounded-2xl p-5 space-y-4">
                     <div class="flex items-start gap-3">
