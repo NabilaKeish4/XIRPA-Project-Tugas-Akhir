@@ -1,545 +1,262 @@
 <?php
-session_start();
-require_once '../Config/database.php';
+require_once __DIR__ . '/customer_init.php';
 
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'customer') {
-    header("Location: ../Auth/login.php");
-    exit;
-}
+$uid = user_id();
 
-$user_id    = (int)$_SESSION['user_id'];
-$nama_user  = $_SESSION['nama_user'] ?? 'Pelanggan';
-$cart_count = isset($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
+// =====================================================
+// AKSI: BATALKAN & BELI LAGI (POST + CSRF)
+// =====================================================
+if (is_post()) {
+    csrf_require('riwayat.php');
+    $action = $_POST['action'] ?? '';
+    $trx    = (int)($_POST['trx_id'] ?? 0);
+    $back   = 'riwayat.php';
 
-// =========================================================
-// HELPER FUNCTIONS (dideklarasikan 1x saja di atas)
-// =========================================================
-if (!function_exists('badgeStatus')) {
-    function badgeStatus($status) {
-        switch ($status) {
-            case 'Diproses': return 'bg-amber-50 text-amber-700 border-amber-200';
-            case 'Dikirim':  return 'bg-blue-50 text-blue-700 border-blue-200';
-            case 'Selesai':  return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-            case 'Batal':    return 'bg-rose-50 text-rose-700 border-rose-200';
-            default:         return 'bg-stone-100 text-stone-600 border-stone-200';
-        }
-    }
-}
+    if ($action === 'batalkan' && $trx > 0) {
+        try {
+            db_begin();
+            $o = db_one("SELECT id, status FROM transaksi WHERE id = ? AND user_id = ? AND jenis_transaksi = 'penjualan' FOR UPDATE", 'ii', [$trx, $uid]);
+            if (!$o) throw new UserError('Pesanan tidak ditemukan.');
+            if ($o['status'] !== 'Diproses') throw new UserError("Hanya pesanan berstatus 'Diproses' yang bisa dibatalkan.");
 
-if (!function_exists('buildRiwayatUrl')) {
-    function buildRiwayatUrl($overrides = []) {
-        $params = array_merge($_GET, $overrides);
-        return 'riwayat.php?' . http_build_query($params);
-    }
-}
-
-// =========================================================
-// HANDLE BATALKAN PESANAN
-// =========================================================
-$batalMsg = '';
-$batalErr = '';
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'batalkan') {
-    $trx_id = (int)($_POST['trx_id'] ?? 0);
-    if ($trx_id > 0) {
-        $qCek = mysqli_query($conn, "SELECT * FROM transaksi WHERE id = $trx_id AND user_id = $user_id AND jenis_transaksi = 'penjualan' LIMIT 1");
-        if ($qCek && $row = mysqli_fetch_assoc($qCek)) {
-            if ($row['status'] !== 'Diproses') {
-                $batalErr = "Hanya pesanan dengan status 'Diproses' yang bisa dibatalkan.";
-            } else {
-                mysqli_begin_transaction($conn);
-                try {
-                    $qDet = mysqli_query($conn, "SELECT produk_id, jumlah FROM transaksi_detail WHERE transaksi_id = $trx_id");
-                    if ($qDet) {
-                        while ($d = mysqli_fetch_assoc($qDet)) {
-                            $pid = (int)$d['produk_id'];
-                            $qty = (int)$d['jumlah'];
-                            mysqli_query($conn, "UPDATE produk SET stok = stok + $qty WHERE id = $pid");
-                        }
-                    }
-                    if (!mysqli_query($conn, "UPDATE transaksi SET status = 'Batal' WHERE id = $trx_id")) {
-                        throw new Exception(mysqli_error($conn));
-                    }
-                    mysqli_commit($conn);
-                    header("Location: riwayat.php?status=batal");
-                    exit;
-                } catch (Exception $e) {
-                    mysqli_rollback($conn);
-                    $batalErr = "Gagal membatalkan: " . $e->getMessage();
-                }
+            foreach (db_all('SELECT produk_id, jumlah FROM transaksi_detail WHERE transaksi_id = ?', 'i', [$trx]) as $d) {
+                db_exec('UPDATE produk SET stok = stok + ? WHERE id = ?', 'ii', [(int)$d['jumlah'], (int)$d['produk_id']]);
             }
-        } else {
-            $batalErr = "Pesanan tidak ditemukan.";
+            db_exec("UPDATE transaksi SET status = 'Batal' WHERE id = ? AND status = 'Diproses'", 'i', [$trx]);
+            db_commit();
+            flash('success', 'Pesanan berhasil dibatalkan. Stok produk telah dikembalikan.');
+        } catch (UserError $e) {
+            db_rollback(); flash('error', $e->getMessage());
+        } catch (Throwable $e) {
+            db_rollback(); error_log('BATAL GAGAL: ' . $e->getMessage()); flash('error', 'Gagal membatalkan pesanan, coba lagi.');
         }
+        redirect($back);
     }
-}
 
-if (isset($_GET['status']) && $_GET['status'] === 'batal') {
-    $batalMsg = "Pesanan berhasil dibatalkan. Stok produk telah dikembalikan.";
-}
+    if ($action === 'beli_lagi' && $trx > 0) {
+        $own = db_val("SELECT COUNT(*) FROM transaksi WHERE id = ? AND user_id = ? AND jenis_transaksi = 'penjualan'", 'ii', [$trx, $uid], 0);
+        if (!$own) { flash('error', 'Pesanan tidak ditemukan.'); redirect($back); }
 
-// =========================================================
-// HANDLE BELI LAGI
-// =========================================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'beli_lagi') {
-    $trx_id = (int)($_POST['trx_id'] ?? 0);
-    if ($trx_id > 0) {
-        $qCek = mysqli_query($conn, "SELECT id FROM transaksi WHERE id = $trx_id AND user_id = $user_id AND jenis_transaksi = 'penjualan' LIMIT 1");
-        if ($qCek && mysqli_num_rows($qCek) > 0) {
-            $added = 0;
-            $skipped = [];
-
-            $qDet = mysqli_query($conn, "
-                SELECT td.produk_id, td.jumlah, p.nama_tanaman, p.stok 
-                FROM transaksi_detail td
-                LEFT JOIN produk p ON td.produk_id = p.id
-                WHERE td.transaksi_id = $trx_id
-            ");
-            if ($qDet) {
-                while ($d = mysqli_fetch_assoc($qDet)) {
-                    $pid  = (int)$d['produk_id'];
-                    $qty  = (int)$d['jumlah'];
-                    $stok = (int)($d['stok'] ?? 0);
-                    $nama = $d['nama_tanaman'] ?? 'Produk';
-
-                    if ($pid <= 0) continue;
-
-                    if ($stok <= 0) {
-                        $skipped[] = "$nama (habis)";
-                        continue;
-                    }
-
-                    $qtyFinal = min($qty, $stok);
-                    if ($qtyFinal < $qty) {
-                        $skipped[] = "$nama (stok kurang, dapat $qtyFinal dari $qty)";
-                    }
-
-                    $qtySekarang = isset($_SESSION['cart'][$pid]) ? (int)$_SESSION['cart'][$pid] : 0;
-                    $_SESSION['cart'][$pid] = min($qtySekarang + $qtyFinal, $stok);
-                    $added++;
-                }
-            }
-
-            $_SESSION['beli_lagi_result'] = [
-                'added'   => $added,
-                'skipped' => $skipped,
-            ];
-            header("Location: cart.php?msg=beli_lagi");
-            exit;
+        $added = 0; $skipped = [];
+        $rows = db_all("SELECT td.produk_id, td.jumlah, p.nama_tanaman, p.stok FROM transaksi_detail td LEFT JOIN produk p ON p.id = td.produk_id WHERE td.transaksi_id = ?", 'i', [$trx]);
+        foreach ($rows as $d) {
+            $pid = (int)$d['produk_id']; $qty = (int)$d['jumlah']; $stok = (int)($d['stok'] ?? 0);
+            $nama = $d['nama_tanaman'] ?? 'Produk';
+            if ($pid <= 0 || $d['nama_tanaman'] === null) { $skipped[] = 'Produk sudah tidak tersedia'; continue; }
+            if ($stok <= 0) { $skipped[] = "$nama (habis)"; continue; }
+            $cart = cart_get();
+            $now  = $cart[$pid] ?? 0;
+            $new  = min($now + $qty, $stok);
+            if ($new < $now + $qty) $skipped[] = "$nama (stok terbatas, jadi $new)";
+            $_SESSION['cart'][$pid] = $new;
+            $added++;
         }
+        if ($added > 0) flash('success', "$added produk dimasukkan ke keranjang.");
+        if ($skipped)   flash('warning', 'Catatan: ' . implode('; ', $skipped));
+        if ($added === 0) { flash('error', 'Tidak ada produk yang bisa dipesan ulang.'); redirect($back); }
+        redirect('cart.php');
     }
-    header("Location: riwayat.php");
-    exit;
+    redirect($back);
 }
 
-// =========================================================
-// PARAMETER FILTER
-// =========================================================
-$statusFilter = $_GET['status_filter'] ?? 'semua';
-$allowedStatus = ['semua', 'Diproses', 'Dikirim', 'Selesai', 'Batal'];
-if (!in_array($statusFilter, $allowedStatus)) $statusFilter = 'semua';
+// =====================================================
+// FILTER
+// =====================================================
+$allowed = ['semua', 'Diproses', 'Dikirim', 'Selesai', 'Batal'];
+$statusFilter = $_GET['status_filter'] ?? ($_GET['status'] ?? 'semua');
+if (!in_array($statusFilter, $allowed, true)) $statusFilter = 'semua';
 
-$search = isset($_GET['search']) ? mysqli_real_escape_string($conn, trim($_GET['search'])) : '';
+$search = trim((string)($_GET['search'] ?? ''));
+$range  = $_GET['range'] ?? 'all';
+if (!in_array($range, ['all', 'today', '7days', '30days', 'custom'], true)) $range = 'all';
 
-// Filter tanggal
-$range       = $_GET['range'] ?? 'all';
-$tgl_mulai   = $_GET['tgl_mulai']   ?? date('Y-m-01');
-$tgl_selesai = $_GET['tgl_selesai'] ?? date('Y-m-d');
-
-if ($range === 'today') {
-    $tgl_mulai = $tgl_selesai = date('Y-m-d');
-} elseif ($range === '7days') {
-    $tgl_mulai   = date('Y-m-d', strtotime('-7 days'));
-    $tgl_selesai = date('Y-m-d');
-} elseif ($range === '30days') {
-    $tgl_mulai   = date('Y-m-d', strtotime('-30 days'));
-    $tgl_selesai = date('Y-m-d');
-} elseif ($range === 'all') {
-    $tgl_mulai = $tgl_selesai = null;
-} elseif ($range === 'custom') {
-    // pakai input dari user
+$isDate = fn($d) => is_string($d) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $d) && strtotime($d) !== false;
+$tglMulai = $tglSelesai = null;
+if ($range === 'today')      { $tglMulai = $tglSelesai = date('Y-m-d'); }
+elseif ($range === '7days')  { $tglMulai = date('Y-m-d', strtotime('-7 days'));  $tglSelesai = date('Y-m-d'); }
+elseif ($range === '30days') { $tglMulai = date('Y-m-d', strtotime('-30 days')); $tglSelesai = date('Y-m-d'); }
+elseif ($range === 'custom') {
+    $m = $_GET['tgl_mulai'] ?? ''; $s = $_GET['tgl_selesai'] ?? '';
+    if ($isDate($m) && $isDate($s)) { $tglMulai = min($m, $s); $tglSelesai = max($m, $s); }
+    else $range = 'all';
 }
 
-// =========================================================
-// BUILD WHERE
-// =========================================================
-$where = "WHERE t.user_id = $user_id AND t.jenis_transaksi = 'penjualan'";
+$where = ["t.user_id = ?", "t.jenis_transaksi = 'penjualan'"]; $types = 'i'; $params = [$uid];
+if ($statusFilter !== 'semua') { $where[] = 't.status = ?'; $types .= 's'; $params[] = $statusFilter; }
+if ($search !== '') { $where[] = 't.kode_transaksi LIKE ?'; $types .= 's'; $params[] = '%' . addcslashes($search, '%_\\') . '%'; }
+if ($tglMulai !== null) { $where[] = 'DATE(t.created_at) BETWEEN ? AND ?'; $types .= 'ss'; $params[] = $tglMulai; $params[] = $tglSelesai; }
+$whereSql = implode(' AND ', $where);
 
-if ($statusFilter !== 'semua') {
-    $statusEsc = mysqli_real_escape_string($conn, $statusFilter);
-    $where .= " AND t.status = '$statusEsc'";
-}
-if ($search !== '') {
-    $where .= " AND t.kode_transaksi LIKE '%$search%'";
-}
-if ($tgl_mulai !== null && $tgl_selesai !== null) {
-    $mulaiEsc   = mysqli_real_escape_string($conn, $tgl_mulai);
-    $selesaiEsc = mysqli_real_escape_string($conn, $tgl_selesai);
-    $where .= " AND DATE(t.created_at) BETWEEN '$mulaiEsc' AND '$selesaiEsc'";
-}
+$page    = max(1, (int)($_GET['page'] ?? 1));
+$perPage = 8;
+$totalRows = (int)db_val("SELECT COUNT(*) FROM transaksi t WHERE $whereSql", $types, $params, 0);
+$pages  = max(1, (int)ceil($totalRows / $perPage));
+$page   = min($page, $pages);
+$offset = ($page - 1) * $perPage;
 
-// =========================================================
-// QUERY TRANSAKSI
-// =========================================================
-$orders = [];
-$qOrders = mysqli_query($conn, "
-    SELECT t.*, 
+$orders = db_all("
+    SELECT t.*,
            (SELECT COUNT(*) FROM transaksi_detail td WHERE td.transaksi_id = t.id) AS jml_item,
-           (SELECT COALESCE(SUM(jumlah), 0) FROM transaksi_detail td WHERE td.transaksi_id = t.id) AS total_qty
-    FROM transaksi t
-    $where
-    ORDER BY t.created_at DESC
-");
-if ($qOrders) while ($row = mysqli_fetch_assoc($qOrders)) $orders[] = $row;
+           (SELECT COALESCE(SUM(jumlah),0) FROM transaksi_detail td WHERE td.transaksi_id = t.id) AS total_qty
+    FROM transaksi t WHERE $whereSql
+    ORDER BY t.created_at DESC, t.id DESC LIMIT $perPage OFFSET $offset
+", $types, $params);
 
-// =========================================================
-// STATISTIK GLOBAL
-// =========================================================
-$statTotal   = 0;
-$statPending = 0;
-$statSelesai = 0;
-$statBelanja = 0;
-
-$qStat = mysqli_query($conn, "
-    SELECT 
-        COUNT(*) AS total,
-        COALESCE(SUM(CASE WHEN status IN ('Diproses','Dikirim') THEN 1 ELSE 0 END), 0) AS pending,
-        COALESCE(SUM(CASE WHEN status = 'Selesai' THEN 1 ELSE 0 END), 0) AS selesai,
-        COALESCE(SUM(total_harga), 0) AS total_belanja
-    FROM transaksi
-    WHERE user_id = $user_id AND jenis_transaksi = 'penjualan'
-");
-if ($qStat) {
-    $s = mysqli_fetch_assoc($qStat);
-    $statTotal   = (int)$s['total'];
-    $statPending = (int)$s['pending'];
-    $statSelesai = (int)$s['selesai'];
-    $statBelanja = (float)$s['total_belanja'];
+// thumbnail item untuk order di halaman ini
+$thumbs = [];
+if ($orders) {
+    $ids = array_map(fn($o) => (int)$o['id'], $orders);
+    $ph  = implode(',', array_fill(0, count($ids), '?'));
+    foreach (db_all("SELECT td.transaksi_id, td.jumlah, p.nama_tanaman, p.gambar FROM transaksi_detail td LEFT JOIN produk p ON p.id = td.produk_id WHERE td.transaksi_id IN ($ph) ORDER BY td.id", str_repeat('i', count($ids)), $ids) as $r)
+        $thumbs[(int)$r['transaksi_id']][] = $r;
 }
 
-$successMsg = '';
-if (isset($_GET['success']) && $_GET['success'] == 1) {
-    $kode = htmlspecialchars($_GET['kode'] ?? '');
-    $successMsg = "Pesanan berhasil dibuat" . ($kode ? " dengan kode <b>$kode</b>" : "") . ". Silakan tunggu konfirmasi admin.";
-}
+// statistik (pesanan batal tidak dihitung ke belanja)
+$st = db_one("
+    SELECT COUNT(*) AS total,
+           COALESCE(SUM(status IN ('Diproses','Dikirim')),0) AS aktif,
+           COALESCE(SUM(status = 'Selesai'),0) AS selesai,
+           COALESCE(SUM(status = 'Batal'),0) AS batal,
+           COALESCE(SUM(CASE WHEN status <> 'Batal' THEN total_harga ELSE 0 END),0) AS belanja
+    FROM transaksi WHERE user_id = ? AND jenis_transaksi = 'penjualan'", 'i', [$uid]) ?: ['total'=>0,'aktif'=>0,'selesai'=>0,'batal'=>0,'belanja'=>0];
+
+$tabCount = ['semua' => (int)$st['total'], 'Diproses' => 0, 'Dikirim' => 0, 'Selesai' => (int)$st['selesai'], 'Batal' => (int)$st['batal']];
+foreach (db_all("SELECT status, COUNT(*) c FROM transaksi WHERE user_id = ? AND jenis_transaksi='penjualan' GROUP BY status", 'i', [$uid]) as $r) $tabCount[$r['status']] = (int)$r['c'];
+
+$success = isset($_GET['success']) ? preg_replace('/[^A-Za-z0-9\-]/', '', (string)($_GET['kode'] ?? '')) : null;
+$filterAktif = ($search !== '' || $range !== 'all');
+
+$tabs = ['semua' => 'Semua', 'Diproses' => 'Diproses', 'Dikirim' => 'Dikirim', 'Selesai' => 'Selesai', 'Batal' => 'Batal'];
+$quick = ['today' => 'Hari Ini', '7days' => '7 Hari', '30days' => '30 Hari', 'all' => 'Semua Waktu'];
+
+layout_start(['title' => 'Riwayat Order', 'active' => 'riwayat', 'width' => 'max-w-6xl']);
 ?>
-<!DOCTYPE html>
-<html lang="id">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlantHub - Riwayat Order</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style> body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; } </style>
-</head>
-<body class="antialiased min-h-screen flex flex-col">
 
-    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
-        <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-            <div class="flex items-center gap-3">
-                <button onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
-                    <i data-lucide="menu" class="w-5 h-5"></i>
-                </button>
-                <a href="dashboard.php" class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white">
-                        <i data-lucide="sprout" class="w-5 h-5"></i>
-                    </div>
-                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
-                </a>
-            </div>
+<div class="fade-up">
+    <h1 class="text-2xl font-bold tracking-tight">Riwayat Pesanan</h1>
+    <p class="text-sm text-stone-500 mt-0.5">Pantau status, lihat nota, dan pesan ulang tanaman favoritmu.</p>
+</div>
 
-            <form action="katalog.php" method="GET" class="hidden md:flex flex-1 max-w-md relative">
-                <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
-                <input type="text" name="search" placeholder="Cari tanaman, pot, media tanam..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] placeholder:text-stone-400">
-            </form>
+<?php if ($success !== null): ?>
+<div class="relative overflow-hidden bg-gradient-to-r from-emerald-50 to-white border border-emerald-200 rounded-2xl p-5 flex flex-col sm:flex-row sm:items-center gap-4 fade-up">
+    <div class="w-12 h-12 rounded-2xl bg-[#2E7D32] text-white flex items-center justify-center shrink-0 shadow-md shadow-emerald-200"><i data-lucide="party-popper" class="w-6 h-6"></i></div>
+    <div class="flex-1">
+        <p class="text-sm font-bold text-emerald-900">Pesanan berhasil dibuat! 🎉</p>
+        <p class="text-xs text-emerald-800 mt-0.5">Kode pesanan <b class="font-mono"><?= e($success) ?></b>. Admin akan segera memproses dan mengonfirmasi pesananmu.</p>
+    </div>
+    <?php $newId = $success !== '' ? (int)db_val('SELECT id FROM transaksi WHERE kode_transaksi = ? AND user_id = ?', 'si', [$success, $uid], 0) : 0;
+    if ($newId): ?><a href="note.php?id=<?= $newId ?>" class="inline-flex items-center gap-2 bg-[#2E7D32] hover:bg-emerald-800 text-white text-xs font-bold px-4 py-2.5 rounded-xl transition shrink-0"><i data-lucide="receipt" class="w-4 h-4"></i> Lihat Nota</a><?php endif; ?>
+</div>
+<?php endif; ?>
 
-            <div class="flex items-center gap-3">
-                <a href="cart.php" class="relative p-2 text-stone-600 hover:bg-stone-100 rounded-full">
-                    <i data-lucide="shopping-cart" class="w-5 h-5"></i>
-                    <?php if ($cart_count > 0): ?>
-                        <span class="absolute top-1 right-1 w-4 h-4 bg-[#2E7D32] text-white text-[9px] font-bold rounded-full flex items-center justify-center ring-2 ring-white"><?= $cart_count ?></span>
-                    <?php endif; ?>
-                </a>
-                <div class="h-6 w-px bg-stone-200 hidden sm:block"></div>
-                <a href="dashboard.php" class="flex items-center gap-3 pl-1">
-                    <img src="https://ui-avatars.com/api/?name=<?= urlencode($nama_user) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
-                    <div class="hidden sm:block text-left">
-                        <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($nama_user) ?></p>
-                        <p class="text-xs text-stone-500">Pelanggan</p>
-                    </div>
-                </a>
-            </div>
-        </div>
-    </header>
+<!-- STATISTIK -->
+<section class="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+    <?php foreach ([
+        ['Total Pesanan', (int)$st['total'], 'Semua transaksi', 'border-t-[#2E7D32]'],
+        ['Sedang Berjalan', (int)$st['aktif'], 'Diproses / dikirim', 'border-t-[#D97706]'],
+        ['Selesai', (int)$st['selesai'], 'Transaksi sukses', 'border-t-emerald-500'],
+        ['Total Belanja', rupiah($st['belanja']), 'Tanpa pesanan batal', 'border-t-blue-500'],
+    ] as [$l, $v, $sub, $b]): ?>
+    <div class="bg-white rounded-2xl p-4 sm:p-5 border border-stone-200/80 shadow-sm border-t-4 <?= $b ?> fade-up">
+        <p class="text-[11px] font-semibold uppercase tracking-wider text-stone-500"><?= $l ?></p>
+        <p class="text-xl font-bold tracking-tight mt-1 truncate"><?= e((string)$v) ?></p>
+        <p class="text-[11px] text-stone-400 mt-1"><?= $sub ?></p>
+    </div>
+    <?php endforeach; ?>
+</section>
 
-    <div class="flex flex-1">
-        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
-            <div class="space-y-6">
-                <nav class="space-y-1">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MENU PELANGGAN</p>
-                    <?php
-                    $menu = [
-                        ['url' => 'dashboard.php', 'icon' => 'layout-grid',    'label' => 'Beranda',        'active' => false],
-                        ['url' => 'katalog.php',   'icon' => 'store',          'label' => 'Katalog Shop',   'active' => false],
-                        ['url' => 'cart.php',      'icon' => 'shopping-bag',   'label' => 'Keranjang',      'active' => false],
-                        ['url' => 'riwayat.php',   'icon' => 'history',        'label' => 'Riwayat Order',  'active' => true],
-                        ['url' => 'chat.php',      'icon' => 'message-square', 'label' => 'Konsultasi',     'active' => false],
-                        ['url' => 'profil.php',    'icon' => 'user',           'label' => 'Profil Saya',    'active' => false],
-                    ];
-                    foreach ($menu as $m):
-                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
-                    ?>
-                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
-                            <div class="flex items-center gap-3">
-                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                                <span><?= $m['label'] ?></span>
-                            </div>
-                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
-                        </a>
-                    <?php endforeach; ?>
-                </nav>
-            </div>
-            <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3">
-                <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
-                    <i data-lucide="shopping-cart" class="w-5 h-5"></i>
-                </div>
-                <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 leading-tight">Troli Belanja</p>
-                    <p class="text-[11px] text-stone-400 mt-0.5"><?= $cart_count ?> item</p>
-                </div>
-            </div>
-        </aside>
-
-        <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
-
-            <div>
-                <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Riwayat Order</h1>
-                <p class="text-sm text-stone-500 mt-0.5">Daftar pesanan Anda beserta statusnya.</p>
-            </div>
-
-            <?php if ($successMsg): ?>
-                <div class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm flex items-center gap-2">
-                    <i data-lucide="check-circle" class="w-5 h-5 text-[#2E7D32] shrink-0"></i>
-                    <span><?= $successMsg ?></span>
-                </div>
-            <?php endif; ?>
-            <?php if ($batalMsg): ?>
-                <div class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm flex items-center gap-2">
-                    <i data-lucide="check-circle" class="w-5 h-5 text-[#2E7D32] shrink-0"></i>
-                    <span><?= htmlspecialchars($batalMsg) ?></span>
-                </div>
-            <?php endif; ?>
-            <?php if ($batalErr): ?>
-                <div class="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-sm flex items-center gap-2">
-                    <i data-lucide="alert-circle" class="w-5 h-5 shrink-0"></i>
-                    <span><?= htmlspecialchars($batalErr) ?></span>
-                </div>
-            <?php endif; ?>
-
-            <!-- STATISTIK -->
-            <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32]">
-                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Total Pesanan</p>
-                    <p class="text-2xl font-bold text-stone-800 tracking-tight mt-1"><?= $statTotal ?></p>
-                    <p class="text-[11px] text-stone-400 mt-1">Transaksi Anda</p>
-                </div>
-                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#D97706]">
-                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Diproses</p>
-                    <p class="text-2xl font-bold text-stone-800 tracking-tight mt-1"><?= $statPending ?></p>
-                    <p class="text-[11px] text-stone-400 mt-1">Menunggu / dikirim</p>
-                </div>
-                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-emerald-500">
-                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Selesai</p>
-                    <p class="text-2xl font-bold text-stone-800 tracking-tight mt-1"><?= $statSelesai ?></p>
-                    <p class="text-[11px] text-stone-400 mt-1">Transaksi sukses</p>
-                </div>
-                <div class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-blue-500">
-                    <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Total Belanja</p>
-                    <p class="text-lg font-bold text-stone-800 tracking-tight mt-1">Rp <?= number_format($statBelanja, 0, ',', '.') ?></p>
-                    <p class="text-[11px] text-stone-400 mt-1">Kumulatif</p>
-                </div>
-            </div>
-
-            <!-- TAB STATUS + SEARCH + FILTER TANGGAL -->
-            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-4 space-y-3">
-
-                <!-- Tab Status -->
-                <div class="flex items-center gap-2 overflow-x-auto pb-1">
-                    <?php
-                    $tabs = ['semua' => 'Semua', 'Diproses' => 'Diproses', 'Dikirim' => 'Dikirim', 'Selesai' => 'Selesai', 'Batal' => 'Batal'];
-                    foreach ($tabs as $key => $label):
-                        $active = ($statusFilter === $key);
-                        $cls = $active ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200';
-                    ?>
-                        <a href="<?= buildRiwayatUrl(['status_filter' => $key]) ?>" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $cls ?>">
-                            <?= $label ?>
-                        </a>
-                    <?php endforeach; ?>
-                </div>
-
-                <!-- Search + Filter Tanggal -->
-                <form method="GET" action="riwayat.php" class="grid grid-cols-1 md:grid-cols-12 gap-3 pt-3 border-t border-stone-100">
-                    <input type="hidden" name="status_filter" value="<?= htmlspecialchars($statusFilter) ?>">
-
-                    <div class="md:col-span-5 relative">
-                        <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Cari Kode</label>
-                        <div class="relative">
-                            <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
-                            <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="INV-20240101-XXXXX" class="w-full pl-10 pr-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                        </div>
-                    </div>
-
-                    <div class="md:col-span-2">
-                        <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Mulai</label>
-                        <input type="date" name="tgl_mulai" value="<?= htmlspecialchars($tgl_mulai ?? '') ?>" class="w-full px-3 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                    </div>
-
-                    <div class="md:col-span-2">
-                        <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Sampai</label>
-                        <input type="date" name="tgl_selesai" value="<?= htmlspecialchars($tgl_selesai ?? '') ?>" class="w-full px-3 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                    </div>
-
-                    <div class="md:col-span-3 flex gap-2 items-end">
-                        <button type="submit" name="range" value="custom" class="flex-1 bg-[#2E7D32] hover:bg-emerald-800 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition inline-flex items-center justify-center gap-1.5">
-                            <i data-lucide="filter" class="w-4 h-4"></i> Terapkan
-                        </button>
-                        <?php if ($search || $range === 'custom'): ?>
-                            <a href="<?= buildRiwayatUrl(['search' => null, 'range' => 'all']) ?>" class="px-3 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-600 rounded-xl text-sm font-semibold transition" title="Reset">
-                                <i data-lucide="x" class="w-4 h-4"></i>
-                            </a>
-                        <?php endif; ?>
-                    </div>
-                </form>
-
-                <!-- Filter Tanggal Cepat -->
-                <div class="flex items-center gap-2 flex-wrap pt-2 border-t border-stone-100">
-                    <span class="text-xs font-bold text-stone-400 uppercase tracking-wider">Filter cepat:</span>
-                    <a href="<?= buildRiwayatUrl(['range' => 'today', 'search' => $search ?: null]) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range==='today' ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>">Hari Ini</a>
-                    <a href="<?= buildRiwayatUrl(['range' => '7days', 'search' => $search ?: null]) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range==='7days' ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>">7 Hari</a>
-                    <a href="<?= buildRiwayatUrl(['range' => '30days', 'search' => $search ?: null]) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range==='30days' ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>">30 Hari</a>
-                    <a href="<?= buildRiwayatUrl(['range' => 'all', 'search' => $search ?: null]) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range==='all' ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>">Semua</a>
-                </div>
-
-                <!-- Info hasil filter -->
-                <?php if ($search || $range !== 'all'): ?>
-                    <div class="flex items-center gap-2 flex-wrap text-xs pt-2 border-t border-stone-100">
-                        <span class="text-stone-500">Filter aktif:</span>
-                        <?php if ($search): ?>
-                            <span class="inline-flex items-center gap-1 px-2 py-1 bg-stone-100 text-stone-700 rounded-md">
-                                <i data-lucide="search" class="w-3 h-3"></i>
-                                "<?= htmlspecialchars($search) ?>"
-                            </span>
-                        <?php endif; ?>
-                        <?php if ($range !== 'all'): ?>
-                            <span class="inline-flex items-center gap-1 px-2 py-1 bg-stone-100 text-stone-700 rounded-md">
-                                <i data-lucide="calendar" class="w-3 h-3"></i>
-                                <?= $range==='today' ? 'Hari Ini' : ($range==='7days' ? '7 Hari Terakhir' : ($range==='30days' ? '30 Hari Terakhir' : date('d/m/y', strtotime($tgl_mulai)).' - '.date('d/m/y', strtotime($tgl_selesai)))) ?>
-                            </span>
-                        <?php endif; ?>
-                        <span class="text-stone-500">→ <b class="text-stone-700"><?= count($orders) ?></b> pesanan</span>
-                    </div>
-                <?php endif; ?>
-            </div>
-
-            <!-- HASIL -->
-            <?php if (empty($orders)): ?>
-                <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-12 text-center">
-                    <div class="w-16 h-16 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-4 text-stone-400">
-                        <i data-lucide="<?= ($search || $range !== 'all') ? 'search-x' : 'receipt' ?>" class="w-8 h-8"></i>
-                    </div>
-                    <h3 class="text-base font-bold text-stone-800">
-                        <?= ($search || $range !== 'all') ? 'Tidak ada pesanan yang cocok' : 'Belum ada pesanan' ?>
-                    </h3>
-                    <p class="text-sm text-stone-500 mt-1">
-                        <?php if ($search || $range !== 'all'): ?>
-                            Coba ubah filter atau <a href="riwayat.php" class="text-[#2E7D32] font-bold hover:underline">reset</a>.
-                        <?php else: ?>
-                            Anda belum melakukan transaksi apapun.
-                        <?php endif; ?>
-                    </p>
-                    <?php if (!$search && $range === 'all'): ?>
-                        <a href="katalog.php" class="inline-flex items-center gap-2 mt-5 bg-[#2E7D32] hover:bg-emerald-800 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition">
-                            <i data-lucide="store" class="w-4 h-4"></i>
-                            <span>Mulai Belanja</span>
-                        </a>
-                    <?php endif; ?>
-                </div>
-            <?php else: ?>
-                <div class="space-y-3">
-                    <?php foreach ($orders as $o): 
-                        $bisaBatal = ($o['status'] === 'Diproses');
-                    ?>
-                        <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden">
-                            <div class="p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                                <div class="flex-1 min-w-0 space-y-1.5">
-                                    <div class="flex items-center gap-2 flex-wrap">
-                                        <p class="font-mono text-sm font-bold text-stone-800"><?= htmlspecialchars($o['kode_transaksi']) ?></p>
-                                        <span class="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold uppercase border <?= badgeStatus($o['status']) ?>">
-                                            <?= htmlspecialchars($o['status']) ?>
-                                        </span>
-                                    </div>
-                                    <p class="text-xs text-stone-500">
-                                        <i data-lucide="calendar" class="w-3 h-3 inline-block mr-1"></i>
-                                        <?= date('d M Y, H:i', strtotime($o['created_at'])) ?> WIB
-                                    </p>
-                                    <p class="text-xs text-stone-500">
-                                        <i data-lucide="package" class="w-3 h-3 inline-block mr-1"></i>
-                                        <?= (int)$o['jml_item'] ?> jenis produk &middot; <?= (int)$o['total_qty'] ?> item &middot;
-                                        Metode: <span class="font-semibold text-stone-700"><?= htmlspecialchars(ucfirst($o['metode_pembayaran'])) ?></span>
-                                    </p>
-                                </div>
-
-                                <div class="flex items-center gap-4 shrink-0">
-                                    <div class="text-right">
-                                        <p class="text-[10px] font-bold uppercase text-stone-400 tracking-wider">Total Bayar</p>
-                                        <p class="text-lg font-bold text-[#2E7D32]">Rp <?= number_format($o['total_harga'], 0, ',', '.') ?></p>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="px-5 pb-4 pt-3 bg-stone-50/60 border-t border-stone-100 flex items-center justify-end gap-2 flex-wrap">
-                                <?php if ($bisaBatal): ?>
-                                    <form method="POST" action="riwayat.php" onsubmit="return confirm('Batalkan pesanan ini? Stok produk akan dikembalikan.');" class="inline">
-                                        <input type="hidden" name="action" value="batalkan">
-                                        <input type="hidden" name="trx_id" value="<?= (int)$o['id'] ?>">
-                                        <button type="submit" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-600 bg-white hover:bg-rose-50 border border-rose-200 rounded-lg transition">
-                                            <i data-lucide="x-circle" class="w-3.5 h-3.5"></i> Batalkan
-                                        </button>
-                                    </form>
-                                <?php endif; ?>
-
-                                <a href="note.php?id=<?= (int)$o['id'] ?>" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-stone-700 bg-white hover:bg-stone-100 border border-stone-200 rounded-lg transition">
-                                    <i data-lucide="file-text" class="w-3.5 h-3.5"></i> Lihat Nota
-                                </a>
-
-                                <form method="POST" action="riwayat.php" class="inline">
-                                    <input type="hidden" name="action" value="beli_lagi">
-                                    <input type="hidden" name="trx_id" value="<?= (int)$o['id'] ?>">
-                                    <button type="submit" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#2E7D32] hover:bg-emerald-800 rounded-lg transition">
-                                        <i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Beli Lagi
-                                    </button>
-                                </form>
-                            </div>
-                        </div>
-                    <?php endforeach; ?>
-                </div>
-            <?php endif; ?>
-
-        </main>
+<!-- FILTER -->
+<section class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-4 space-y-3 fade-up">
+    <div class="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1">
+        <?php foreach ($tabs as $key => $label): $on = $statusFilter === $key; ?>
+            <a href="<?= e(url_with(['status_filter' => $key === 'semua' ? null : $key, 'status' => null])) ?>" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $on ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">
+                <?= $label ?> <span class="opacity-70">(<?= $tabCount[$key] ?? 0 ?>)</span>
+            </a>
+        <?php endforeach; ?>
     </div>
 
-    <script>
-        lucide.createIcons();
-        function toggleMobileSidebar() {
-            const s = document.getElementById('sidebar');
-            s?.classList.toggle('hidden');
-            s?.classList.toggle('fixed');
-            s?.classList.toggle('inset-y-0');
-            s?.classList.toggle('left-0');
-            s?.classList.toggle('z-40');
-        }
-    </script>
-</body>
-</html>
+    <form method="get" class="grid grid-cols-2 md:grid-cols-12 gap-3 pt-3 border-t border-stone-100">
+        <?php if ($statusFilter !== 'semua'): ?><input type="hidden" name="status_filter" value="<?= e($statusFilter) ?>"><?php endif; ?>
+        <input type="hidden" name="range" value="custom">
+        <div class="col-span-2 md:col-span-5">
+            <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Cari Kode</label>
+            <div class="relative"><i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
+            <input type="text" name="search" value="<?= e($search) ?>" placeholder="INV-20260101-XXXXXX" class="w-full pl-10 pr-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]"></div>
+        </div>
+        <div class="md:col-span-2"><label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Mulai</label>
+            <input type="date" name="tgl_mulai" value="<?= e($tglMulai ?? date('Y-m-01')) ?>" class="w-full px-3 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]"></div>
+        <div class="md:col-span-2"><label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Sampai</label>
+            <input type="date" name="tgl_selesai" value="<?= e($tglSelesai ?? date('Y-m-d')) ?>" class="w-full px-3 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]"></div>
+        <div class="col-span-2 md:col-span-3 flex gap-2 items-end">
+            <button class="flex-1 bg-[#2E7D32] hover:bg-emerald-800 text-white px-4 py-2.5 rounded-xl text-sm font-semibold transition inline-flex items-center justify-center gap-1.5"><i data-lucide="filter" class="w-4 h-4"></i> Terapkan</button>
+            <?php if ($filterAktif): ?><a href="<?= e(url_with(['search' => null, 'range' => null, 'tgl_mulai' => null, 'tgl_selesai' => null])) ?>" class="px-3 py-2.5 bg-stone-100 hover:bg-stone-200 text-stone-600 rounded-xl" title="Reset"><i data-lucide="x" class="w-4 h-4"></i></a><?php endif; ?>
+        </div>
+    </form>
+
+    <div class="flex items-center gap-2 flex-wrap pt-3 border-t border-stone-100">
+        <span class="text-[11px] font-bold text-stone-400 uppercase tracking-wider">Cepat</span>
+        <?php foreach ($quick as $k => $l): ?>
+            <a href="<?= e(url_with(['range' => $k === 'all' ? null : $k, 'tgl_mulai' => null, 'tgl_selesai' => null])) ?>" class="px-3 py-1.5 text-xs font-semibold rounded-lg border <?= $range === $k ? 'bg-[#2E7D32] text-white border-[#2E7D32]' : 'bg-stone-50 text-stone-600 hover:bg-stone-100 border-stone-200' ?>"><?= $l ?></a>
+        <?php endforeach; ?>
+        <?php if ($filterAktif || $statusFilter !== 'semua'): ?><span class="text-xs text-stone-500 ml-auto">→ <b class="text-stone-700"><?= $totalRows ?></b> pesanan</span><?php endif; ?>
+    </div>
+</section>
+
+<!-- DAFTAR -->
+<?php if (!$orders): ?>
+    <?= ($filterAktif || $statusFilter !== 'semua')
+        ? ui_empty('search-x', 'Tidak ada pesanan yang cocok', 'Coba ubah filter atau reset pencarian.', 'riwayat.php', 'Reset Filter', 'rotate-ccw')
+        : ui_empty('receipt', 'Belum ada pesanan', 'Kamu belum melakukan transaksi apa pun.', 'katalog.php', 'Mulai Belanja') ?>
+<?php else: ?>
+<div class="space-y-4">
+    <?php foreach ($orders as $o):
+        $oid = (int)$o['id']; $its = $thumbs[$oid] ?? []; ?>
+    <article class="bg-white rounded-2xl border border-stone-200/80 shadow-sm overflow-hidden hover:shadow-md transition fade-up">
+        <div class="p-5 space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+                <div class="min-w-0 space-y-1.5">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <p class="font-mono text-sm font-bold"><?= e($o['kode_transaksi']) ?></p>
+                        <?= ui_status_badge($o['status']) ?>
+                    </div>
+                    <p class="text-xs text-stone-500"><?= tgl_id($o['created_at'], true) ?> · <?= (int)$o['jml_item'] ?> produk · <?= (int)$o['total_qty'] ?> item · <span class="font-semibold text-stone-700"><?= e(metode_label($o['metode_pembayaran'])) ?></span></p>
+                </div>
+                <div class="sm:text-right shrink-0">
+                    <p class="text-[10px] font-bold uppercase text-stone-400 tracking-wider">Total Bayar</p>
+                    <p class="text-lg font-bold <?= $o['status'] === 'Batal' ? 'text-stone-400 line-through' : 'text-[#2E7D32]' ?>"><?= rupiah($o['total_harga']) ?></p>
+                </div>
+            </div>
+
+            <?php if ($its): ?>
+            <div class="flex items-center gap-2 overflow-x-auto no-scrollbar">
+                <?php foreach (array_slice($its, 0, 5) as $it): ?>
+                    <div class="flex items-center gap-2 bg-stone-50 border border-stone-100 rounded-xl p-1.5 pr-3 shrink-0">
+                        <img src="<?= e(produk_img($it['gambar'] ?? '', 100)) ?>" alt="" class="w-10 h-10 rounded-lg object-cover bg-stone-100">
+                        <div class="max-w-[130px]"><p class="text-[11px] font-semibold truncate"><?= e($it['nama_tanaman'] ?? 'Produk dihapus') ?></p><p class="text-[10px] text-stone-400">× <?= (int)$it['jumlah'] ?></p></div>
+                    </div>
+                <?php endforeach; ?>
+                <?php if (count($its) > 5): ?><span class="text-xs font-semibold text-stone-400 shrink-0">+<?= count($its) - 5 ?> lagi</span><?php endif; ?>
+            </div>
+            <?php endif; ?>
+
+            <?= ui_order_tracker($o['status']) ?>
+        </div>
+
+        <div class="px-5 py-3 bg-stone-50/60 border-t border-stone-100 flex items-center justify-end gap-2 flex-wrap">
+            <?php if ($o['status'] === 'Diproses'): ?>
+            <form method="post" data-confirm="Batalkan pesanan ini? Stok produk akan dikembalikan." class="inline">
+                <?= csrf_field() ?><input type="hidden" name="action" value="batalkan"><input type="hidden" name="trx_id" value="<?= $oid ?>">
+                <button class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-600 bg-white hover:bg-rose-50 border border-rose-200 rounded-lg transition"><i data-lucide="x-circle" class="w-3.5 h-3.5"></i> Batalkan</button>
+            </form>
+            <?php endif; ?>
+            <a href="note.php?id=<?= $oid ?>" class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-stone-700 bg-white hover:bg-stone-100 border border-stone-200 rounded-lg transition"><i data-lucide="file-text" class="w-3.5 h-3.5"></i> Lihat Nota</a>
+            <form method="post" class="inline"><?= csrf_field() ?><input type="hidden" name="action" value="beli_lagi"><input type="hidden" name="trx_id" value="<?= $oid ?>">
+                <button class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white bg-[#2E7D32] hover:bg-emerald-800 rounded-lg transition"><i data-lucide="rotate-ccw" class="w-3.5 h-3.5"></i> Beli Lagi</button></form>
+        </div>
+    </article>
+    <?php endforeach; ?>
+</div>
+<?= ui_pagination($page, $pages) ?>
+<?php endif; ?>
+
+<?php layout_end(); ?>

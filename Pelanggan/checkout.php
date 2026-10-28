@@ -1,630 +1,250 @@
 <?php
-session_start();
-require_once '../Config/database.php';
+require_once __DIR__ . '/customer_init.php';
 
-// =========================================================
-// PROTEKSI LOGIN
-// =========================================================
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'customer') {
-    header("Location: ../Auth/login.php");
-    exit;
+$uid     = user_id();
+$modeNow = ($_GET['mode'] ?? $_POST['mode'] ?? '') === 'now';
+$self    = 'checkout.php' . ($modeNow ? '?mode=now' : '');
+
+// Sumber item: "Beli Sekarang" (terpisah dari keranjang) atau keranjang
+if ($modeNow) {
+    $source = $_SESSION['buy_now'] ?? [];
+    if (!is_array($source) || !$source) { flash('info', 'Sesi "Beli Sekarang" berakhir, silakan pilih produk lagi.'); redirect('katalog.php'); }
+} else {
+    $source = cart_get();
+    if (!$source) { flash('info', 'Keranjangmu masih kosong.'); redirect('cart.php'); }
 }
 
-$user_id   = (int)$_SESSION['user_id'];
-$nama_user = $_SESSION['nama_user'] ?? 'Pelanggan';
+$data   = cart_lines($source);
+$notes  = [];   // pemberitahuan penyesuaian stok
+foreach ($data['adjusted'] as $a) $notes[] = "<b>" . e($a['nama']) . "</b> — jumlah disesuaikan {$a['dari']} → {$a['jadi']} (stok terbatas)";
+foreach ($data['empty'] as $n)    $notes[] = "<b>" . e($n) . "</b> — stok habis, tidak ikut dipesan";
 
-// =========================================================
-// CEK KERANJANG
-// =========================================================
-if (empty($_SESSION['cart']) || !is_array($_SESSION['cart'])) {
-    header("Location: cart.php");
-    exit;
-}
+$items = array_values(array_filter($data['items'], fn($i) => $i['status'] !== 'empty'));
+if (!$items) { flash('error', 'Semua item sudah habis stok.'); redirect($modeNow ? 'katalog.php' : 'cart.php'); }
 
-// =========================================================
-// AMBIL DATA PRODUK + VALIDASI STOK REAL-TIME
-// =========================================================
-$cart_items   = $_SESSION['cart'];
-$items        = [];
-$subtotal     = 0;
-$cart_count   = 0;
-$stokBermasalah = [];
+$subtotal = 0.0; $qtyAll = 0;
+foreach ($items as $i) { $subtotal += $i['subtotal']; $qtyAll += $i['qty']; }
+$tot = hitung_total($subtotal);
 
-$ids = implode(',', array_map('intval', array_keys($cart_items)));
-if ($ids !== '') {
-    $qItems = mysqli_query($conn, "
-        SELECT p.*, k.nama_kategori 
-        FROM produk p 
-        LEFT JOIN kategori k ON p.kategori_id = k.id 
-        WHERE p.id IN ($ids)
-    ");
-    if ($qItems) {
-        while ($row = mysqli_fetch_assoc($qItems)) {
-            $pid = (int)$row['id'];
-            if (!isset($cart_items[$pid])) continue;
+$profil = current_user(true);
+$metodeList = [
+    'transfer' => ['Transfer Bank', 'landmark',   'BCA / Mandiri / BRI — instruksi dikirim admin'],
+    'ewallet'  => ['E-Wallet',      'smartphone', 'GoPay / OVO / Dana'],
+    'qris'     => ['QRIS',          'qr-code',    'Scan satu kode untuk semua aplikasi'],
+    'cod'      => ['Bayar di Tempat (COD)', 'hand-coins', 'Bayar tunai saat tanaman tiba'],
+];
 
-            $qty   = (int)$cart_items[$pid];
-            $stok  = (int)$row['stok'];
-            $harga = (float)$row['harga_jual'];
-
-            if ($stok <= 0) {
-                $stokBermasalah[] = ['nama' => $row['nama_tanaman'], 'masalah' => 'habis'];
-                continue;
-            }
-            if ($qty > $stok) {
-                $stokBermasalah[] = [
-                    'nama' => $row['nama_tanaman'],
-                    'masalah' => 'kurang',
-                    'qty'  => $qty,
-                    'stok' => $stok,
-                ];
-                $_SESSION['cart'][$pid] = $stok;
-                $qty = $stok;
-            }
-
-            $sub   = $harga * $qty;
-            $subtotal   += $sub;
-            $cart_count += $qty;
-
-            $items[] = [
-                'id'       => $pid,
-                'nama'     => $row['nama_tanaman'],
-                'kategori' => $row['nama_kategori'] ?? 'Tanaman',
-                'harga'    => $harga,
-                'qty'      => $qty,
-                'subtotal' => $sub,
-                'stok'     => $stok,
-                'gambar'   => (!empty($row['gambar']) && $row['gambar'] !== 'default.jpg' && file_exists("../assets/img/" . $row['gambar']))
-                                ? "../assets/img/" . $row['gambar']
-                                : "https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400",
-            ];
-        }
-    }
-}
-
-if (empty($items)) {
-    header("Location: cart.php?msg=notfound");
-    exit;
-}
-
-$ppn   = $subtotal * 0.11;
-$total = $subtotal + $ppn;
-
-// =========================================================
-// AMBIL PROFIL USER
-// =========================================================
-$profil = null;
-$qUser = mysqli_query($conn, "SELECT * FROM users WHERE id = $user_id LIMIT 1");
-if ($qUser) $profil = mysqli_fetch_assoc($qUser);
-
-// =========================================================
-// PROSES CHECKOUT
-// =========================================================
 $error = '';
+$old = ['nama' => $profil['nama_lengkap'] ?? nama_user(), 'telepon' => $profil['no_hp'] ?? '', 'alamat' => $profil['alamat'] ?? '', 'metode' => 'transfer', 'catatan' => ''];
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['proses_checkout'])) {
-    $nama_penerima = mysqli_real_escape_string($conn, trim($_POST['nama'] ?? ''));
-    $telepon       = mysqli_real_escape_string($conn, trim($_POST['telepon'] ?? ''));
-    $alamat        = mysqli_real_escape_string($conn, trim($_POST['alamat'] ?? ''));
-    $metode        = mysqli_real_escape_string($conn, $_POST['metode_pembayaran'] ?? 'transfer');
-    $catatan       = mysqli_real_escape_string($conn, trim($_POST['catatan'] ?? ''));
+if (is_post() && isset($_POST['proses_checkout'])) {
+    csrf_require($self);
+    $old = [
+        'nama'    => trim($_POST['nama'] ?? ''),
+        'telepon' => trim($_POST['telepon'] ?? ''),
+        'alamat'  => trim($_POST['alamat'] ?? ''),
+        'metode'  => $_POST['metode_pembayaran'] ?? 'transfer',
+        'catatan' => trim($_POST['catatan'] ?? ''),
+    ];
+    $simpan = isset($_POST['simpan_alamat']);
+    $digits = preg_replace('/\D/', '', $old['telepon']);
 
-    if ($nama_penerima === '' || $telepon === '' || $alamat === '') {
-        $error = "Semua field wajib diisi.";
-    } elseif (strlen($telepon) < 8) {
-        $error = "Nomor telepon minimal 8 digit.";
-    } else {
-        $metodeValid = ['tunai', 'qris', 'debit', 'transfer', 'ewallet', 'cod'];
-        if (!in_array($metode, $metodeValid)) $metode = 'transfer';
+    if ($old['nama'] === '' || $old['telepon'] === '' || $old['alamat'] === '') $error = 'Nama, telepon, dan alamat wajib diisi.';
+    elseif (mb_strlen($old['nama']) > 100)   $error = 'Nama penerima terlalu panjang.';
+    elseif (strlen($digits) < 8 || strlen($digits) > 15 || !preg_match('/^[0-9+\-\s()]+$/', $old['telepon'])) $error = 'Nomor telepon tidak valid (8–15 digit).';
+    elseif (mb_strlen($old['alamat']) < 10)  $error = 'Alamat terlalu singkat, mohon lengkapi.';
+    elseif (mb_strlen($old['catatan']) > 500) $error = 'Catatan maksimal 500 karakter.';
+    elseif (!isset($metodeList[$old['metode']])) $error = 'Metode pembayaran tidak valid.';
 
-        // Validasi stok final
-        $stokError = false;
-        foreach ($items as $it) {
-            $pid = (int)$it['id'];
-            $qty = (int)$it['qty'];
-
-            $qCek = mysqli_query($conn, "SELECT stok, nama_tanaman FROM produk WHERE id = $pid LIMIT 1");
-            if (!$qCek || mysqli_num_rows($qCek) === 0) {
-                $error = "Produk \"{$it['nama']}\" sudah tidak tersedia.";
-                $stokError = true;
-                break;
+    if ($error === '') {
+        $kode = 'INV-' . date('Ymd') . '-' . strtoupper(substr(bin2hex(random_bytes(4)), 0, 6));
+        try {
+            db_begin();
+            $total = 0.0; $rows = [];
+            foreach ($items as $it) {
+                // kunci baris produk, baca harga & stok TERBARU
+                $r = db_one('SELECT id, nama_tanaman, harga_jual, stok FROM produk WHERE id = ? FOR UPDATE', 'i', [$it['id']]);
+                if (!$r) throw new UserError('Produk "' . $it['nama'] . '" sudah tidak tersedia.');
+                if ((int)$r['stok'] < $it['qty']) throw new UserError('Stok "' . $r['nama_tanaman'] . '" tidak mencukupi (sisa ' . (int)$r['stok'] . '). Silakan perbarui jumlah.');
+                $sub = (float)$r['harga_jual'] * $it['qty'];
+                $total += $sub;
+                $rows[] = [$it['id'], $it['qty'], (float)$r['harga_jual'], $sub];
             }
-            $r = mysqli_fetch_assoc($qCek);
-            if ((int)$r['stok'] < $qty) {
-                $error = "Stok \"{$r['nama_tanaman']}\" tidak mencukupi (sisa {$r['stok']}). Silakan kembali ke keranjang.";
-                $stokError = true;
-                break;
+            $t = hitung_total($total);
+
+            $tid = db_insert(
+                "INSERT INTO transaksi (kode_transaksi, user_id, supplier_id, jenis_transaksi, nama_penerima, alamat, telepon, total_harga, metode_pembayaran, status, catatan, created_at)
+                 VALUES (?, ?, NULL, 'penjualan', ?, ?, ?, ?, ?, 'Diproses', ?, NOW())",
+                'sisssdss', [$kode, $uid, $old['nama'], $old['alamat'], $old['telepon'], $t['total'], $old['metode'], $old['catatan']]
+            );
+            foreach ($rows as [$pid, $qty, $harga, $sub]) {
+                db_exec('INSERT INTO transaksi_detail (transaksi_id, produk_id, jumlah, harga_satuan, subtotal) VALUES (?, ?, ?, ?, ?)', 'iiidd', [$tid, $pid, $qty, $harga, $sub]);
+                if (db_exec('UPDATE produk SET stok = stok - ? WHERE id = ? AND stok >= ?', 'iii', [$qty, $pid, $qty]) < 1)
+                    throw new UserError('Stok berubah saat diproses, silakan coba lagi.');
             }
-        }
+            if ($simpan) db_exec('UPDATE users SET alamat = ?, no_hp = ? WHERE id = ?', 'ssi', [$old['alamat'], $old['telepon'], $uid]);
+            db_commit();
 
-        if (!$stokError) {
-            $kode = 'INV-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -5));
-
-            mysqli_begin_transaction($conn);
-            try {
-                // 1. INSERT transaksi
-                $sqlTx = "
-                    INSERT INTO transaksi 
-                    (kode_transaksi, user_id, supplier_id, jenis_transaksi, nama_penerima, alamat, telepon, total_harga, metode_pembayaran, status, catatan, created_at)
-                    VALUES 
-                    ('$kode', $user_id, NULL, 'penjualan', '$nama_penerima', '$alamat', '$telepon', $total, '$metode', 'Diproses', '$catatan', NOW())
-                ";
-                if (!mysqli_query($conn, $sqlTx)) {
-                    throw new Exception("Gagal simpan transaksi: " . mysqli_error($conn));
-                }
-
-                $transaksi_id = mysqli_insert_id($conn);
-
-                // 2. INSERT detail + UPDATE stok
-                foreach ($items as $it) {
-                    $pid   = (int)$it['id'];
-                    $qty   = (int)$it['qty'];
-                    $harga = (float)$it['harga'];
-                    $sub   = (float)$it['subtotal'];
-
-                    $sqlDet = "
-                        INSERT INTO transaksi_detail 
-                        (transaksi_id, produk_id, jumlah, harga_satuan, subtotal)
-                        VALUES 
-                        ($transaksi_id, $pid, $qty, $harga, $sub)
-                    ";
-                    if (!mysqli_query($conn, $sqlDet)) {
-                        throw new Exception("Gagal simpan detail: " . mysqli_error($conn));
-                    }
-
-                    $sqlStok = "UPDATE produk SET stok = stok - $qty WHERE id = $pid AND stok >= $qty";
-                    if (!mysqli_query($conn, $sqlStok)) {
-                        throw new Exception("Gagal update stok: " . mysqli_error($conn));
-                    }
-                    if (mysqli_affected_rows($conn) === 0) {
-                        throw new Exception("Stok produk ID $pid tidak cukup.");
-                    }
-                }
-
-                mysqli_commit($conn);
-                $_SESSION['cart'] = [];
-
-                header("Location: riwayat.php?success=1&kode=" . urlencode($kode));
-                exit;
-
-            } catch (Exception $e) {
-                mysqli_rollback($conn);
-                $error = "DEBUG CHECKOUT: " . $e->getMessage() . " (line " . $e->getLine() . ")";
-                error_log("CHECKOUT GAGAL: " . $e->getMessage());
+            if ($modeNow) { unset($_SESSION['buy_now']); }
+            else {
+                foreach ($rows as $r) unset($_SESSION['cart'][$r[0]]);   // hanya item yang dipesan
             }
+            redirect('riwayat.php?success=1&kode=' . urlencode($kode));
+        } catch (UserError $e) {
+            db_rollback();
+            $error = $e->getMessage();
+        } catch (Throwable $e) {
+            db_rollback();
+            error_log('CHECKOUT GAGAL: ' . $e->getMessage());
+            $error = 'Maaf, pesanan belum berhasil dibuat. Silakan coba lagi beberapa saat.';
         }
     }
 }
+
+layout_start(['title' => 'Checkout', 'active' => 'cart', 'width' => 'max-w-6xl']);
 ?>
-<!DOCTYPE html>
-<html lang="id">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlantHub - Checkout</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style> body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; } </style>
-</head>
-<body class="antialiased min-h-screen flex flex-col">
 
-    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
-        <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-            <div class="flex items-center gap-3">
-                <button onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
-                    <i data-lucide="menu" class="w-5 h-5"></i>
-                </button>
-                <a href="dashboard.php" class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white">
-                        <i data-lucide="sprout" class="w-5 h-5"></i>
-                    </div>
-                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
-                </a>
-            </div>
+<div class="fade-up">
+    <h1 class="text-2xl font-bold tracking-tight">Checkout Pesanan</h1>
+    <p class="text-sm text-stone-500 mt-0.5"><?= $modeNow ? 'Pembelian langsung — isi keranjangmu tidak terpengaruh.' : 'Lengkapi data pengiriman dan pilih metode pembayaran.' ?></p>
+    <ol class="flex items-center gap-2 mt-4 text-[11px] font-bold uppercase tracking-wide">
+        <li class="text-[#2E7D32] flex items-center gap-1.5"><span class="w-5 h-5 rounded-full bg-[#2E7D32] text-white flex items-center justify-center">✓</span> Keranjang</li>
+        <li class="h-px w-6 bg-[#2E7D32]"></li>
+        <li class="text-[#2E7D32] flex items-center gap-1.5"><span class="w-5 h-5 rounded-full bg-[#2E7D32] text-white flex items-center justify-center">2</span> Checkout</li>
+        <li class="h-px w-6 bg-stone-300"></li>
+        <li class="text-stone-400 flex items-center gap-1.5"><span class="w-5 h-5 rounded-full bg-stone-200 flex items-center justify-center">3</span> Selesai</li>
+    </ol>
+</div>
 
-            <div class="hidden md:flex flex-1 max-w-md">
-                <span class="text-xs text-stone-500 self-center">Checkout — Selesaikan pesanan Anda</span>
-            </div>
+<?php if ($notes): ?>
+<div class="bg-amber-50 border-2 border-amber-200 rounded-2xl p-5 flex items-start gap-3">
+    <div class="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0"><i data-lucide="alert-triangle" class="w-5 h-5"></i></div>
+    <div><p class="text-sm font-bold text-amber-900">Stok produk berubah</p>
+        <ul class="mt-2 space-y-1 text-xs text-amber-800"><?php foreach ($notes as $n) echo "<li>$n</li>"; ?></ul></div>
+</div>
+<?php endif; ?>
 
-            <div class="flex items-center gap-3">
-                <div class="h-6 w-px bg-stone-200 hidden sm:block"></div>
-                <a href="dashboard.php" class="flex items-center gap-3 pl-1">
-                    <img src="https://ui-avatars.com/api/?name=<?= urlencode($nama_user) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
-                    <div class="hidden sm:block text-left">
-                        <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($nama_user) ?></p>
-                        <p class="text-xs text-stone-500">Pelanggan</p>
-                    </div>
-                </a>
-            </div>
-        </div>
-    </header>
+<?php if ($error): ?>
+<div class="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-sm flex items-center gap-2"><i data-lucide="alert-circle" class="w-5 h-5 text-rose-500 shrink-0"></i><span><?= e($error) ?></span></div>
+<?php endif; ?>
 
-    <div class="flex flex-1">
-        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
-            <div class="space-y-6">
-                <nav class="space-y-1">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MENU PELANGGAN</p>
-                    <?php
-                    $menu = [
-                        ['url' => 'dashboard.php', 'icon' => 'layout-grid',    'label' => 'Beranda',        'active' => false],
-                        ['url' => 'katalog.php',   'icon' => 'store',          'label' => 'Katalog Shop',   'active' => false],
-                        ['url' => 'cart.php',      'icon' => 'shopping-bag',   'label' => 'Keranjang',      'active' => true],
-                        ['url' => 'riwayat.php',   'icon' => 'history',        'label' => 'Riwayat Order',  'active' => false],
-                        ['url' => 'chat.php',      'icon' => 'message-square', 'label' => 'Konsultasi',     'active' => false],
-                    ];
-                    foreach ($menu as $m):
-                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
-                    ?>
-                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
-                            <div class="flex items-center gap-3">
-                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                                <span><?= $m['label'] ?></span>
-                            </div>
-                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
-                        </a>
-                    <?php endforeach; ?>
-                </nav>
-            </div>
-            <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3">
-                <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
-                    <i data-lucide="shopping-cart" class="w-5 h-5"></i>
+<form id="formCheckout" method="post" action="<?= e($self) ?>" class="grid lg:grid-cols-3 gap-6 items-start" novalidate>
+    <?= csrf_field() ?>
+    <input type="hidden" name="proses_checkout" value="1">
+    <?php if ($modeNow): ?><input type="hidden" name="mode" value="now"><?php endif; ?>
+
+    <div class="lg:col-span-2 space-y-6">
+        <section class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-5 sm:p-6 space-y-4 fade-up">
+            <h2 class="text-sm font-bold uppercase tracking-wider border-b border-stone-100 pb-3 flex items-center gap-2"><i data-lucide="map-pin" class="w-4 h-4 text-[#2E7D32]"></i> Data Pengiriman</h2>
+            <div class="grid sm:grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Nama Penerima <span class="text-rose-500">*</span></label>
+                    <input type="text" name="nama" id="inNama" required maxlength="100" value="<?= e($old['nama']) ?>" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] focus:ring-2 focus:ring-emerald-100">
                 </div>
-                <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 leading-tight">Troli Belanja</p>
-                    <p class="text-[11px] text-stone-400 mt-0.5"><?= $cart_count ?> item</p>
+                <div>
+                    <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Telepon / WhatsApp <span class="text-rose-500">*</span></label>
+                    <input type="tel" name="telepon" id="inTelepon" required value="<?= e($old['telepon']) ?>" placeholder="081234567890" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] focus:ring-2 focus:ring-emerald-100">
                 </div>
             </div>
-        </aside>
-
-        <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
-
             <div>
-                <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Checkout Pesanan</h1>
-                <p class="text-sm text-stone-500 mt-0.5">Lengkapi data pengiriman dan pilih metode pembayaran.</p>
+                <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Alamat Lengkap <span class="text-rose-500">*</span></label>
+                <textarea name="alamat" id="inAlamat" required rows="3" placeholder="Jl. ... No. ..., Kelurahan, Kecamatan, Kota, Kode Pos" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] focus:ring-2 focus:ring-emerald-100"><?= e($old['alamat']) ?></textarea>
+                <label class="mt-2 inline-flex items-center gap-2 text-xs text-stone-600 cursor-pointer"><input type="checkbox" name="simpan_alamat" value="1" class="rounded border-stone-300 text-[#2E7D32] focus:ring-[#2E7D32]"> Simpan alamat & telepon ini ke profil</label>
             </div>
+            <div>
+                <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Catatan (opsional)</label>
+                <textarea name="catatan" id="inCatatan" rows="2" maxlength="500" placeholder="Contoh: Titip ke resepsionis, bungkus ekstra aman." class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] focus:ring-2 focus:ring-emerald-100"><?= e($old['catatan']) ?></textarea>
+            </div>
+        </section>
 
-            <?php if (!empty($stokBermasalah)): ?>
-                <div class="bg-amber-50 border-2 border-amber-200 rounded-2xl p-5">
-                    <div class="flex items-start gap-3">
-                        <div class="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
-                            <i data-lucide="alert-triangle" class="w-5 h-5"></i>
-                        </div>
-                        <div class="flex-1">
-                            <p class="text-sm font-bold text-amber-900">Stok produk berubah</p>
-                            <p class="text-xs text-amber-700 mt-0.5">Beberapa item disesuaikan karena stok berkurang. Mohon periksa kembali.</p>
-                            <ul class="mt-3 space-y-1 text-xs text-amber-800">
-                                <?php foreach ($stokBermasalah as $sb): ?>
-                                    <li>
-                                        <b><?= htmlspecialchars($sb['nama']) ?></b> —
-                                        <?php if ($sb['masalah'] === 'habis'): ?>
-                                            <span class="text-rose-600 font-semibold">sudah habis, dihapus dari pesanan</span>
-                                        <?php else: ?>
-                                            <span class="text-amber-700">qty disesuaikan dari <?= $sb['qty'] ?> → <?= $sb['stok'] ?></span>
-                                        <?php endif; ?>
-                                    </li>
-                                <?php endforeach; ?>
-                            </ul>
-                        </div>
+        <section class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-5 sm:p-6 space-y-4 fade-up">
+            <h2 class="text-sm font-bold uppercase tracking-wider border-b border-stone-100 pb-3 flex items-center gap-2"><i data-lucide="credit-card" class="w-4 h-4 text-[#2E7D32]"></i> Metode Pembayaran</h2>
+            <div class="grid sm:grid-cols-2 gap-3">
+                <?php foreach ($metodeList as $key => [$label, $icon, $desc]): ?>
+                <label class="relative cursor-pointer">
+                    <input type="radio" name="metode_pembayaran" value="<?= $key ?>" class="peer sr-only" <?= $old['metode'] === $key ? 'checked' : '' ?>>
+                    <div class="flex items-start gap-3 p-4 rounded-xl border-2 border-stone-200 bg-white peer-checked:border-[#2E7D32] peer-checked:bg-emerald-50 hover:border-stone-300 transition">
+                        <div class="w-10 h-10 rounded-lg bg-stone-100 text-stone-500 flex items-center justify-center shrink-0"><i data-lucide="<?= $icon ?>" class="w-5 h-5"></i></div>
+                        <div><p class="text-sm font-bold"><?= e($label) ?></p><p class="text-[11px] text-stone-500 mt-0.5"><?= e($desc) ?></p></div>
                     </div>
-                </div>
-            <?php endif; ?>
+                    <span class="absolute top-3 right-3 w-5 h-5 rounded-full bg-[#2E7D32] text-white items-center justify-center hidden peer-checked:flex"><i data-lucide="check" class="w-3 h-3"></i></span>
+                </label>
+                <?php endforeach; ?>
+            </div>
+        </section>
 
-            <?php if ($error): ?>
-                <div class="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-sm flex items-center gap-2">
-                    <i data-lucide="alert-circle" class="w-5 h-5 text-rose-500"></i>
-                    <span><?= htmlspecialchars($error) ?></span>
-                </div>
-            <?php endif; ?>
-
-            <?php if (empty($items)): ?>
-                <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-12 text-center">
-                    <div class="w-16 h-16 bg-stone-100 rounded-full flex items-center justify-center mx-auto mb-4 text-stone-400">
-                        <i data-lucide="shopping-cart" class="w-8 h-8"></i>
-                    </div>
-                    <h3 class="text-base font-bold text-stone-800">Tidak ada item yang bisa di-checkout</h3>
-                    <p class="text-sm text-stone-500 mt-1">Semua item di keranjang sudah habis.</p>
-                    <a href="cart.php" class="inline-flex items-center gap-2 mt-5 bg-[#2E7D32] hover:bg-emerald-800 text-white font-semibold px-5 py-2.5 rounded-xl text-sm transition">
-                        <i data-lucide="arrow-left" class="w-4 h-4"></i>
-                        <span>Kembali ke Keranjang</span>
-                    </a>
-                </div>
-            <?php else: ?>
-
-            <form id="formCheckout" method="POST" action="checkout.php" class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-
-                <div class="lg:col-span-2 bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-5">
-                    <div class="border-b border-stone-100 pb-3">
-                        <h2 class="text-sm font-bold text-stone-800 uppercase tracking-wider">Data Pengiriman</h2>
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Nama Penerima <span class="text-rose-500">*</span></label>
-                        <input type="text" name="nama" id="inNama" required
-                               value="<?= htmlspecialchars($profil['nama_lengkap'] ?? $nama_user) ?>"
-                               class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">No. Telepon / WhatsApp <span class="text-rose-500">*</span></label>
-                        <input type="text" name="telepon" id="inTelepon" required
-                               value="<?= htmlspecialchars($profil['no_hp'] ?? '') ?>"
-                               placeholder="081234567890"
-                               class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Alamat Pengiriman Lengkap <span class="text-rose-500">*</span></label>
-                        <textarea name="alamat" id="inAlamat" required rows="3"
-                                  placeholder="Jl. ... No. ..., Kelurahan, Kecamatan, Kota, Kode Pos"
-                                  class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]"><?= htmlspecialchars($profil['alamat'] ?? '') ?></textarea>
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Metode Pembayaran <span class="text-rose-500">*</span></label>
-                        <select name="metode_pembayaran" id="inMetode" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                            <option value="transfer">Transfer Bank</option>
-                            <option value="ewallet">E-Wallet (GoPay / OVO / Dana)</option>
-                            <option value="qris">QRIS</option>
-                            <option value="cod">Bayar di Tempat (COD)</option>
-                        </select>
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Catatan (Opsional)</label>
-                        <textarea name="catatan" id="inCatatan" rows="2"
-                                  placeholder="Contoh: Titip ke resepsionis, jangan dibanting, dll."
-                                  class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]"></textarea>
-                    </div>
-
-                    <div class="pt-2 flex items-center justify-between border-t border-stone-100">
-                        <a href="cart.php" class="text-xs font-semibold text-stone-500 hover:text-stone-800 inline-flex items-center gap-1">
-                            <i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> Kembali ke Keranjang
-                        </a>
-                    </div>
-                </div>
-
-                <div class="lg:col-span-1">
-                    <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4 sticky top-24">
-                        <h2 class="text-sm font-bold text-stone-800 uppercase tracking-wider border-b border-stone-100 pb-3">Ringkasan Pesanan</h2>
-
-                        <div class="space-y-3 max-h-72 overflow-y-auto">
-                            <?php foreach ($items as $it): ?>
-                                <div class="flex gap-3 items-start">
-                                    <img src="<?= htmlspecialchars($it['gambar']) ?>" class="w-12 h-12 rounded-lg object-cover bg-stone-100 shrink-0">
-                                    <div class="flex-1 min-w-0">
-                                        <p class="text-xs font-bold text-stone-800 truncate"><?= htmlspecialchars($it['nama']) ?></p>
-                                        <p class="text-[11px] text-stone-500"><?= $it['qty'] ?> x Rp <?= number_format($it['harga'], 0, ',', '.') ?></p>
-                                    </div>
-                                    <p class="text-xs font-bold text-stone-800 shrink-0">Rp <?= number_format($it['subtotal'], 0, ',', '.') ?></p>
-                                </div>
-                            <?php endforeach; ?>
-                        </div>
-
-                        <div class="border-t border-stone-100 pt-3 space-y-2 text-sm">
-                            <div class="flex justify-between text-stone-600">
-                                <span>Subtotal (<?= $cart_count ?> item)</span>
-                                <span class="font-semibold">Rp <?= number_format($subtotal, 0, ',', '.') ?></span>
-                            </div>
-                            <div class="flex justify-between text-stone-600">
-                                <span>PPN 11%</span>
-                                <span class="font-semibold">Rp <?= number_format($ppn, 0, ',', '.') ?></span>
-                            </div>
-                            <div class="pt-2 border-t border-stone-200 flex justify-between items-baseline">
-                                <span class="text-sm font-bold text-stone-800">Total Bayar</span>
-                                <span class="text-xl font-bold text-[#2E7D32]">Rp <?= number_format($total, 0, ',', '.') ?></span>
-                            </div>
-                        </div>
-
-                        <button type="button" onclick="bukaKonfirmasi()"
-                                class="w-full bg-[#2E7D32] hover:bg-emerald-800 text-white font-bold py-3 rounded-xl text-sm transition inline-flex items-center justify-center gap-2 shadow-sm">
-                            <i data-lucide="check-circle" class="w-4 h-4"></i>
-                            <span>Selesaikan Pesanan</span>
-                        </button>
-
-                        <p class="text-[10px] text-stone-400 text-center leading-relaxed">
-                            Dengan menyelesaikan pesanan, Anda menyetujui syarat & ketentuan PlantHub.
-                        </p>
-                    </div>
-                </div>
-
-            </form>
-
-            <?php endif; ?>
-
-        </main>
+        <a href="<?= $modeNow ? 'katalog.php' : 'cart.php' ?>" class="inline-flex items-center gap-1 text-xs font-semibold text-stone-500 hover:text-stone-800"><i data-lucide="arrow-left" class="w-3.5 h-3.5"></i> <?= $modeNow ? 'Kembali ke Katalog' : 'Kembali ke Keranjang' ?></a>
     </div>
 
-    <!-- MODAL KONFIRMASI CHECKOUT -->
-    <div id="modalKonfirmasi" class="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 hidden items-center justify-center p-4 overflow-y-auto">
-        <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full my-8">
-            <div class="p-5 border-b border-stone-100 flex items-center justify-between">
-                <div class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-emerald-50 text-[#2E7D32] flex items-center justify-center">
-                        <i data-lucide="clipboard-check" class="w-4 h-4"></i>
-                    </div>
-                    <div>
-                        <h3 class="text-base font-bold text-stone-800">Konfirmasi Pesanan</h3>
-                        <p class="text-[11px] text-stone-500">Periksa kembali sebelum submit</p>
-                    </div>
-                </div>
-                <button onclick="tutupKonfirmasi()" class="text-stone-400 hover:text-stone-700 p-1.5 rounded-lg hover:bg-stone-100">
-                    <i data-lucide="x" class="w-5 h-5"></i>
-                </button>
+    <aside class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4 lg:sticky lg:top-24 fade-up">
+        <h2 class="text-sm font-bold uppercase tracking-wider border-b border-stone-100 pb-3">Ringkasan Pesanan</h2>
+        <div class="space-y-3 max-h-72 overflow-y-auto pr-1">
+            <?php foreach ($items as $it): ?>
+            <div class="flex gap-3 items-center">
+                <img src="<?= e($it['gambar']) ?>" alt="" class="w-12 h-12 rounded-lg object-cover bg-stone-100 shrink-0">
+                <div class="flex-1 min-w-0"><p class="text-xs font-bold truncate"><?= e($it['nama']) ?></p><p class="text-[11px] text-stone-500"><?= $it['qty'] ?> × <?= rupiah($it['harga']) ?></p></div>
+                <p class="text-xs font-bold shrink-0"><?= rupiah($it['subtotal']) ?></p>
             </div>
+            <?php endforeach; ?>
+        </div>
+        <div class="border-t border-stone-100 pt-3"><?= ui_totals($subtotal, $qtyAll) ?></div>
+        <button type="button" onclick="bukaKonfirmasi()" class="w-full bg-[#2E7D32] hover:bg-emerald-800 text-white font-bold py-3 rounded-xl text-sm transition inline-flex items-center justify-center gap-2 shadow-sm active:scale-95"><i data-lucide="check-circle" class="w-4 h-4"></i> Selesaikan Pesanan</button>
+        <p class="text-[10px] text-stone-400 text-center leading-relaxed">Dengan menyelesaikan pesanan, kamu menyetujui syarat & ketentuan PlantHub.</p>
+    </aside>
+</form>
 
-            <div class="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
-
-                <div class="bg-stone-50 border border-stone-100 rounded-xl p-4 space-y-2">
-                    <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Dikirim ke</p>
-                    <div>
-                        <p id="kfNama" class="text-sm font-bold text-stone-800">-</p>
-                        <p id="kfTelepon" class="text-xs text-stone-600 mt-0.5">-</p>
-                        <p id="kfAlamat" class="text-xs text-stone-600 mt-1 leading-relaxed">-</p>
-                    </div>
-                </div>
-
-                <div class="bg-stone-50 border border-stone-100 rounded-xl p-4 space-y-2">
-                    <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Metode Pembayaran</p>
-                    <p id="kfMetode" class="text-sm font-bold text-stone-800">-</p>
-                </div>
-
-                <div id="kfCatatanWrap" class="bg-stone-50 border border-stone-100 rounded-xl p-4 space-y-2 hidden">
-                    <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Catatan</p>
-                    <p id="kfCatatan" class="text-xs text-stone-600 italic">-</p>
-                </div>
-
-                <div class="bg-stone-50 border border-stone-100 rounded-xl p-4 space-y-2">
-                    <p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Item (<?= $cart_count ?>)</p>
-                    <div class="space-y-1.5 max-h-40 overflow-y-auto">
-                        <?php foreach ($items as $it): ?>
-                            <div class="flex items-center justify-between text-xs">
-                                <span class="text-stone-700 truncate pr-2"><?= htmlspecialchars($it['nama']) ?> <b class="text-stone-500">× <?= $it['qty'] ?></b></span>
-                                <span class="font-bold text-stone-800 shrink-0">Rp <?= number_format($it['subtotal'], 0, ',', '.') ?></span>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
-                </div>
-
-                <div class="bg-[#E8F5E9] border-2 border-[#2E7D32]/30 rounded-xl p-4 space-y-1.5">
-                    <div class="flex justify-between text-xs text-stone-600">
-                        <span>Subtotal</span>
-                        <span class="font-semibold">Rp <?= number_format($subtotal, 0, ',', '.') ?></span>
-                    </div>
-                    <div class="flex justify-between text-xs text-stone-600">
-                        <span>PPN 11%</span>
-                        <span class="font-semibold">Rp <?= number_format($ppn, 0, ',', '.') ?></span>
-                    </div>
-                    <div class="pt-2 border-t border-[#2E7D32]/20 flex justify-between items-baseline">
-                        <span class="text-sm font-bold text-stone-800">Total Bayar</span>
-                        <span class="text-xl font-bold text-[#2E7D32]">Rp <?= number_format($total, 0, ',', '.') ?></span>
-                    </div>
-                </div>
-
-                <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2">
-                    <i data-lucide="info" class="w-4 h-4 text-amber-600 shrink-0 mt-0.5"></i>
-                    <p class="text-[11px] text-amber-800 leading-relaxed">
-                        Setelah pesanan dibuat, Anda <b>tidak dapat mengubah</b> data pengiriman. Pesanan bisa dibatalkan selama status masih <b>Diproses</b>.
-                    </p>
-                </div>
+<!-- MODAL KONFIRMASI -->
+<div id="modalKonfirmasi" class="no-print fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-[70] hidden items-center justify-center p-4 overflow-y-auto">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-lg w-full my-8">
+        <div class="p-5 border-b border-stone-100 flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+                <div class="w-9 h-9 rounded-xl bg-emerald-50 text-[#2E7D32] flex items-center justify-center"><i data-lucide="clipboard-check" class="w-4 h-4"></i></div>
+                <div><h3 class="text-base font-bold">Konfirmasi Pesanan</h3><p class="text-[11px] text-stone-500">Periksa kembali sebelum membuat pesanan</p></div>
             </div>
-
-            <div class="p-4 border-t border-stone-100 flex gap-2">
-                <button type="button" onclick="tutupKonfirmasi()" class="flex-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold py-2.5 rounded-xl text-sm transition">
-                    Kembali
-                </button>
-                <button type="button" id="btnKonfirmasi" onclick="submitCheckout()" class="flex-1 bg-[#2E7D32] hover:bg-emerald-800 text-white font-bold py-2.5 rounded-xl text-sm inline-flex items-center justify-center gap-2 transition">
-                    <i data-lucide="check" class="w-4 h-4"></i>
-                    <span>Ya, Buat Pesanan</span>
-                </button>
-            </div>
+            <button type="button" onclick="tutupKonfirmasi()" class="text-stone-400 hover:text-stone-700 p-1.5 rounded-lg hover:bg-stone-100"><i data-lucide="x" class="w-5 h-5"></i></button>
+        </div>
+        <div class="p-5 space-y-3 max-h-[65vh] overflow-y-auto">
+            <div class="bg-stone-50 border border-stone-100 rounded-xl p-4"><p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-1">Dikirim ke</p>
+                <p id="kfNama" class="text-sm font-bold"></p><p id="kfTelepon" class="text-xs text-stone-600 mt-0.5"></p><p id="kfAlamat" class="text-xs text-stone-600 mt-1 leading-relaxed"></p></div>
+            <div class="bg-stone-50 border border-stone-100 rounded-xl p-4"><p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-1">Metode Pembayaran</p><p id="kfMetode" class="text-sm font-bold"></p></div>
+            <div id="kfCatatanWrap" class="bg-stone-50 border border-stone-100 rounded-xl p-4 hidden"><p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider mb-1">Catatan</p><p id="kfCatatan" class="text-xs text-stone-600 italic"></p></div>
+            <div class="bg-stone-50 border border-stone-100 rounded-xl p-4 space-y-1.5"><p class="text-[10px] font-bold text-stone-400 uppercase tracking-wider">Item (<?= $qtyAll ?>)</p>
+                <?php foreach ($items as $it): ?><div class="flex justify-between text-xs"><span class="truncate pr-2"><?= e($it['nama']) ?> <b class="text-stone-500">× <?= $it['qty'] ?></b></span><span class="font-bold shrink-0"><?= rupiah($it['subtotal']) ?></span></div><?php endforeach; ?></div>
+            <div class="bg-[#E8F5E9] border-2 border-[#2E7D32]/30 rounded-xl p-4"><?= ui_totals($subtotal, $qtyAll) ?></div>
+            <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-start gap-2"><i data-lucide="info" class="w-4 h-4 text-amber-600 shrink-0 mt-0.5"></i>
+                <p class="text-[11px] text-amber-800 leading-relaxed">Data pengiriman tidak dapat diubah setelah pesanan dibuat. Pesanan bisa dibatalkan selama status masih <b>Diproses</b>.</p></div>
+        </div>
+        <div class="p-4 border-t border-stone-100 flex gap-2">
+            <button type="button" onclick="tutupKonfirmasi()" class="flex-1 bg-stone-100 hover:bg-stone-200 text-stone-700 font-semibold py-2.5 rounded-xl text-sm transition">Kembali</button>
+            <button type="button" id="btnKonfirmasi" onclick="submitCheckout()" class="flex-1 bg-[#2E7D32] hover:bg-emerald-800 text-white font-bold py-2.5 rounded-xl text-sm inline-flex items-center justify-center gap-2 transition"><i data-lucide="check" class="w-4 h-4"></i> Ya, Buat Pesanan</button>
         </div>
     </div>
+</div>
 
-    <script>
-        lucide.createIcons();
-
-        function toggleMobileSidebar() {
-            const s = document.getElementById('sidebar');
-            s?.classList.toggle('hidden');
-            s?.classList.toggle('fixed');
-            s?.classList.toggle('inset-y-0');
-            s?.classList.toggle('left-0');
-            s?.classList.toggle('z-40');
-        }
-
-        // ========================================================
-        // BUKA MODAL KONFIRMASI
-        // ========================================================
-        function bukaKonfirmasi() {
-            const nama    = document.getElementById('inNama').value.trim();
-            const telepon = document.getElementById('inTelepon').value.trim();
-            const alamat  = document.getElementById('inAlamat').value.trim();
-            const metode  = document.getElementById('inMetode').value;
-            const catatan = document.getElementById('inCatatan').value.trim();
-
-            if (!nama)    { alert('Nama penerima wajib diisi.'); document.getElementById('inNama').focus(); return; }
-            if (!telepon) { alert('Nomor telepon wajib diisi.'); document.getElementById('inTelepon').focus(); return; }
-            if (telepon.length < 8) { alert('Nomor telepon minimal 8 digit.'); document.getElementById('inTelepon').focus(); return; }
-            if (!alamat)  { alert('Alamat pengiriman wajib diisi.'); document.getElementById('inAlamat').focus(); return; }
-
-            document.getElementById('kfNama').innerText    = nama;
-            document.getElementById('kfTelepon').innerText = telepon;
-            document.getElementById('kfAlamat').innerText  = alamat;
-
-            const metodeLabel = {
-                'transfer': 'Transfer Bank',
-                'ewallet':  'E-Wallet (GoPay / OVO / Dana)',
-                'qris':     'QRIS',
-                'cod':      'Bayar di Tempat (COD)'
-            }[metode] || metode;
-            document.getElementById('kfMetode').innerText = metodeLabel;
-
-            const catatanWrap = document.getElementById('kfCatatanWrap');
-            if (catatan) {
-                document.getElementById('kfCatatan').innerText = catatan;
-                catatanWrap.classList.remove('hidden');
-            } else {
-                catatanWrap.classList.add('hidden');
-            }
-
-            const modal = document.getElementById('modalKonfirmasi');
-            modal.classList.remove('hidden');
-            modal.classList.add('flex');
-        }
-
-        function tutupKonfirmasi() {
-            const modal = document.getElementById('modalKonfirmasi');
-            modal.classList.add('hidden');
-            modal.classList.remove('flex');
-        }
-
-        // ========================================================
-        // SUBMIT CHECKOUT — VERSI FIX
-        // ========================================================
-        function submitCheckout() {
-            // 1. Ambil form
-            const form = document.getElementById('formCheckout');
-            if (!form) {
-                alert('ERROR: Form checkout tidak ditemukan!');
-                return;
-            }
-
-            // 2. Cari tombol dan nonaktifkan visual (TANPA disable)
-            const btn = document.getElementById('btnKonfirmasi');
-            if (btn) {
-                btn.innerText = 'Memproses...';
-                btn.style.pointerEvents = 'none';
-                btn.style.opacity = '0.7';
-            }
-
-            // 3. Set hidden input biar PHP tahu ini POST checkout
-            let hiddenInput = document.getElementById('hiddenProsesCheckout');
-            if (!hiddenInput) {
-                hiddenInput = document.createElement('input');
-                hiddenInput.type = 'hidden';
-                hiddenInput.name = 'proses_checkout';
-                hiddenInput.id = 'hiddenProsesCheckout';
-                hiddenInput.value = '1';
-                form.appendChild(hiddenInput);
-            }
-
-            // 4. Submit form — langsung!
-            form.submit();
-        }
-
-        // Tutup modal kalau klik overlay
-        document.getElementById('modalKonfirmasi').addEventListener('click', (e) => {
-            if (e.target.id === 'modalKonfirmasi') tutupKonfirmasi();
-        });
-
-        // Enter di form → buka konfirmasi (bukan langsung submit)
-        document.getElementById('formCheckout')?.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') {
-                e.preventDefault();
-                bukaKonfirmasi();
-            }
-        });
-    </script>
-</body>
-</html>
+<?php
+$metodeJs = json_encode(array_map(fn($m) => $m[0], $metodeList), JSON_UNESCAPED_UNICODE);
+$GLOBALS['__extra_js'] = <<<JS
+<script>
+const METODE = $metodeJs;
+const \$ = (id) => document.getElementById(id);
+function bukaKonfirmasi() {
+    const nama = \$('inNama').value.trim(), tel = \$('inTelepon').value.trim(), alamat = \$('inAlamat').value.trim(), cat = \$('inCatatan').value.trim();
+    const metode = document.querySelector('input[name="metode_pembayaran"]:checked')?.value || 'transfer';
+    if (!nama)  { toast('Nama penerima wajib diisi.', 'error'); \$('inNama').focus(); return; }
+    if (tel.replace(/\\D/g, '').length < 8) { toast('Nomor telepon minimal 8 digit.', 'error'); \$('inTelepon').focus(); return; }
+    if (alamat.length < 10) { toast('Alamat pengiriman belum lengkap.', 'error'); \$('inAlamat').focus(); return; }
+    \$('kfNama').textContent = nama; \$('kfTelepon').textContent = tel; \$('kfAlamat').textContent = alamat;
+    \$('kfMetode').textContent = METODE[metode] || metode;
+    \$('kfCatatan').textContent = cat; \$('kfCatatanWrap').classList.toggle('hidden', !cat);
+    const m = \$('modalKonfirmasi'); m.classList.remove('hidden'); m.classList.add('flex');
+}
+function tutupKonfirmasi() { const m = \$('modalKonfirmasi'); m.classList.add('hidden'); m.classList.remove('flex'); }
+function submitCheckout() {
+    const b = \$('btnKonfirmasi'); b.textContent = 'Memproses…'; b.style.pointerEvents = 'none'; b.style.opacity = '.7';
+    \$('formCheckout').submit();
+}
+\$('modalKonfirmasi').addEventListener('click', (e) => { if (e.target.id === 'modalKonfirmasi') tutupKonfirmasi(); });
+\$('formCheckout').addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA') { e.preventDefault(); bukaKonfirmasi(); } });
+</script>
+JS;
+layout_end(); ?>

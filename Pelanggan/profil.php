@@ -1,517 +1,246 @@
 <?php
-session_start();
-require_once '../Config/database.php';
+require_once __DIR__ . '/customer_init.php';
 
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'customer') {
-    header("Location: ../Auth/login.php");
-    exit;
-}
+$uid   = user_id();
+$error = '';
+$errTab = '';
+$user  = current_user(true);
+$form  = ['nama_lengkap' => $user['nama_lengkap'] ?? '', 'no_hp' => $user['no_hp'] ?? '', 'alamat' => $user['alamat'] ?? ''];
 
-$user_id    = (int)$_SESSION['user_id'];
-$nama_user  = $_SESSION['nama_user'] ?? 'Pelanggan';
-$cart_count = isset($_SESSION['cart']) ? array_sum($_SESSION['cart']) : 0;
-
-$sukses = '';
-$error  = '';
-
-// FUNGSI UPLOAD FOTO PROFIL
-if (!function_exists('uploadFotoProfil')) {
-    function uploadFotoProfil($file, $oldFile = '', &$errors = []) {
-        if (!isset($file) || $file['error'] === UPLOAD_ERR_NO_FILE) return $oldFile;
-
-        if ($file['error'] !== UPLOAD_ERR_OK) {
-            $errors[] = "Gagal upload foto (kode error: {$file['error']}).";
-            return $oldFile;
-        }
-
-        $allowed = ['jpg', 'jpeg', 'png', 'webp'];
-        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-
-        if (!in_array($ext, $allowed)) {
-            $errors[] = "Format foto tidak didukung. Gunakan JPG, PNG, atau WEBP.";
-            return $oldFile;
-        }
-        if ($file['size'] > 2 * 1024 * 1024) {
-            $errors[] = "Ukuran foto melebihi 2MB.";
-            return $oldFile;
-        }
-
-        $dir = '../uploads/avatars/';
-        if (!is_dir($dir)) mkdir($dir, 0755, true);
-
-        $newName = 'avatar_' . time() . '_' . rand(1000, 9999) . '.' . $ext;
-        if (move_uploaded_file($file['tmp_name'], $dir . $newName)) {
-            if ($oldFile && $oldFile !== 'default_avatar.jpg' && file_exists($dir . $oldFile)) {
-                @unlink($dir . $oldFile);
-            }
-            return $newName;
-        }
-        $errors[] = "Gagal memindahkan foto ke folder uploads.";
-        return $oldFile;
-    }
-}
-
-// AMBIL DATA USER
-$userData = null;
-$qUser = mysqli_query($conn, "SELECT * FROM users WHERE id = $user_id LIMIT 1");
-if ($qUser) $userData = mysqli_fetch_assoc($qUser);
-
-// HANDLE POST
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if (is_post()) {
+    csrf_require('profil.php');
     $action = $_POST['action'] ?? '';
 
-    // HAPUS FOTO PROFIL
+    // ---- Hapus foto ----
     if ($action === 'hapus_foto') {
-        $old = $userData['foto_profil'] ?? 'default_avatar.jpg';
-        if ($old && $old !== 'default_avatar.jpg' && file_exists('../uploads/avatars/' . $old)) {
-            @unlink('../uploads/avatars/' . $old);
-        }
-        if (mysqli_query($conn, "UPDATE users SET foto_profil = 'default_avatar.jpg' WHERE id = $user_id")) {
-            header("Location: profil.php?status=foto_reset");
-            exit;
-        } else {
-            $error = "Gagal menghapus foto.";
-        }
+        $old = $user['foto_profil'] ?? '';
+        if ($old && $old !== 'default_avatar.jpg') @unlink(PATH_AVATAR . basename($old));
+        db_exec("UPDATE users SET foto_profil = 'default_avatar.jpg' WHERE id = ?", 'i', [$uid]);
+        flash('info', 'Foto profil dikembalikan ke default.');
+        redirect('profil.php');
     }
 
-    // UPDATE PROFIL
+    // ---- Update profil ----
     if ($action === 'update_profil') {
-        $nama   = mysqli_real_escape_string($conn, trim($_POST['nama_lengkap'] ?? ''));
-        $no_hp  = mysqli_real_escape_string($conn, trim($_POST['no_hp'] ?? ''));
-        $alamat = mysqli_real_escape_string($conn, trim($_POST['alamat'] ?? ''));
-
-        $uploadErrors = [];
-        $fotoLama = $userData['foto_profil'] ?? 'default_avatar.jpg';
-        $fotoBaru = $fotoLama;
-
-        if (isset($_FILES['foto_profil']) && $_FILES['foto_profil']['error'] !== UPLOAD_ERR_NO_FILE) {
-            $fotoBaru = uploadFotoProfil($_FILES['foto_profil'], $fotoLama, $uploadErrors);
-        }
-
-        if ($nama === '') {
-            $error = "Nama tidak boleh kosong.";
-        } elseif (!empty($uploadErrors)) {
-            $error = implode(' ', $uploadErrors);
-        } else {
-            $fotoEsc = mysqli_real_escape_string($conn, $fotoBaru);
-            $sql = "UPDATE users SET 
-                        nama_lengkap = '$nama', 
-                        no_hp = '$no_hp', 
-                        alamat = '$alamat',
-                        foto_profil = '$fotoEsc'
-                    WHERE id = $user_id";
-            if (mysqli_query($conn, $sql)) {
-                $_SESSION['nama_user'] = $nama;
-                $nama_user = $nama;
-                header("Location: profil.php?status=profil_updated");
-                exit;
-            } else {
-                $error = "Gagal update profil: " . mysqli_error($conn);
+        $form = [
+            'nama_lengkap' => trim($_POST['nama_lengkap'] ?? ''),
+            'no_hp'        => trim($_POST['no_hp'] ?? ''),
+            'alamat'       => trim($_POST['alamat'] ?? ''),
+        ];
+        $errTab = 'profil';
+        if ($form['nama_lengkap'] === '')                    $error = 'Nama tidak boleh kosong.';
+        elseif (mb_strlen($form['nama_lengkap']) > 100)      $error = 'Nama maksimal 100 karakter.';
+        elseif ($form['no_hp'] !== '' && !preg_match('/^[0-9+\-\s()]{8,20}$/', $form['no_hp'])) $error = 'Nomor HP tidak valid (8–20 digit).';
+        elseif (mb_strlen($form['alamat']) > 500)            $error = 'Alamat maksimal 500 karakter.';
+        else {
+            $err = null;
+            $foto = save_image_upload($_FILES['foto_profil'] ?? null, PATH_AVATAR, 'avatar', 2 * 1024 * 1024, ['jpg', 'png', 'webp'], $err);
+            if ($err) $error = $err;
+            else {
+                try {
+                    if ($foto) {
+                        $old = $user['foto_profil'] ?? '';
+                        db_exec('UPDATE users SET nama_lengkap=?, no_hp=?, alamat=?, foto_profil=? WHERE id=?', 'ssssi', [$form['nama_lengkap'], $form['no_hp'], $form['alamat'], $foto, $uid]);
+                        if ($old && $old !== 'default_avatar.jpg') @unlink(PATH_AVATAR . basename($old));
+                    } else {
+                        db_exec('UPDATE users SET nama_lengkap=?, no_hp=?, alamat=? WHERE id=?', 'sssi', [$form['nama_lengkap'], $form['no_hp'], $form['alamat'], $uid]);
+                    }
+                    $_SESSION['nama_user'] = $form['nama_lengkap'];
+                    flash('success', 'Profil berhasil diperbarui.');
+                    redirect('profil.php');
+                } catch (mysqli_sql_exception | RuntimeException $e) {
+                    if ($foto) @unlink(PATH_AVATAR . $foto);
+                    error_log('PROFIL: ' . $e->getMessage());
+                    $error = 'Gagal menyimpan profil, coba lagi.';
+                }
             }
         }
     }
 
-    // GANTI PASSWORD
+    // ---- Ganti password ----
     if ($action === 'ganti_password') {
-        $old  = $_POST['old_password'] ?? '';
-        $new  = $_POST['new_password'] ?? '';
-        $konf = $_POST['konfirmasi'] ?? '';
-
-        if (strlen($new) < 6) {
-            $error = "Password baru minimal 6 karakter.";
-        } elseif ($new !== $konf) {
-            $error = "Konfirmasi password tidak cocok.";
-        } elseif (!password_verify($old, $userData['password'])) {
-            $error = "Password lama salah.";
-        } else {
-            $hash = password_hash($new, PASSWORD_BCRYPT);
-            if (mysqli_query($conn, "UPDATE users SET password = '$hash' WHERE id = $user_id")) {
-                header("Location: profil.php?status=pass_updated");
-                exit;
-            } else {
-                $error = "Gagal ganti password: " . mysqli_error($conn);
+        $errTab = 'password';
+        $old = $_POST['old_password'] ?? ''; $new = $_POST['new_password'] ?? ''; $konf = $_POST['konfirmasi'] ?? '';
+        if (strlen($new) < 6)                                  $error = 'Password baru minimal 6 karakter.';
+        elseif ($new !== $konf)                                $error = 'Konfirmasi password tidak cocok.';
+        elseif ($new === $old)                                 $error = 'Password baru harus berbeda dari password lama.';
+        elseif (!password_verify($old, $user['password'] ?? '')) $error = 'Password lama salah.';
+        else {
+            try {
+                db_exec('UPDATE users SET password = ? WHERE id = ?', 'si', [password_hash($new, PASSWORD_DEFAULT), $uid]);
+                session_regenerate_id(true);
+                flash('success', 'Password berhasil diubah.');
+                redirect('profil.php');
+            } catch (mysqli_sql_exception | RuntimeException $e) {
+                error_log('PASSWORD: ' . $e->getMessage());
+                $error = 'Gagal mengganti password, coba lagi.';
             }
         }
     }
 }
 
-$qUser = mysqli_query($conn, "SELECT * FROM users WHERE id = $user_id LIMIT 1");
-if ($qUser) $userData = mysqli_fetch_assoc($qUser);
+$user   = current_user(true);
+$custom = avatar_is_custom($user);
+$avatar = avatar_url($user, 160);
+$stat   = db_one("SELECT COUNT(*) AS n, COALESCE(SUM(CASE WHEN status<>'Batal' THEN total_harga ELSE 0 END),0) AS belanja
+                  FROM transaksi WHERE user_id = ? AND jenis_transaksi='penjualan'", 'i', [$uid]) ?: ['n' => 0, 'belanja' => 0];
+$wishN  = count(wishlist_ids($uid));
+$lastLogin = !empty($user['last_login']) ? waktu_lalu($user['last_login']) : 'Belum tercatat';
 
-if (isset($_GET['status'])) {
-    if ($_GET['status'] === 'profil_updated') $sukses = "Profil berhasil diperbarui.";
-    if ($_GET['status'] === 'pass_updated')   $sukses = "Password berhasil diubah.";
-    if ($_GET['status'] === 'foto_reset')     $sukses = "Foto profil dikembalikan ke default.";
-}
+$faq = [
+    ['Bagaimana cara memesan tanaman?', 'Buka <b>Katalog</b>, klik <b>Keranjang</b> pada produk, lalu buka <b>Keranjang</b> → <b>Lanjut ke Checkout</b>. Isi alamat, pilih metode bayar, dan klik <b>Selesaikan Pesanan</b>. Ingin cepat? Pakai <b>Beli Sekarang</b> di halaman produk.'],
+    ['Bagaimana cara melacak pesanan?', 'Buka menu <b>Pesanan</b>. Setiap pesanan punya pelacak status: Diproses → Dikirim → Selesai.'],
+    ['Bagaimana cara membatalkan pesanan?', 'Pesanan berstatus <b>Diproses</b> bisa dibatalkan lewat tombol <b>Batalkan</b> di menu Pesanan. Stok produk otomatis dikembalikan.'],
+    ['Bagaimana mencetak nota?', 'Di menu Pesanan klik <b>Lihat Nota</b>, lalu <b>Cetak / PDF</b>. Nota juga bisa dibagikan lewat WhatsApp atau link.'],
+    ['Bagaimana cara konsultasi dengan admin?', 'Buka menu <b>Konsultasi</b>, tulis pertanyaan atau kirim foto tanamanmu, lalu klik Kirim. Admin membalas pada jam layanan.'],
+    ['Bagaimana cara menyimpan tanaman favorit?', 'Tekan ikon <b>hati</b> pada produk. Semua favoritmu tersimpan di menu <b>Wishlist</b>.'],
+];
 
-$foto_profil = $userData['foto_profil'] ?? 'default_avatar.jpg';
-$isFotoCustom = ($foto_profil && $foto_profil !== 'default_avatar.jpg' && file_exists('../uploads/avatars/' . $foto_profil));
-$avatarSrc = $isFotoCustom
-    ? '../uploads/avatars/' . $foto_profil
-    : 'https://ui-avatars.com/api/?name=' . urlencode($nama_user) . '&background=2E7D32&color=fff&size=128';
+$input = 'w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] focus:ring-2 focus:ring-emerald-100';
 
-$lastLogin = $userData['last_login'] ?? null;
-$lastLoginText = 'Belum pernah login';
-if ($lastLogin) {
-    $diff = time() - strtotime($lastLogin);
-    if ($diff < 60)         $lastLoginText = 'Baru saja';
-    elseif ($diff < 3600)   $lastLoginText = floor($diff / 60) . ' menit lalu';
-    elseif ($diff < 86400)  $lastLoginText = floor($diff / 3600) . ' jam lalu';
-    elseif ($diff < 604800) $lastLoginText = floor($diff / 86400) . ' hari lalu';
-    else                    $lastLoginText = date('d M Y, H:i', strtotime($lastLogin)) . ' WIB';
-}
+layout_start(['title' => 'Profil Saya', 'active' => 'profil', 'width' => 'max-w-4xl']);
 ?>
-<!DOCTYPE html>
-<html lang="id">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlantHub - Profil Saya</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style> body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; } </style>
-</head>
-<body class="antialiased min-h-screen flex flex-col">
 
-    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
-        <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-            <div class="flex items-center gap-3">
-                <button onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
-                    <i data-lucide="menu" class="w-5 h-5"></i>
-                </button>
-                <a href="dashboard.php" class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white">
-                        <i data-lucide="sprout" class="w-5 h-5"></i>
-                    </div>
-                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
-                </a>
-            </div>
-            <div class="flex-1 max-w-md hidden md:block">
-                <span class="text-xs text-stone-500">Profil Saya</span>
-            </div>
-            <a href="dashboard.php" class="flex items-center gap-3 pl-1">
-                <img src="<?= htmlspecialchars($avatarSrc) ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
-                <div class="hidden sm:block text-left">
-                    <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($nama_user) ?></p>
-                    <p class="text-xs text-stone-500">Pelanggan</p>
-                </div>
-            </a>
+<div class="fade-up">
+    <h1 class="text-2xl font-bold tracking-tight">Profil Saya</h1>
+    <p class="text-sm text-stone-500 mt-0.5">Kelola data diri, alamat pengiriman, dan keamanan akunmu.</p>
+</div>
+
+<?php if ($error): ?>
+<div class="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-sm flex items-center gap-2"><i data-lucide="alert-circle" class="w-5 h-5 shrink-0"></i><span><?= e($error) ?></span></div>
+<?php endif; ?>
+
+<!-- KARTU PROFIL -->
+<section class="relative overflow-hidden bg-white rounded-2xl border border-stone-200/80 shadow-sm fade-up">
+    <div class="h-20 bg-gradient-to-r from-[#1E7D32] via-[#2E7D32] to-emerald-400"></div>
+    <div class="px-6 pb-6 -mt-10 flex flex-col sm:flex-row items-center sm:items-end gap-4">
+        <div class="relative shrink-0">
+            <img id="previewAvatar" src="<?= e($avatar) ?>" alt="" class="w-24 h-24 rounded-2xl object-cover ring-4 ring-white bg-stone-50 shadow-md">
+            <?php if ($custom): ?>
+            <form method="post" data-confirm="Hapus foto profil dan kembalikan ke default?" class="absolute -top-1 -right-1">
+                <?= csrf_field() ?><input type="hidden" name="action" value="hapus_foto">
+                <button class="w-6 h-6 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center shadow-md" title="Hapus foto"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
+            </form>
+            <?php endif; ?>
         </div>
-    </header>
-
-    <div class="flex flex-1">
-        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
-            <div class="space-y-6">
-                <nav class="space-y-1">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MENU PELANGGAN</p>
-                    <?php
-                    $menu = [
-                        ['url' => 'dashboard.php', 'icon' => 'layout-grid',    'label' => 'Beranda',        'active' => false],
-                        ['url' => 'katalog.php',   'icon' => 'store',          'label' => 'Katalog Shop',   'active' => false],
-                        ['url' => 'cart.php',      'icon' => 'shopping-bag',   'label' => 'Keranjang',      'active' => false],
-                        ['url' => 'riwayat.php',   'icon' => 'history',        'label' => 'Riwayat Order',  'active' => false],
-                        ['url' => 'chat.php',      'icon' => 'message-square', 'label' => 'Konsultasi',     'active' => false],
-                        ['url' => 'profil.php',    'icon' => 'user',           'label' => 'Profil Saya',    'active' => true],
-                    ];
-                    foreach ($menu as $m):
-                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
-                    ?>
-                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
-                            <div class="flex items-center gap-3">
-                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                                <span><?= $m['label'] ?></span>
-                            </div>
-                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
-                        </a>
-                    <?php endforeach; ?>
-                </nav>
-            </div>
-            <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3">
-                <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
-                    <i data-lucide="shopping-cart" class="w-5 h-5"></i>
-                </div>
-                <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 leading-tight">Troli Belanja</p>
-                    <p class="text-[11px] text-stone-400 mt-0.5"><?= $cart_count ?> item</p>
-                </div>
-            </div>
-        </aside>
-
-        <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-4xl mx-auto w-full space-y-6">
-
-            <div>
-                <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Profil Saya</h1>
-                <p class="text-sm text-stone-500 mt-0.5">Kelola data diri dan keamanan akun Anda.</p>
-            </div>
-
-            <?php if ($sukses): ?>
-                <div id="alertSukses" class="p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-sm flex items-center gap-2 transition-opacity duration-500">
-                    <i data-lucide="check-circle" class="w-5 h-5 text-[#2E7D32]"></i>
-                    <span><?= htmlspecialchars($sukses) ?></span>
-                </div>
-            <?php endif; ?>
-            <?php if ($error): ?>
-                <div class="p-4 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-sm flex items-center gap-2">
-                    <i data-lucide="alert-circle" class="w-5 h-5"></i>
-                    <span><?= htmlspecialchars($error) ?></span>
-                </div>
-            <?php endif; ?>
-
-            <!-- KARTU PROFIL + AVATAR -->
-            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6">
-                <div class="flex flex-col sm:flex-row items-center sm:items-start gap-5">
-                    <div class="relative shrink-0">
-                        <img id="previewAvatar" src="<?= htmlspecialchars($avatarSrc) ?>" class="w-24 h-24 rounded-2xl object-cover ring-4 ring-[#2E7D32]/10 bg-stone-50">
-                        <?php if ($isFotoCustom): ?>
-                            <button type="button" onclick="konfirmasiHapusFoto()" class="absolute -top-1 -right-1 w-6 h-6 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center shadow-md transition" title="Hapus foto">
-                                <i data-lucide="x" class="w-3.5 h-3.5"></i>
-                            </button>
-                        <?php endif; ?>
-                    </div>
-                    <div class="flex-1 text-center sm:text-left">
-                        <h2 class="text-xl font-bold text-stone-800"><?= htmlspecialchars($nama_user) ?></h2>
-                        <p class="text-xs text-stone-500 mt-0.5"><?= htmlspecialchars($userData['email'] ?? '') ?></p>
-                        <p class="text-xs text-stone-400 mt-0.5">Bergabung: <?= !empty($userData['created_at']) ? date('d M Y', strtotime($userData['created_at'])) : '-' ?></p>
-
-                        <div class="mt-3 flex flex-wrap justify-center sm:justify-start gap-2">
-                            <span class="inline-flex items-center gap-1 text-[11px] font-semibold text-stone-600 bg-stone-100 px-2.5 py-1 rounded-md">
-                                <i data-lucide="clock" class="w-3 h-3"></i>
-                                Login terakhir: <?= htmlspecialchars($lastLoginText) ?>
-                            </span>
-                            <span class="inline-flex items-center gap-1 text-[11px] font-semibold <?= $isFotoCustom ? 'text-emerald-700 bg-emerald-50' : 'text-stone-500 bg-stone-100' ?> px-2.5 py-1 rounded-md">
-                                <i data-lucide="image" class="w-3 h-3"></i>
-                                <?= $isFotoCustom ? 'Foto custom' : 'Foto default' ?>
-                            </span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- FORM DATA DIRI -->
-            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4">
-                <div class="border-b border-stone-100 pb-3">
-                    <h2 class="text-base font-bold text-stone-800">Data Diri</h2>
-                    <p class="text-xs text-stone-500 mt-0.5">Perbarui informasi kontak, foto profil, dan alamat pengiriman Anda.</p>
-                </div>
-
-                <form method="POST" enctype="multipart/form-data" class="space-y-4">
-                    <input type="hidden" name="action" value="update_profil">
-
-                    <div>
-                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Foto Profil</label>
-                        <div class="flex items-center gap-4">
-                            <label class="inline-flex items-center gap-2 bg-stone-100 hover:bg-stone-200 text-stone-700 px-4 py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition">
-                                <i data-lucide="upload" class="w-4 h-4"></i>
-                                <span>Pilih Foto</span>
-                                <input type="file" name="foto_profil" id="inFoto" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="previewImage(event)">
-                            </label>
-                            <?php if ($isFotoCustom): ?>
-                                <span class="text-[11px] text-stone-500 inline-flex items-center gap-1">
-                                    <i data-lucide="check-circle" class="w-3.5 h-3.5 text-emerald-600"></i>
-                                    Foto custom aktif
-                                </span>
-                            <?php endif; ?>
-                        </div>
-                        <div id="infoFoto" class="hidden mt-2 text-[10px] text-stone-500 flex items-center gap-2">
-                            <i data-lucide="image" class="w-3 h-3"></i>
-                            <span class="nama-file italic">Belum ada file dipilih</span>
-                            <button type="button" onclick="batalPilihFoto()" class="text-rose-500 hover:underline font-semibold">Batal</button>
-                        </div>
-                        <p class="text-[10px] text-stone-400 mt-1.5">JPG, PNG, WEBP. Maks 2MB. Rasio 1:1 direkomendasikan.</p>
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Nama Lengkap</label>
-                        <input type="text" name="nama_lengkap" value="<?= htmlspecialchars($userData['nama_lengkap'] ?? '') ?>" required class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                    </div>
-
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Email (tidak bisa diubah)</label>
-                            <input type="email" value="<?= htmlspecialchars($userData['email'] ?? '') ?>" disabled class="w-full px-4 py-2.5 text-sm bg-stone-100 border border-stone-200 rounded-xl text-stone-500 cursor-not-allowed">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">No. HP / WhatsApp</label>
-                            <input type="text" name="no_hp" value="<?= htmlspecialchars($userData['no_hp'] ?? '') ?>" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                        </div>
-                    </div>
-
-                    <div>
-                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Alamat Pengiriman</label>
-                        <textarea name="alamat" rows="3" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] resize-none"><?= htmlspecialchars($userData['alamat'] ?? '') ?></textarea>
-                    </div>
-
-                    <div class="flex justify-end pt-2">
-                        <button type="submit" class="inline-flex items-center gap-2 bg-[#2E7D32] text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-emerald-800 transition">
-                            <i data-lucide="save" class="w-4 h-4"></i> Simpan Perubahan
-                        </button>
-                    </div>
-                </form>
-            </div>
-
-            <!-- FORM GANTI PASSWORD -->
-            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4">
-                <div class="border-b border-stone-100 pb-3">
-                    <h2 class="text-base font-bold text-stone-800">Ganti Password</h2>
-                    <p class="text-xs text-stone-500 mt-0.5">Gunakan password yang kuat dan mudah diingat.</p>
-                </div>
-
-                <form method="POST" class="space-y-4">
-                    <input type="hidden" name="action" value="ganti_password">
-
-                    <div>
-                        <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Password Lama</label>
-                        <input type="password" name="old_password" required class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                    </div>
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Password Baru</label>
-                            <input type="password" name="new_password" required minlength="6" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                        </div>
-                        <div>
-                            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Konfirmasi Password</label>
-                            <input type="password" name="konfirmasi" required minlength="6" class="w-full px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                        </div>
-                    </div>
-
-                    <div class="flex justify-end pt-2">
-                        <button type="submit" class="inline-flex items-center gap-2 bg-stone-800 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-stone-900 transition">
-                            <i data-lucide="lock" class="w-4 h-4"></i> Ubah Password
-                        </button>
-                    </div>
-                </form>
-            </div>
-
-            <!-- BANTUAN & PANDUAN -->
-            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4">
-                <div class="border-b border-stone-100 pb-3">
-                    <h2 class="text-base font-bold text-stone-800">Bantuan & Panduan</h2>
-                    <p class="text-xs text-stone-500 mt-0.5">Panduan singkat menggunakan fitur PlantHub.</p>
-                </div>
-
-                <div class="space-y-2">
-                    <details class="group border border-stone-200/80 rounded-xl overflow-hidden">
-                        <summary class="cursor-pointer p-3.5 text-sm font-semibold text-stone-800 hover:bg-stone-50 flex items-center justify-between list-none">
-                            <span>Bagaimana cara memesan tanaman?</span>
-                            <i data-lucide="chevron-down" class="w-4 h-4 text-stone-400 group-open:rotate-180 transition"></i>
-                        </summary>
-                        <div class="p-3.5 pt-0 text-xs text-stone-600 leading-relaxed bg-stone-50/50 border-t border-stone-100">
-                            Buka <b>Katalog Shop</b>, klik produk → <b>+ Keranjang</b>. Lalu buka <b>Keranjang</b>, klik <b>Checkout</b>, isi alamat pengiriman, pilih metode bayar, dan klik <b>Selesaikan Pesanan</b>.
-                        </div>
-                    </details>
-
-                    <details class="group border border-stone-200/80 rounded-xl overflow-hidden">
-                        <summary class="cursor-pointer p-3.5 text-sm font-semibold text-stone-800 hover:bg-stone-50 flex items-center justify-between list-none">
-                            <span>Bagaimana cara melacak pesanan saya?</span>
-                            <i data-lucide="chevron-down" class="w-4 h-4 text-stone-400 group-open:rotate-180 transition"></i>
-                        </summary>
-                        <div class="p-3.5 pt-0 text-xs text-stone-600 leading-relaxed bg-stone-50/50 border-t border-stone-100">
-                            Buka menu <b>Riwayat Order</b>. Semua pesanan Anda akan tampil beserta status terbaru (Diproses / Dikirim / Selesai / Batal).
-                        </div>
-                    </details>
-
-                    <details class="group border border-stone-200/80 rounded-xl overflow-hidden">
-                        <summary class="cursor-pointer p-3.5 text-sm font-semibold text-stone-800 hover:bg-stone-50 flex items-center justify-between list-none">
-                            <span>Bagaimana cara membatalkan pesanan?</span>
-                            <i data-lucide="chevron-down" class="w-4 h-4 text-stone-400 group-open:rotate-180 transition"></i>
-                        </summary>
-                        <div class="p-3.5 pt-0 text-xs text-stone-600 leading-relaxed bg-stone-50/50 border-t border-stone-100">
-                            Pesanan yang masih berstatus <b>Diproses</b> bisa dibatalkan. Buka <b>Riwayat Order</b>, klik tombol <b>Batalkan</b> pada pesanan yang diinginkan. Stok produk akan otomatis dikembalikan.
-                        </div>
-                    </details>
-
-                    <details class="group border border-stone-200/80 rounded-xl overflow-hidden">
-                        <summary class="cursor-pointer p-3.5 text-sm font-semibold text-stone-800 hover:bg-stone-50 flex items-center justify-between list-none">
-                            <span>Bagaimana cara konsultasi dengan admin?</span>
-                            <i data-lucide="chevron-down" class="w-4 h-4 text-stone-400 group-open:rotate-180 transition"></i>
-                        </summary>
-                        <div class="p-3.5 pt-0 text-xs text-stone-600 leading-relaxed bg-stone-50/50 border-t border-stone-100">
-                            Buka menu <b>Konsultasi</b>, ketik pertanyaan Anda tentang perawatan tanaman atau produk, lalu klik <b>Kirim</b>. Admin akan membalas secepatnya.
-                        </div>
-                    </details>
-
-                    <details class="group border border-stone-200/80 rounded-xl overflow-hidden">
-                        <summary class="cursor-pointer p-3.5 text-sm font-semibold text-stone-800 hover:bg-stone-50 flex items-center justify-between list-none">
-                            <span>Bagaimana cara mengganti password?</span>
-                            <i data-lucide="chevron-down" class="w-4 h-4 text-stone-400 group-open:rotate-180 transition"></i>
-                        </summary>
-                        <div class="p-3.5 pt-0 text-xs text-stone-600 leading-relaxed bg-stone-50/50 border-t border-stone-100">
-                            Anda sedang berada di halaman yang tepat! Scroll ke atas, isi form <b>Ganti Password</b> dengan password lama, password baru, dan konfirmasi.
-                        </div>
-                    </details>
-                </div>
-
-                <div class="pt-3 border-t border-stone-100 flex flex-col sm:flex-row items-center justify-between gap-3 bg-emerald-50/50 -mx-6 -mb-6 px-6 py-4 rounded-b-2xl">
-                    <div>
-                        <p class="text-xs font-bold text-stone-800">Butuh bantuan lebih lanjut?</p>
-                        <p class="text-[11px] text-stone-500 mt-0.5">Tim admin PlantHub siap membantu Anda.</p>
-                    </div>
-                    <a href="chat.php" class="inline-flex items-center gap-2 bg-[#2E7D32] hover:bg-emerald-800 text-white px-4 py-2 rounded-xl text-xs font-bold transition">
-                        <i data-lucide="message-square" class="w-3.5 h-3.5"></i>
-                        <span>Hubungi Admin</span>
-                    </a>
-                </div>
-            </div>
-
-        </main>
+        <div class="flex-1 text-center sm:text-left sm:pb-1 min-w-0">
+            <h2 class="text-xl font-bold truncate"><?= e($user['nama_lengkap'] ?? nama_user()) ?></h2>
+            <p class="text-xs text-stone-500 truncate"><?= e($user['email'] ?? '') ?></p>
+            <p class="text-xs text-stone-400 mt-0.5">Bergabung <?= !empty($user['created_at']) ? tgl_id($user['created_at']) : '-' ?> · Login terakhir <?= e($lastLogin) ?></p>
+        </div>
     </div>
+    <div class="grid grid-cols-3 divide-x divide-stone-100 border-t border-stone-100 text-center">
+        <a href="riwayat.php" class="py-4 hover:bg-stone-50 transition"><p class="text-lg font-bold"><?= (int)$stat['n'] ?></p><p class="text-[10px] uppercase tracking-wider text-stone-500 font-semibold">Pesanan</p></a>
+        <a href="wishlist.php" class="py-4 hover:bg-stone-50 transition"><p class="text-lg font-bold"><?= $wishN ?></p><p class="text-[10px] uppercase tracking-wider text-stone-500 font-semibold">Wishlist</p></a>
+        <div class="py-4"><p class="text-lg font-bold text-[#2E7D32]"><?= rupiah($stat['belanja']) ?></p><p class="text-[10px] uppercase tracking-wider text-stone-500 font-semibold">Total Belanja</p></div>
+    </div>
+</section>
 
-    <form id="formHapusFoto" method="POST" action="profil.php" class="hidden">
-        <input type="hidden" name="action" value="hapus_foto">
+<!-- DATA DIRI -->
+<section class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4 fade-up">
+    <div class="border-b border-stone-100 pb-3">
+        <h2 class="text-base font-bold flex items-center gap-2"><i data-lucide="user-round" class="w-4 h-4 text-[#2E7D32]"></i> Data Diri</h2>
+        <p class="text-xs text-stone-500 mt-0.5">Alamat & nomor HP akan terisi otomatis saat checkout.</p>
+    </div>
+    <form method="post" enctype="multipart/form-data" class="space-y-4">
+        <?= csrf_field() ?><input type="hidden" name="action" value="update_profil">
+        <div>
+            <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Foto Profil</label>
+            <div class="flex items-center gap-3 flex-wrap">
+                <label class="inline-flex items-center gap-2 bg-stone-100 hover:bg-stone-200 text-stone-700 px-4 py-2.5 rounded-xl text-xs font-semibold cursor-pointer transition"><i data-lucide="upload" class="w-4 h-4"></i> Pilih Foto
+                    <input type="file" name="foto_profil" id="inFoto" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="previewImage(event)"></label>
+                <span id="infoFoto" class="hidden text-[11px] text-stone-500 items-center gap-2"><span class="nama-file italic"></span> <button type="button" onclick="batalPilihFoto()" class="text-rose-500 hover:underline font-semibold">Batal</button></span>
+            </div>
+            <p class="text-[10px] text-stone-400 mt-1.5">JPG, PNG, WEBP · maks 2MB · rasio 1:1 disarankan.</p>
+        </div>
+        <div><label class="block text-xs font-bold text-stone-600 uppercase mb-2">Nama Lengkap</label>
+            <input type="text" name="nama_lengkap" value="<?= e($form['nama_lengkap']) ?>" required maxlength="100" class="<?= $input ?>"></div>
+        <div class="grid sm:grid-cols-2 gap-4">
+            <div><label class="block text-xs font-bold text-stone-600 uppercase mb-2">Email (tidak dapat diubah)</label>
+                <input type="email" value="<?= e($user['email'] ?? '') ?>" disabled class="w-full px-4 py-2.5 text-sm bg-stone-100 border border-stone-200 rounded-xl text-stone-500 cursor-not-allowed"></div>
+            <div><label class="block text-xs font-bold text-stone-600 uppercase mb-2">No. HP / WhatsApp</label>
+                <input type="tel" name="no_hp" value="<?= e($form['no_hp']) ?>" placeholder="081234567890" class="<?= $input ?>"></div>
+        </div>
+        <div><label class="block text-xs font-bold text-stone-600 uppercase mb-2">Alamat Pengiriman</label>
+            <textarea name="alamat" rows="3" maxlength="500" class="<?= $input ?> resize-none"><?= e($form['alamat']) ?></textarea></div>
+        <div class="flex justify-end pt-1"><button class="inline-flex items-center gap-2 bg-[#2E7D32] text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-emerald-800 transition active:scale-95"><i data-lucide="save" class="w-4 h-4"></i> Simpan Perubahan</button></div>
     </form>
+</section>
 
-    <script>
-        lucide.createIcons();
+<!-- PASSWORD -->
+<section class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4 fade-up">
+    <div class="border-b border-stone-100 pb-3">
+        <h2 class="text-base font-bold flex items-center gap-2"><i data-lucide="lock" class="w-4 h-4 text-[#2E7D32]"></i> Ganti Password</h2>
+        <p class="text-xs text-stone-500 mt-0.5">Gunakan kombinasi huruf, angka, dan simbol agar lebih aman.</p>
+    </div>
+    <form method="post" class="space-y-4" id="formPass">
+        <?= csrf_field() ?><input type="hidden" name="action" value="ganti_password">
+        <div><label class="block text-xs font-bold text-stone-600 uppercase mb-2">Password Lama</label>
+            <input type="password" name="old_password" required autocomplete="current-password" class="<?= $input ?>"></div>
+        <div class="grid sm:grid-cols-2 gap-4">
+            <div><label class="block text-xs font-bold text-stone-600 uppercase mb-2">Password Baru</label>
+                <input type="password" name="new_password" id="pwNew" required minlength="6" autocomplete="new-password" class="<?= $input ?>">
+                <div class="mt-2 flex gap-1" aria-hidden="true"><?php for ($i = 0; $i < 4; $i++): ?><span class="pw-bar h-1.5 flex-1 rounded-full bg-stone-200 transition"></span><?php endfor; ?></div>
+                <p id="pwLabel" class="text-[10px] text-stone-400 mt-1">Minimal 6 karakter</p></div>
+            <div><label class="block text-xs font-bold text-stone-600 uppercase mb-2">Konfirmasi Password</label>
+                <input type="password" name="konfirmasi" id="pwKonf" required minlength="6" autocomplete="new-password" class="<?= $input ?>">
+                <p id="pwMatch" class="text-[10px] mt-2 h-3"></p></div>
+        </div>
+        <div class="flex justify-end pt-1"><button class="inline-flex items-center gap-2 bg-stone-800 text-white px-5 py-2.5 rounded-xl text-sm font-bold hover:bg-stone-900 transition active:scale-95"><i data-lucide="key-round" class="w-4 h-4"></i> Ubah Password</button></div>
+    </form>
+</section>
 
-        function toggleMobileSidebar() {
-            const s = document.getElementById('sidebar');
-            s?.classList.toggle('hidden');
-            s?.classList.toggle('fixed');
-            s?.classList.toggle('inset-y-0');
-            s?.classList.toggle('left-0');
-            s?.classList.toggle('z-40');
-        }
+<!-- BANTUAN -->
+<section class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-4 fade-up">
+    <div class="border-b border-stone-100 pb-3">
+        <h2 class="text-base font-bold flex items-center gap-2"><i data-lucide="life-buoy" class="w-4 h-4 text-[#2E7D32]"></i> Bantuan & Panduan</h2>
+        <p class="text-xs text-stone-500 mt-0.5">Panduan singkat menggunakan fitur PlantHub.</p>
+    </div>
+    <div class="space-y-2">
+        <?php foreach ($faq as [$q, $a]): ?>
+        <details class="group border border-stone-200/80 rounded-xl overflow-hidden">
+            <summary class="cursor-pointer p-3.5 text-sm font-semibold hover:bg-stone-50 flex items-center justify-between list-none"><span><?= e($q) ?></span><i data-lucide="chevron-down" class="w-4 h-4 text-stone-400 group-open:rotate-180 transition"></i></summary>
+            <div class="p-3.5 text-xs text-stone-600 leading-relaxed bg-stone-50/50 border-t border-stone-100"><?= $a /* konten statis tepercaya */ ?></div>
+        </details>
+        <?php endforeach; ?>
+    </div>
+    <div class="flex flex-col sm:flex-row items-center justify-between gap-3 bg-emerald-50/60 rounded-xl px-5 py-4">
+        <div><p class="text-xs font-bold">Butuh bantuan lebih lanjut?</p><p class="text-[11px] text-stone-500 mt-0.5">Tim admin PlantHub siap membantu.</p></div>
+        <a href="chat.php" class="inline-flex items-center gap-2 bg-[#2E7D32] hover:bg-emerald-800 text-white px-4 py-2 rounded-xl text-xs font-bold transition"><i data-lucide="message-circle" class="w-3.5 h-3.5"></i> Hubungi Admin</a>
+    </div>
+    <div class="text-center"><a href="../Auth/logout.php" data-logout class="inline-flex items-center gap-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 px-4 py-2 rounded-xl transition"><i data-lucide="log-out" class="w-4 h-4"></i> Keluar dari akun</a></div>
+</section>
 
-        function previewImage(event) {
-            const file = event.target.files[0];
-            if (!file) return;
-
-            if (file.size > 2 * 1024 * 1024) {
-                alert('Ukuran file melebihi 2MB.');
-                event.target.value = '';
-                return;
-            }
-
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                document.getElementById('previewAvatar').src = e.target.result;
-                const info = document.getElementById('infoFoto');
-                info.classList.remove('hidden');
-                info.querySelector('.nama-file').innerText = file.name;
-            };
-            reader.readAsDataURL(file);
-        }
-
-        function batalPilihFoto() {
-            document.getElementById('inFoto').value = '';
-            document.getElementById('previewAvatar').src = '<?= htmlspecialchars($avatarSrc) ?>';
-            document.getElementById('infoFoto').classList.add('hidden');
-        }
-
-        function konfirmasiHapusFoto() {
-            if (confirm('Hapus foto profil dan kembalikan ke default?')) {
-                document.getElementById('formHapusFoto').submit();
-            }
-        }
-
-        const alertSukses = document.getElementById('alertSukses');
-        if (alertSukses) {
-            setTimeout(() => {
-                alertSukses.style.opacity = '0';
-                setTimeout(() => alertSukses.remove(), 500);
-            }, 4000);
-        }
-    </script>
-</body>
-</html>
+<?php
+$avJs = json_encode($avatar, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+$GLOBALS['__extra_js'] = <<<JS
+<script>
+const AVATAR0 = $avJs;
+function previewImage(ev) {
+    const f = ev.target.files[0]; if (!f) return;
+    if (f.size > 2 * 1024 * 1024) { toast('Ukuran file melebihi 2MB.', 'error'); ev.target.value = ''; return; }
+    const rd = new FileReader();
+    rd.onload = (e) => { document.getElementById('previewAvatar').src = e.target.result;
+        const i = document.getElementById('infoFoto'); i.classList.remove('hidden'); i.classList.add('inline-flex'); i.querySelector('.nama-file').textContent = f.name; };
+    rd.readAsDataURL(f);
+}
+function batalPilihFoto() {
+    document.getElementById('inFoto').value = ''; document.getElementById('previewAvatar').src = AVATAR0;
+    const i = document.getElementById('infoFoto'); i.classList.add('hidden'); i.classList.remove('inline-flex');
+}
+// kekuatan password
+const pw = document.getElementById('pwNew'), kf = document.getElementById('pwKonf');
+const bars = document.querySelectorAll('.pw-bar'), lab = document.getElementById('pwLabel'), mt = document.getElementById('pwMatch');
+const cols = ['bg-rose-500', 'bg-orange-400', 'bg-amber-400', 'bg-emerald-500'], names = ['Lemah', 'Cukup', 'Baik', 'Kuat'];
+function skor(v) { let s = 0; if (v.length >= 6) s++; if (v.length >= 10) s++; if (/[A-Z]/.test(v) && /[a-z]/.test(v)) s++; if (/\\d/.test(v) && /[^A-Za-z0-9]/.test(v)) s++; return Math.min(s, 4); }
+function cek() {
+    const v = pw.value, s = v ? Math.max(1, skor(v)) : 0;
+    bars.forEach((b, i) => { b.className = 'pw-bar h-1.5 flex-1 rounded-full transition ' + (i < s ? cols[s - 1] : 'bg-stone-200'); });
+    lab.textContent = v ? 'Kekuatan: ' + names[s - 1] : 'Minimal 6 karakter';
+    if (kf.value) { const ok = kf.value === v; mt.textContent = ok ? '✓ Password cocok' : '✗ Belum cocok'; mt.className = 'text-[10px] mt-2 h-3 ' + (ok ? 'text-emerald-600' : 'text-rose-500'); } else mt.textContent = '';
+}
+pw.addEventListener('input', cek); kf.addEventListener('input', cek);
+document.querySelector('[data-logout]')?.addEventListener('click', (e) => { if (!confirm('Keluar dari akun?')) e.preventDefault(); });
+</script>
+JS;
+layout_end(); ?>
