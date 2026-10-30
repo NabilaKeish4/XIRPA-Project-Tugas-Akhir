@@ -1,13 +1,5 @@
 <?php
-session_start();
-require_once '../Config/database.php';
-
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
-    header("Location: ../Auth/login.php");
-    exit;
-}
-
-$admin_nama = $_SESSION['nama_user'] ?? 'Admin';
+require_once __DIR__ . '/includes/init.php';
 
 // =========================================================
 // HANDLE AKSI: TAMBAH / EDIT / HAPUS
@@ -15,18 +7,23 @@ $admin_nama = $_SESSION['nama_user'] ?? 'Admin';
 $sukses = '';
 $error  = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !csrf_ok()) {
+    $error = "Sesi formulir tidak valid, muat ulang halaman lalu coba lagi.";
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
 
     // TAMBAH
     if ($action === 'tambah') {
-        $nama = mysqli_real_escape_string($conn, trim($_POST['nama_kategori'] ?? ''));
-        if ($nama === '') {
+        $namaRaw = trim($_POST['nama_kategori'] ?? '');
+        $nama = mysqli_real_escape_string($conn, $namaRaw);
+        if ($namaRaw === '') {
             $error = "Nama kategori wajib diisi.";
+        } elseif (mb_strlen($namaRaw) > 100) {
+            $error = "Nama kategori maksimal 100 karakter.";
         } else {
             $cek = mysqli_query($conn, "SELECT id FROM kategori WHERE nama_kategori = '$nama'");
             if ($cek && mysqli_num_rows($cek) > 0) {
-                $error = "Kategori '$nama' sudah ada.";
+                $error = "Kategori '" . $namaRaw . "' sudah ada.";
             } else {
                 if (mysqli_query($conn, "INSERT INTO kategori (nama_kategori) VALUES ('$nama')")) {
                     header("Location: kategori.php?status=added");
@@ -41,13 +38,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     // EDIT
     if ($action === 'edit') {
         $id   = (int)($_POST['id'] ?? 0);
-        $nama = mysqli_real_escape_string($conn, trim($_POST['nama_kategori'] ?? ''));
-        if ($id <= 0 || $nama === '') {
+        $namaRaw = trim($_POST['nama_kategori'] ?? '');
+        $nama = mysqli_real_escape_string($conn, $namaRaw);
+        if ($id <= 0 || $namaRaw === '') {
             $error = "Data tidak lengkap.";
+        } elseif (mb_strlen($namaRaw) > 100) {
+            $error = "Nama kategori maksimal 100 karakter.";
         } else {
             $cek = mysqli_query($conn, "SELECT id FROM kategori WHERE nama_kategori = '$nama' AND id != $id");
             if ($cek && mysqli_num_rows($cek) > 0) {
-                $error = "Kategori '$nama' sudah dipakai oleh kategori lain.";
+                $error = "Kategori '" . $namaRaw . "' sudah dipakai oleh kategori lain.";
             } else {
                 if (mysqli_query($conn, "UPDATE kategori SET nama_kategori = '$nama' WHERE id = $id")) {
                     header("Location: kategori.php?status=edited");
@@ -89,11 +89,12 @@ if (isset($_GET['status'])) {
 // =========================================================
 // SEARCH
 // =========================================================
-$search = isset($_GET['search']) ? mysqli_real_escape_string($conn, trim($_GET['search'])) : '';
+$search = isset($_GET['search']) ? trim($_GET['search']) : '';
+$searchSql = mysqli_real_escape_string($conn, str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $search));
 
 $where = "WHERE 1=1";
 if ($search !== '') {
-    $where .= " AND k.nama_kategori LIKE '%$search%'";
+    $where .= " AND k.nama_kategori LIKE '%$searchSql%'";
 }
 
 // =========================================================
@@ -131,7 +132,7 @@ if ($qStat) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlantHub - Kelola Kategori</title>
+    <title><?= e($nama_toko) ?> - Kelola Kategori</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -146,10 +147,8 @@ if ($qStat) {
                     <i data-lucide="menu" class="w-5 h-5"></i>
                 </button>
                 <a href="dashboard.php" class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
-                        <i data-lucide="sprout" class="w-5 h-5"></i>
-                    </div>
-                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
+                    <?= brand_icon_html() ?>
+                    <span class="text-xl font-bold tracking-tight text-stone-800"><?= brand_html() ?></span>
                 </a>
             </div>
 
@@ -158,13 +157,16 @@ if ($qStat) {
                 <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari kategori..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] placeholder:text-stone-400">
             </form>
 
-            <a href="dashboard.php" class="flex items-center gap-3 pl-1">
-                <img src="https://ui-avatars.com/api/?name=<?= urlencode($admin_nama) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
+            <div class="flex items-center gap-1">
+                <a href="dashboard.php" class="flex items-center gap-3 pl-1">
+                <img src="<?= e($avatar_url) ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
                 <div class="hidden sm:block text-left">
                     <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
                     <p class="text-xs text-stone-500">Administrator</p>
                 </div>
             </a>
+                <?= logout_btn_html() ?>
+            </div>
         </div>
     </header>
 
@@ -212,7 +214,7 @@ if ($qStat) {
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">PlantHub Admin</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?> Admin</p>
                     <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>
@@ -313,11 +315,11 @@ if ($qStat) {
                                         </td>
                                         <td class="py-3.5 px-6">
                                             <div class="flex items-center justify-center gap-2">
-                                                <button onclick='openModalEdit(<?= json_encode(["id" => $k["id"], "nama_kategori" => $k["nama_kategori"]]) ?>)' class="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-lg transition">
+                                                <button onclick="openModalEdit(<?= js_attr(['id' => $k['id'], 'nama_kategori' => $k['nama_kategori']]) ?>)" class="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-stone-700 bg-stone-100 hover:bg-stone-200 rounded-lg transition">
                                                     <i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Edit
                                                 </button>
                                                 <?php if ((int)$k['total_produk'] === 0): ?>
-                                                    <button onclick='konfirmasiHapus(<?= (int)$k["id"] ?>, <?= json_encode($k["nama_kategori"]) ?>)' class="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg transition">
+                                                    <button onclick="konfirmasiHapus(<?= (int)$k['id'] ?>, <?= js_attr($k['nama_kategori']) ?>)" class="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 rounded-lg transition">
                                                         <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Hapus
                                                     </button>
                                                 <?php else: ?>
@@ -353,6 +355,7 @@ if ($qStat) {
                 </button>
             </div>
             <form id="formKategori" method="POST" action="kategori.php" class="p-5 space-y-4">
+                <?= csrf_field() ?>
                 <input type="hidden" name="action" id="formAction" value="tambah">
                 <input type="hidden" name="id" id="formId" value="">
                 <div>
@@ -371,6 +374,7 @@ if ($qStat) {
 
     <!-- MODAL HAPUS -->
     <form id="formHapus" method="POST" action="kategori.php" class="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <?= csrf_field() ?>
         <input type="hidden" name="action" value="hapus">
         <input type="hidden" name="id" id="hapusId">
         <div class="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4">

@@ -1,62 +1,95 @@
 <?php
-session_start();
-require_once '../Config/database.php';
-
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
-    header("Location: ../Auth/login.php");
-    exit;
-}
-
-$admin_id   = (int)$_SESSION['user_id'];
-$admin_nama = $_SESSION['nama_user'] ?? 'Admin';
+require_once __DIR__ . '/includes/init.php';
 
 // =========================================================
 // PROSES CHECKOUT POS (AJAX POST)
 // =========================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'checkout_pos') {
     header('Content-Type: application/json');
-    
+
     $cartJson  = $_POST['cart'] ?? '[]';
     $metode    = $_POST['metode'] ?? 'tunai';
     $nama      = trim($_POST['nama_pelanggan'] ?? 'Pelanggan Walk-in');
     $bayar     = (float)($_POST['jumlah_bayar'] ?? 0);
     $catatan   = trim($_POST['catatan'] ?? '');
 
-    $cart = json_decode($cartJson, true);
+    $cartIn = json_decode($cartJson, true);
 
-    if (!is_array($cart) || empty($cart)) {
+    if (!is_array($cartIn) || empty($cartIn)) {
         echo json_encode(['success' => false, 'message' => 'Keranjang kosong.']);
         exit;
     }
 
     if ($nama === '') $nama = 'Pelanggan Walk-in';
+    $nama = mb_substr($nama, 0, 100);
 
     $metodeValid = ['tunai', 'qris', 'debit', 'transfer', 'ewallet', 'cod'];
-    if (!in_array($metode, $metodeValid)) $metode = 'tunai';
+    if (!in_array($metode, $metodeValid, true)) $metode = 'tunai';
 
-    $subtotal = 0;
-    foreach ($cart as $item) {
-        $qty   = (int)$item['qty'];
-        $harga = (float)$item['harga'];
-        $subtotal += $qty * $harga;
+    // Gabungkan item dengan produk_id yang sama & ambil qty saja dari browser.
+    // Harga, nama, dan stok SELALU diambil dari database (bukan dipercaya dari browser).
+    $qtyById = [];
+    foreach ($cartIn as $item) {
+        $pid = (int)($item['id'] ?? 0);
+        $qty = (int)($item['qty'] ?? 0);
+        if ($pid <= 0 || $qty <= 0) continue;
+        $qtyById[$pid] = ($qtyById[$pid] ?? 0) + $qty;
     }
-    $ppn   = $subtotal * 0.11;
-    $total = $subtotal + $ppn;
-
-    if ($metode === 'tunai' && $bayar < $total) {
-        echo json_encode(['success' => false, 'message' => 'Jumlah bayar kurang dari total.']);
+    if (empty($qtyById)) {
+        echo json_encode(['success' => false, 'message' => 'Keranjang kosong.']);
         exit;
     }
 
     mysqli_begin_transaction($conn);
     try {
-        $kode = 'POS-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -5));
+        $cart     = [];
+        $subtotal = 0;
+
+        // Kunci baris produk agar stok tidak bisa dijual ganda oleh kasir lain secara bersamaan
+        $ids = implode(',', array_keys($qtyById));
+        $qP  = mysqli_query($conn, "SELECT p.id, p.nama_tanaman, p.harga_jual, p.stok, k.nama_kategori
+                                    FROM produk p LEFT JOIN kategori k ON p.kategori_id = k.id
+                                    WHERE p.id IN ($ids) FOR UPDATE");
+        $produkDb = [];
+        while ($r = mysqli_fetch_assoc($qP)) $produkDb[(int)$r['id']] = $r;
+
+        foreach ($qtyById as $pid => $qty) {
+            if (!isset($produkDb[$pid])) throw new Exception("Produk ID $pid tidak ditemukan.");
+            $p = $produkDb[$pid];
+            if ((int)$p['stok'] < $qty) {
+                throw new Exception("Stok \"{$p['nama_tanaman']}\" tidak cukup (tersisa {$p['stok']}).");
+            }
+            $harga = (float)$p['harga_jual'];
+            $subtotal += $qty * $harga;
+            $cart[] = [
+                'id' => $pid, 'nama' => $p['nama_tanaman'], 'kategori' => $p['nama_kategori'] ?? 'Tanaman',
+                'harga' => $harga, 'qty' => $qty, 'stok_baru' => (int)$p['stok'] - $qty,
+            ];
+        }
+
+        $ppn   = round($subtotal * 0.11);
+        $total = $subtotal + $ppn;
+
+        if ($metode === 'tunai') {
+            if ($bayar < $total) throw new Exception('Jumlah bayar kurang dari total.');
+        } else {
+            $bayar = $total; // non-tunai: dianggap dibayar pas
+        }
+
+        // Kode unik (ulang bila bentrok)
+        $kode = '';
+        for ($i = 0; $i < 5; $i++) {
+            $kode = 'POS-' . date('Ymd') . '-' . strtoupper(substr(bin2hex(random_bytes(3)), 0, 5));
+            $cek = mysqli_query($conn, "SELECT id FROM transaksi WHERE kode_transaksi = '$kode' LIMIT 1");
+            if (!$cek || mysqli_num_rows($cek) === 0) break;
+        }
+
         $namaEsc    = mysqli_real_escape_string($conn, $nama);
         $catatanEsc = mysqli_real_escape_string($conn, $catatan);
 
-        $sqlTx = "INSERT INTO transaksi 
-                  (kode_transaksi, user_id, jenis_transaksi, nama_penerima, total_harga, metode_pembayaran, status, catatan, created_at) 
-                  VALUES 
+        $sqlTx = "INSERT INTO transaksi
+                  (kode_transaksi, user_id, jenis_transaksi, nama_penerima, total_harga, metode_pembayaran, status, catatan, created_at)
+                  VALUES
                   ('$kode', NULL, 'penjualan', '$namaEsc', $total, '$metode', 'Selesai', '$catatanEsc', NOW())";
         if (!mysqli_query($conn, $sqlTx)) throw new Exception(mysqli_error($conn));
 
@@ -68,7 +101,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
             $harga = (float)$item['harga'];
             $sub   = $qty * $harga;
 
-            $sqlDet = "INSERT INTO transaksi_detail (transaksi_id, produk_id, jumlah, harga_satuan, subtotal) 
+            $sqlDet = "INSERT INTO transaksi_detail (transaksi_id, produk_id, jumlah, harga_satuan, subtotal)
                        VALUES ($transaksi_id, $pid, $qty, $harga, $sub)";
             if (!mysqli_query($conn, $sqlDet)) throw new Exception(mysqli_error($conn));
 
@@ -95,10 +128,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
             'waktu'      => date('d/m/Y H:i'),
             'kasir'      => $admin_nama,
             'items'      => $cart,
+            'toko'       => [
+                'nama'    => $nama_toko,
+                'cabang'  => $nama_cabang,
+                'alamat'  => $alamat_toko,
+                'telepon' => $no_telepon,
+                'catatan' => $catatan_nota ?: 'Terima kasih telah berbelanja!',
+            ],
         ]);
         exit;
 
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         mysqli_rollback($conn);
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
         exit;
@@ -135,7 +175,7 @@ function gambarPOS($nama) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlantHub - Kasir POS</title>
+    <title><?= e($nama_toko) ?> - Kasir POS</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -174,9 +214,15 @@ function gambarPOS($nama) {
                     <i data-lucide="arrow-left" class="w-5 h-5"></i>
                 </a>
                 <div class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
-                        <i data-lucide="shopping-bag" class="w-5 h-5"></i>
-                    </div>
+                    <?php if ($logo_url !== ''): ?>
+                        <div class="w-9 h-9 rounded-xl bg-white flex items-center justify-center shadow-sm overflow-hidden border border-stone-100">
+                            <img src="<?= e($logo_url) ?>" alt="Logo" class="w-full h-full object-cover">
+                        </div>
+                    <?php else: ?>
+                        <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
+                            <i data-lucide="shopping-bag" class="w-5 h-5"></i>
+                        </div>
+                    <?php endif; ?>
                     <div>
                         <h1 class="text-base font-bold text-stone-800 leading-tight">Kasir (POS)</h1>
                         <p class="text-[11px] text-stone-400">Kasir: <?= htmlspecialchars($admin_nama) ?></p>
@@ -259,7 +305,7 @@ function gambarPOS($nama) {
         </section>
 
         <!-- KANAN: KERANJANG & PEMBAYARAN (Bisa di-scroll utuh) -->
-        <section class="hidden lg:flex w-[40%] flex-col bg-white border-l border-stone-200 shadow-xl z-10">
+        <section id="panelKeranjang" class="hidden lg:flex w-[40%] flex-col bg-white border-l border-stone-200 shadow-xl z-10">
             
             <div class="flex-1 overflow-y-auto custom-scrollbar flex flex-col">
                 
@@ -353,6 +399,14 @@ function gambarPOS($nama) {
         </section>
     </div>
 
+    <!-- TOMBOL KERANJANG (hanya layar kecil) -->
+    <button id="btnKeranjangMobile" onclick="toggleKeranjangMobile()" class="lg:hidden fixed bottom-4 right-4 z-30 bg-[#2E7D32] text-white px-4 py-3 rounded-full shadow-lg flex items-center gap-2 text-sm font-bold">
+        <i data-lucide="shopping-cart" class="w-5 h-5"></i> Keranjang <span id="badgeMobile" class="bg-white text-[#2E7D32] text-[10px] font-bold px-2 py-0.5 rounded-full">0</span>
+    </button>
+    <button id="btnTutupKeranjang" onclick="toggleKeranjangMobile()" class="hidden lg:hidden fixed top-3 right-3 z-50 bg-stone-100 text-stone-700 px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow">
+        <i data-lucide="x" class="w-4 h-4"></i> Tutup
+    </button>
+
     <!-- MODAL STRUK -->
     <div id="modalStruk" class="fixed inset-0 bg-stone-900/60 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
         <div class="bg-white rounded-2xl shadow-2xl max-w-sm w-full max-h-[90vh] flex flex-col">
@@ -382,6 +436,9 @@ function gambarPOS($nama) {
 
     <script>
         lucide.createIcons();
+
+        const TOKO = <?= json_encode(['nama' => $nama_toko, 'cabang' => $nama_cabang, 'alamat' => $alamat_toko, 'telepon' => $no_telepon, 'catatan' => $catatan_nota ?: 'Terima kasih telah berbelanja!'], JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP) ?>;
+        const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
         let cart = [];
         let currentKategori = 0;
@@ -499,10 +556,10 @@ function gambarPOS($nama) {
                 cart.forEach(item => {
                     htmlContent += `
                         <div class="py-3 flex items-center gap-3">
-                            <img src="${item.gambar}" class="w-12 h-12 rounded-lg object-cover bg-stone-100 shrink-0 border border-stone-200">
+                            <img src="${esc(item.gambar)}" class="w-12 h-12 rounded-lg object-cover bg-stone-100 shrink-0 border border-stone-200">
                             <div class="flex-1 min-w-0">
-                                <p class="text-sm font-bold text-stone-800 leading-tight">${item.nama}</p>
-                                <span class="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-stone-100 text-stone-500">${item.kategori || 'Tanaman'}</span>
+                                <p class="text-sm font-bold text-stone-800 leading-tight">${esc(item.nama)}</p>
+                                <span class="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-stone-100 text-stone-500">${esc(item.kategori || 'Tanaman')}</span>
                                 <p class="text-[12px] text-[#2E7D32] font-bold mt-1">${formatRp(item.harga)}</p>
                             </div>
                             <div class="flex flex-col items-end gap-1 shrink-0 ml-2">
@@ -522,10 +579,11 @@ function gambarPOS($nama) {
 
             let subtotal = 0, totalQty = 0;
             cart.forEach(i => { subtotal += i.harga * i.qty; totalQty += i.qty; });
-            const ppn = subtotal * 0.11;
+            const ppn = Math.round(subtotal * 0.11);
             const total = subtotal + ppn;
 
             document.getElementById('cartCountBadge').innerText = totalQty + ' Item';
+            const bm = document.getElementById('badgeMobile'); if (bm) bm.innerText = totalQty;
             document.getElementById('subtotalText').innerText = formatRp(subtotal);
             document.getElementById('ppnText').innerText = formatRp(ppn);
             document.getElementById('totalText').innerText = formatRp(total);
@@ -546,7 +604,7 @@ function gambarPOS($nama) {
 
         function hitungKembalian() {
             const subtotal = cart.reduce((s, i) => s + i.harga * i.qty, 0);
-            const total = subtotal * 1.11;
+            const total = subtotal + Math.round(subtotal * 0.11);
             const bayar = parseFloat(document.getElementById('inputBayar').value) || 0;
             const kembali = Math.max(0, bayar - total);
             document.getElementById('kembalianText').innerText = formatRp(kembali);
@@ -554,7 +612,7 @@ function gambarPOS($nama) {
 
         function setBayar(val) {
             const subtotal = cart.reduce((s, i) => s + i.harga * i.qty, 0);
-            const total = Math.ceil(subtotal * 1.11);
+            const total = subtotal + Math.round(subtotal * 0.11);
             if (val === 'pas') {
                 document.getElementById('inputBayar').value = total;
             } else {
@@ -567,7 +625,7 @@ function gambarPOS($nama) {
             if (cart.length === 0) { alert('Keranjang masih kosong.'); return; }
 
             const subtotal = cart.reduce((s, i) => s + i.harga * i.qty, 0);
-            const total = subtotal * 1.11;
+            const total = subtotal + Math.round(subtotal * 0.11);
             const bayar = parseFloat(document.getElementById('inputBayar').value) || 0;
             const namaPelanggan = document.getElementById('inNamaPelanggan').value.trim() || 'Pelanggan Walk-in';
 
@@ -583,7 +641,7 @@ function gambarPOS($nama) {
 
             const formData = new FormData();
             formData.append('action', 'checkout_pos');
-            formData.append('cart', JSON.stringify(cart));
+            formData.append('cart', JSON.stringify(cart.map(i => ({ id: i.id, qty: i.qty }))));
             formData.append('metode', currentMetode);
             formData.append('nama_pelanggan', namaPelanggan);
             formData.append('jumlah_bayar', bayar);
@@ -593,6 +651,7 @@ function gambarPOS($nama) {
                 .then(data => {
                     if (data.success) {
                         tampilkanStruk(data);
+                        perbaruiStokKartu(data.items);
                         cart = [];
                         document.getElementById('inputBayar').value = '';
                         renderCart();
@@ -612,12 +671,13 @@ function gambarPOS($nama) {
         }
 
         function tampilkanStruk(data) {
+            const t = data.toko || TOKO;
             let itemsHtml = '';
             data.items.forEach(i => {
                 itemsHtml += `
                     <div style="margin-bottom:6px;">
-                        <div style="font-weight:bold;">${i.nama}</div>
-                        <div style="font-size:9px; color:#444; margin-bottom:2px;">${i.kategori || ''}</div>
+                        <div style="font-weight:bold;">${esc(i.nama)}</div>
+                        <div style="font-size:9px; color:#444; margin-bottom:2px;">${esc(i.kategori || '')}</div>
                         <div style="display:flex;justify-content:space-between;font-size:10px;">
                             <span>${i.qty} x ${formatRp(i.harga)}</span>
                             <span>${formatRp(i.harga * i.qty)}</span>
@@ -633,14 +693,16 @@ function gambarPOS($nama) {
             document.getElementById('areaCetak').innerHTML = `
                 <div style="font-family:'Courier New',monospace;font-size:11px;color:#000;line-height:1.4;">
                     <div style="text-align:center;border-bottom:1px dashed #000;padding-bottom:8px;margin-bottom:8px;">
-                        <div style="font-weight:bold;font-size:14px;">PLANTHUB</div>
-                        <div style="font-size:10px;">Sistem Manajemen Toko Tanaman</div>
+                        <div style="font-weight:bold;font-size:14px;">${esc((t.nama || '').toUpperCase())}</div>
+                        <div style="font-size:10px;">${esc(t.cabang || '')}</div>
+                        ${t.alamat ? `<div style="font-size:9px;">${esc(t.alamat)}</div>` : ''}
+                        ${t.telepon ? `<div style="font-size:9px;">Telp: ${esc(t.telepon)}</div>` : ''}
                     </div>
                     <div style="font-size:10px;margin-bottom:8px;">
                         <div style="display:flex;justify-content:space-between;"><span>Kode</span><span>${data.kode}</span></div>
                         <div style="display:flex;justify-content:space-between;"><span>Tanggal</span><span>${data.waktu}</span></div>
-                        <div style="display:flex;justify-content:space-between;"><span>Kasir</span><span>${data.kasir}</span></div>
-                        <div style="display:flex;justify-content:space-between;"><span>Pelanggan</span><span>${data.nama}</span></div>
+                        <div style="display:flex;justify-content:space-between;"><span>Kasir</span><span>${esc(data.kasir)}</span></div>
+                        <div style="display:flex;justify-content:space-between;"><span>Pelanggan</span><span>${esc(data.nama)}</span></div>
                     </div>
                     <div style="border-top:1px dashed #000;border-bottom:1px dashed #000;padding:6px 0;margin-bottom:6px;">
                         ${itemsHtml}
@@ -656,8 +718,8 @@ function gambarPOS($nama) {
                         <div style="display:flex;justify-content:space-between;font-weight:bold;"><span>Kembali</span><span>${formatRp(data.kembali)}</span></div>
                     </div>
                     <div style="text-align:center;font-size:10px;margin-top:12px;padding-top:8px;border-top:1px dashed #000;">
-                        <div>Terima kasih telah berbelanja!</div>
-                        <div style="margin-top:2px;">~ PlantHub ~</div>
+                        <div style="white-space:pre-line;">${esc(t.catatan || 'Terima kasih telah berbelanja!')}</div>
+                        <div style="margin-top:2px;">~ ${esc(t.nama)} ~</div>
                     </div>
                 </div>
             `;
@@ -665,6 +727,27 @@ function gambarPOS($nama) {
             const modal = document.getElementById('modalStruk');
             modal.classList.remove('hidden');
             modal.classList.add('flex');
+        }
+
+        // Sinkronkan stok di katalog setelah transaksi (tanpa reload halaman)
+        function perbaruiStokKartu(items) {
+            (items || []).forEach(i => {
+                const card = document.querySelector('.produk-card[data-id="' + i.id + '"]');
+                if (!card) return;
+                if (i.stok_baru <= 0) { card.remove(); return; }
+                card.dataset.stok = i.stok_baru;
+                const badge = card.querySelector('span.absolute');
+                if (badge) badge.textContent = 'Stok: ' + i.stok_baru;
+            });
+        }
+
+        // Keranjang di layar kecil (HP/tablet): tampil sebagai panel penuh
+        function toggleKeranjangMobile() {
+            const sec = document.getElementById('panelKeranjang');
+            const open = sec.classList.contains('fixed');
+            ['hidden', 'fixed', 'inset-0', 'z-40', '!w-full'].forEach(c => sec.classList.toggle(c));
+            document.getElementById('btnKeranjangMobile').classList.toggle('hidden', !open ? true : false);
+            document.getElementById('btnTutupKeranjang').classList.toggle('hidden', open);
         }
 
         function cetakStruk() {

@@ -1,11 +1,5 @@
 <?php
-session_start();
-require_once '../Config/database.php';
-
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
-    header("Location: ../Auth/login.php");
-    exit;
-}
+require_once __DIR__ . '/includes/init.php';
 
 $admin_nama = $_SESSION['nama_user'] ?? 'Admin';
 
@@ -22,16 +16,17 @@ $search       = isset($_GET['search']) ? trim($_GET['search']) : '';
 $filterStatus = $_GET['status'] ?? 'semua';
 
 $range       = $_GET['range'] ?? '';
-$tgl_mulai   = $_GET['tgl_mulai']   ?? date('Y-m-01');
-$tgl_selesai = $_GET['tgl_selesai'] ?? date('Y-m-d');
+$tgl_mulai   = valid_date($_GET['tgl_mulai']   ?? '', date('Y-m-01'));
+$tgl_selesai = valid_date($_GET['tgl_selesai'] ?? '', date('Y-m-d'));
+if ($tgl_mulai > $tgl_selesai) { $tmp = $tgl_mulai; $tgl_mulai = $tgl_selesai; $tgl_selesai = $tmp; }
 
 if ($range === 'today') {
     $tgl_mulai = $tgl_selesai = date('Y-m-d');
 } elseif ($range === '7days') {
-    $tgl_mulai   = date('Y-m-d', strtotime('-7 days'));
+    $tgl_mulai   = date('Y-m-d', strtotime('-6 days'));
     $tgl_selesai = date('Y-m-d');
 } elseif ($range === '30days') {
-    $tgl_mulai   = date('Y-m-d', strtotime('-30 days'));
+    $tgl_mulai   = date('Y-m-d', strtotime('-29 days'));
     $tgl_selesai = date('Y-m-d');
 } elseif ($range === 'all') {
     $tgl_mulai = $tgl_selesai = null;
@@ -62,7 +57,7 @@ if ($filterStatus !== 'semua') {
     $where .= " AND t.status = '$statusEsc'";
 }
 if ($search !== '') {
-    $searchEsc = mysqli_real_escape_string($conn, $search);
+    $searchEsc = mysqli_real_escape_string($conn, str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $search));
     if ($tab === 'penjualan') {
         $where .= " AND (t.kode_transaksi LIKE '%$searchEsc%' OR t.nama_penerima LIKE '%$searchEsc%' OR u.nama_lengkap LIKE '%$searchEsc%')";
     } else {
@@ -114,7 +109,7 @@ if ($qTrx) while ($r = mysqli_fetch_assoc($qTrx)) $transaksi[] = $r;
 $stat = ['total_uang' => 0, 'total_trx' => 0];
 $qStat = mysqli_query($conn, "
     SELECT 
-        COALESCE(SUM(t.total_harga),0) AS total_uang,
+        COALESCE(SUM(CASE WHEN t.status <> 'Batal' THEN t.total_harga ELSE 0 END),0) AS total_uang,
         COUNT(*) AS total_trx
     FROM transaksi t
     LEFT JOIN users u ON t.user_id = u.id
@@ -144,7 +139,7 @@ function buildUrl($overrides = []) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlantHub - Riwayat Transaksi</title>
+    <title><?= e($nama_toko) ?> - Riwayat Transaksi</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -159,23 +154,24 @@ function buildUrl($overrides = []) {
                     <i data-lucide="menu" class="w-5 h-5"></i>
                 </button>
                 <a href="dashboard.php" class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
-                        <i data-lucide="sprout" class="w-5 h-5"></i>
-                    </div>
-                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
+                    <?= brand_icon_html() ?>
+                    <span class="text-xl font-bold tracking-tight text-stone-800"><?= brand_html() ?></span>
                 </a>
             </div>
             <div class="hidden md:flex flex-1 max-w-md">
                 <span class="text-xs text-stone-500 self-center">Riwayat Transaksi</span>
             </div>
             <div class="flex items-center gap-3">
-                <a href="dashboard.php" class="flex items-center gap-3 pl-1">
-                    <img src="https://ui-avatars.com/api/?name=<?= urlencode($admin_nama) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
+                <div class="flex items-center gap-1">
+                    <a href="dashboard.php" class="flex items-center gap-3 pl-1">
+                    <img src="<?= e($avatar_url) ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
                     <div class="hidden sm:block text-left">
                         <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
                         <p class="text-xs text-stone-500">Administrator</p>
                     </div>
                 </a>
+                    <?= logout_btn_html() ?>
+                </div>
             </div>
         </div>
     </header>
@@ -231,7 +227,7 @@ function buildUrl($overrides = []) {
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">PlantHub Admin</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?> Admin</p>
                     <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>

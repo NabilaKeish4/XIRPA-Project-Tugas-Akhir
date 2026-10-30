@@ -1,31 +1,22 @@
 <?php
-session_start();
-require_once '../Config/database.php';
-
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
-    header("Location: ../Auth/login.php");
-    exit;
-}
-
-$admin_id   = (int)$_SESSION['user_id'];
-$admin_nama = $_SESSION['nama_user'] ?? 'Admin';
-
-$current_page = basename($_SERVER['PHP_SELF']);
+require_once __DIR__ . '/includes/init.php';
 
 // =========================================================
 // FILTER TANGGAL
 // =========================================================
 $range       = $_GET['range'] ?? 'today';
-$tgl_mulai   = $_GET['tgl_mulai']   ?? date('Y-m-d');
-$tgl_selesai = $_GET['tgl_selesai'] ?? date('Y-m-d');
+$tgl_mulai   = valid_date($_GET['tgl_mulai']   ?? '', date('Y-m-d'));
+$tgl_selesai = valid_date($_GET['tgl_selesai'] ?? '', date('Y-m-d'));
+if (!in_array($range, ['today', '7days', '30days', 'custom'], true)) $range = 'today';
+if ($tgl_mulai > $tgl_selesai) { $tmp = $tgl_mulai; $tgl_mulai = $tgl_selesai; $tgl_selesai = $tmp; }
 
 if ($range === 'today') {
     $tgl_mulai = $tgl_selesai = date('Y-m-d');
 } elseif ($range === '7days') {
-    $tgl_mulai   = date('Y-m-d', strtotime('-7 days'));
+    $tgl_mulai   = date('Y-m-d', strtotime('-6 days'));
     $tgl_selesai = date('Y-m-d');
 } elseif ($range === '30days') {
-    $tgl_mulai   = date('Y-m-d', strtotime('-30 days'));
+    $tgl_mulai   = date('Y-m-d', strtotime('-29 days'));
     $tgl_selesai = date('Y-m-d');
 } elseif ($range === 'custom') {
     // Pakai input dari user
@@ -58,6 +49,7 @@ $qPeriode = mysqli_query($conn, "
         COALESCE(SUM(CASE WHEN jenis_transaksi='pembelian' THEN total_harga ELSE 0 END),0) AS pembelian
     FROM transaksi
     WHERE DATE(created_at) BETWEEN '$tgl_mulai_esc' AND '$tgl_selesai_esc'
+      AND (status IS NULL OR status <> 'Batal')
 ");
 if ($qPeriode) {
     $r = mysqli_fetch_assoc($qPeriode);
@@ -83,6 +75,7 @@ $qChart = mysqli_query($conn, "
     SELECT DATE(created_at) AS tgl, SUM(total_harga) AS total
     FROM transaksi
     WHERE jenis_transaksi = 'penjualan'
+      AND (status IS NULL OR status <> 'Batal')
       AND DATE(created_at) BETWEEN '$tgl_mulai_esc' AND '$tgl_selesai_esc'
     GROUP BY DATE(created_at)
     ORDER BY DATE(created_at) ASC
@@ -157,7 +150,7 @@ function badgeStatus($status) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlantHub - Dashboard Admin</title>
+    <title><?= e($nama_toko) ?> - Dashboard Admin</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
@@ -176,10 +169,8 @@ function badgeStatus($status) {
                     <i data-lucide="menu" class="w-5 h-5"></i>
                 </button>
                 <a href="dashboard.php" class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
-                        <i data-lucide="sprout" class="w-5 h-5"></i>
-                    </div>
-                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
+                    <?= brand_icon_html() ?>
+                    <span class="text-xl font-bold tracking-tight text-stone-800"><?= brand_html() ?></span>
                 </a>
             </div>
 
@@ -231,7 +222,7 @@ function badgeStatus($status) {
                 <!-- Profile -->
                 <div class="relative">
                     <button onclick="toggleProfileMenu()" class="flex items-center gap-3 pl-1 focus:outline-none">
-                        <img src="https://ui-avatars.com/api/?name=<?= urlencode($admin_nama) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
+                        <img src="<?= e($avatar_url) ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
                         <div class="hidden sm:block text-left">
                             <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
                             <p class="text-xs text-stone-500">Administrator</p>
@@ -309,7 +300,7 @@ function badgeStatus($status) {
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">PlantHub Admin</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?> Admin</p>
                     <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>

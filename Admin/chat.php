@@ -1,18 +1,10 @@
 <?php
-session_start();
-require_once '../Config/database.php';
-
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
-    header("Location: ../Auth/login.php");
-    exit;
-}
-
-$admin_id   = (int)$_SESSION['user_id'];
-$admin_nama = $_SESSION['nama_user'] ?? 'Admin';
+require_once __DIR__ . '/includes/init.php';
 
 // =========================================================
 // AMBIL DAFTAR PELANGGAN YANG PERNAH CHAT
 // =========================================================
+$loadCustomers = function () use ($conn) {
 $customers = [];
 $qCust = mysqli_query($conn, "
     SELECT 
@@ -31,6 +23,9 @@ $qCust = mysqli_query($conn, "
     ORDER BY last_time DESC
 ");
 if ($qCust) while ($r = mysqli_fetch_assoc($qCust)) $customers[] = $r;
+return $customers;
+};
+$customers = $loadCustomers();
 
 $filterMode = $_GET['filter'] ?? 'semua';
 
@@ -55,23 +50,52 @@ foreach ($customers as $c) {
 $pesan_error = '';
 $pesan_sukses = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selected_id > 0) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selected_id > 0 && !csrf_ok()) {
+    $pesan_error = "Sesi formulir tidak valid, muat ulang halaman lalu coba lagi.";
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST' && $selected_id > 0) {
     $action = $_POST['action'] ?? '';
 
     if ($action === 'kirim') {
         $msg = trim($_POST['message'] ?? '');
-        if ($msg !== '') {
-            $clean = mysqli_real_escape_string($conn, $msg);
-            $sql = "INSERT INTO chats (user_id, sender_type, message, is_read, created_at) 
-                    VALUES ($selected_id, 'admin', '$clean', 1, NOW())";
-            if (mysqli_query($conn, $sql)) {
-                header("Location: chat.php?user_id=$selected_id&status=sent");
-                exit;
+        $namaFile = '';
+
+        // Lampiran gambar dari admin (opsional)
+        if (!empty($_FILES['lampiran']['name']) && $_FILES['lampiran']['error'] !== UPLOAD_ERR_NO_FILE) {
+            $fl = $_FILES['lampiran'];
+            $extOk = ['jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png', 'webp' => 'image/webp'];
+            $ext = strtolower(pathinfo($fl['name'], PATHINFO_EXTENSION));
+            if ($fl['error'] !== UPLOAD_ERR_OK) {
+                $pesan_error = "Upload gambar gagal.";
+            } elseif ($fl['size'] > 3 * 1024 * 1024) {
+                $pesan_error = "Ukuran gambar maksimal 3 MB.";
+            } elseif (!isset($extOk[$ext]) || @getimagesize($fl['tmp_name']) === false) {
+                $pesan_error = "Format gambar harus JPG, PNG, atau WEBP.";
             } else {
-                $pesan_error = "Gagal mengirim: " . mysqli_error($conn);
+                $dir = __DIR__ . '/../uploads/chats/';
+                if (!is_dir($dir)) @mkdir($dir, 0775, true);
+                $namaFile = 'admin_' . $selected_id . '_' . time() . '_' . bin2hex(random_bytes(3)) . '.' . $ext;
+                if (!move_uploaded_file($fl['tmp_name'], $dir . $namaFile)) {
+                    $pesan_error = "Gagal menyimpan gambar.";
+                    $namaFile = '';
+                }
             }
-        } else {
-            $pesan_error = "Pesan tidak boleh kosong.";
+        }
+
+        if ($pesan_error === '') {
+            if ($msg !== '' || $namaFile !== '') {
+                $clean = mysqli_real_escape_string($conn, $msg);
+                $att   = $namaFile !== '' ? "'" . mysqli_real_escape_string($conn, $namaFile) . "'" : "NULL";
+                $sql = "INSERT INTO chats (user_id, sender_type, message, attachment, is_read, created_at) 
+                        VALUES ($selected_id, 'admin', '$clean', $att, 1, NOW())";
+                if (mysqli_query($conn, $sql)) {
+                    header("Location: chat.php?user_id=$selected_id&status=sent");
+                    exit;
+                } else {
+                    $pesan_error = "Gagal mengirim: " . mysqli_error($conn);
+                }
+            } else {
+                $pesan_error = "Pesan tidak boleh kosong.";
+            }
         }
     }
 
@@ -81,7 +105,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selected_id > 0) {
         if ($id > 0 && $newMsg !== '') {
             $clean = mysqli_real_escape_string($conn, $newMsg);
             $sql = "UPDATE chats SET message = '$clean', edited_at = NOW() 
-                    WHERE id = $id AND sender_type = 'admin'";
+                    WHERE id = $id AND user_id = $selected_id AND sender_type = 'admin'";
             if (mysqli_query($conn, $sql)) {
                 header("Location: chat.php?user_id=$selected_id&status=edited");
                 exit;
@@ -95,14 +119,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selected_id > 0) {
         $id = (int)($_POST['id'] ?? 0);
         if ($id > 0) {
             // Hapus attachment juga kalau ada
-            $qOld = mysqli_query($conn, "SELECT attachment FROM chats WHERE id = $id AND sender_type = 'admin' LIMIT 1");
+            $qOld = mysqli_query($conn, "SELECT attachment FROM chats WHERE id = $id AND user_id = $selected_id AND sender_type = 'admin' LIMIT 1");
             if ($qOld && $r = mysqli_fetch_assoc($qOld)) {
-                if (!empty($r['attachment']) && file_exists('../uploads/chats/' . $r['attachment'])) {
-                    @unlink('../uploads/chats/' . $r['attachment']);
+                if (!empty($r['attachment']) && is_file('../uploads/chats/' . basename($r['attachment']))) {
+                    @unlink('../uploads/chats/' . basename($r['attachment']));
                 }
             }
 
-            $sql = "UPDATE chats SET is_deleted = 1 WHERE id = $id AND sender_type = 'admin'";
+            $sql = "UPDATE chats SET is_deleted = 1 WHERE id = $id AND user_id = $selected_id AND sender_type = 'admin'";
             if (mysqli_query($conn, $sql)) {
                 header("Location: chat.php?user_id=$selected_id&status=deleted");
                 exit;
@@ -122,6 +146,12 @@ if (isset($_GET['status'])) {
 // Tandai dibaca
 if ($selected_id > 0) {
     mysqli_query($conn, "UPDATE chats SET is_read = 1 WHERE user_id = $selected_id AND sender_type = 'customer' AND is_read = 0");
+    // muat ulang daftar supaya badge "belum dibaca" langsung hilang
+    $customers = $loadCustomers();
+    $displayCustomers = ($filterMode === 'unread')
+        ? array_values(array_filter($customers, fn($c) => (int)$c['unread_count'] > 0 || (int)$c['id'] === $selected_id))
+        : $customers;
+    foreach ($customers as $c) { if ((int)$c['id'] === $selected_id) { $selectedCustomer = $c; break; } }
 }
 
 $chatMessages = [];
@@ -141,7 +171,7 @@ $editId = (int)($_GET['edit'] ?? 0);
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlantHub - Konsultasi Pelanggan</title>
+    <title><?= e($nama_toko) ?> - Konsultasi Pelanggan</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -180,10 +210,8 @@ $editId = (int)($_GET['edit'] ?? 0);
                     <i data-lucide="menu" class="w-5 h-5"></i>
                 </button>
                 <a href="dashboard.php" class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
-                        <i data-lucide="sprout" class="w-5 h-5"></i>
-                    </div>
-                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
+                    <?= brand_icon_html() ?>
+                    <span class="text-xl font-bold tracking-tight text-stone-800"><?= brand_html() ?></span>
                 </a>
             </div>
 
@@ -195,13 +223,16 @@ $editId = (int)($_GET['edit'] ?? 0);
                 </button>
             </div>
 
-            <a href="dashboard.php" class="flex items-center gap-3 pl-1">
-                <img src="https://ui-avatars.com/api/?name=<?= urlencode($admin_nama) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
+            <div class="flex items-center gap-1">
+                <a href="dashboard.php" class="flex items-center gap-3 pl-1">
+                <img src="<?= e($avatar_url) ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
                 <div class="hidden sm:block text-left">
                     <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
                     <p class="text-xs text-stone-500">Administrator</p>
                 </div>
             </a>
+                <?= logout_btn_html() ?>
+            </div>
         </div>
     </header>
 
@@ -249,7 +280,7 @@ $editId = (int)($_GET['edit'] ?? 0);
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">PlantHub Admin</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?> Admin</p>
                     <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>
@@ -374,12 +405,13 @@ $editId = (int)($_GET['edit'] ?? 0);
                                         $isAdmin = ($msg['sender_type'] === 'admin');
                                         $msgId   = (int)$msg['id'];
                                         $isEdit  = ($editId === $msgId && $isAdmin);
-                                        $hasAttachment = !empty($msg['attachment']) && file_exists('../uploads/chats/' . $msg['attachment']);
+                                        $hasAttachment = !empty($msg['attachment']) && is_file('../uploads/chats/' . basename($msg['attachment']));
                                     ?>
                                         <div class="flex <?= $isAdmin ? 'justify-end' : 'justify-start' ?>" id="msg-<?= $msgId ?>">
                                             <div class="max-w-xs sm:max-w-md md:max-w-lg">
                                                 <?php if ($isEdit): ?>
                                                     <form method="POST" action="chat.php?user_id=<?= $selected_id ?>" class="bg-white border-2 border-[#2E7D32] rounded-2xl p-3 shadow-sm space-y-2 w-full sm:w-96 edit-form">
+                                                        <?= csrf_field() ?>
                                                         <input type="hidden" name="action" value="edit">
                                                         <input type="hidden" name="id" value="<?= $msgId ?>">
                                                         <textarea name="new_message" rows="3" required class="w-full text-xs bg-stone-50 border border-stone-200 rounded-lg p-2.5 focus:outline-none focus:border-[#2E7D32] resize-none"><?= htmlspecialchars($msg['message']) ?></textarea>
@@ -396,10 +428,10 @@ $editId = (int)($_GET['edit'] ?? 0);
                                                         <!-- GAMBAR ATTACHMENT -->
                                                         <?php if ($hasAttachment): ?>
                                                             <div class="mb-2 rounded-lg overflow-hidden">
-                                                                <img src="../uploads/chats/<?= htmlspecialchars($msg['attachment']) ?>" 
+                                                                <img src="../uploads/chats/<?= rawurlencode(basename($msg['attachment'])) ?>" 
                                                                      alt="Attachment" 
                                                                      class="max-w-full max-h-64 rounded-lg cursor-pointer hover:opacity-90 transition"
-                                                                     onclick="openLightbox('../uploads/chats/<?= htmlspecialchars($msg['attachment']) ?>')">
+                                                                     onclick="openLightbox('../uploads/chats/<?= rawurlencode(basename($msg['attachment'])) ?>')">
                                                             </div>
                                                         <?php endif; ?>
 
@@ -424,6 +456,7 @@ $editId = (int)($_GET['edit'] ?? 0);
                                                                 </a>
                                                             <?php endif; ?>
                                                             <form method="POST" action="chat.php?user_id=<?= $selected_id ?>" onsubmit="return confirm('Hapus pesan ini?');" class="inline">
+                                                                <?= csrf_field() ?>
                                                                 <input type="hidden" name="action" value="hapus">
                                                                 <input type="hidden" name="id" value="<?= $msgId ?>">
                                                                 <button type="submit" class="inline-flex items-center gap-1 px-2 py-1 text-[10px] font-semibold text-rose-600 hover:text-white hover:bg-rose-500 rounded-md border border-rose-200">
@@ -440,9 +473,15 @@ $editId = (int)($_GET['edit'] ?? 0);
 
                             </div>
 
-                            <form method="POST" action="chat.php?user_id=<?= $selected_id ?>" class="p-3 bg-white border-t border-stone-100 flex gap-2 shrink-0" autocomplete="off">
+                            <form method="POST" action="chat.php?user_id=<?= $selected_id ?>" class="p-3 bg-white border-t border-stone-100 flex gap-2 shrink-0 items-center" autocomplete="off" enctype="multipart/form-data">
+                                <?= csrf_field() ?>
                                 <input type="hidden" name="action" value="kirim">
-                                <input type="text" name="message" id="inPesan" placeholder="Ketik balasan untuk pelanggan..." required 
+                                <label class="cursor-pointer p-2.5 text-stone-500 hover:text-[#2E7D32] hover:bg-emerald-50 rounded-xl border border-stone-200 shrink-0" title="Lampirkan gambar">
+                                    <i data-lucide="paperclip" class="w-4 h-4"></i>
+                                    <input type="file" name="lampiran" id="inLampiran" accept="image/jpeg,image/png,image/webp" class="hidden" onchange="document.getElementById('namaLampiran').textContent = this.files[0] ? this.files[0].name : ''">
+                                </label>
+                                <span id="namaLampiran" class="text-[10px] text-stone-500 max-w-[90px] truncate"></span>
+                                <input type="text" name="message" id="inPesan" placeholder="Ketik balasan untuk pelanggan..." 
                                        class="flex-1 px-4 py-2.5 text-xs bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32] transition">
                                 <button type="submit" class="bg-[#2E7D32] hover:bg-emerald-800 text-white px-5 py-2.5 rounded-xl text-xs font-bold transition inline-flex items-center gap-2">
                                     <span>Kirim</span>
@@ -534,9 +573,10 @@ $editId = (int)($_GET['edit'] ?? 0);
                         oldCustomerList.innerHTML = newCustomerList.innerHTML;
                     }
 
-                    // Update chat messages
+                    // Update chat messages (lewati jika admin sedang mengedit pesan)
                     const newChatBox = doc.getElementById('chat-box');
-                    if (newChatBox && chatBox) {
+                    const sedangEdit = !!chatBox.querySelector('.edit-form');
+                    if (newChatBox && chatBox && !sedangEdit) {
                         chatBox.innerHTML = newChatBox.innerHTML;
                     }
 

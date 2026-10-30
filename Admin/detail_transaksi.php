@@ -1,11 +1,5 @@
 <?php
-session_start();
-require_once '../Config/database.php';
-
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
-    header("Location: ../Auth/login.php");
-    exit;
-}
+require_once __DIR__ . '/includes/init.php';
 
 $admin_nama = $_SESSION['nama_user'] ?? 'Admin';
 $id = (int)($_GET['id'] ?? 0);
@@ -25,49 +19,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_status'])) {
     $newStatus = $_POST['new_status'] ?? '';
     $allowed = ['Diproses','Dikirim','Selesai','Batal'];
 
-    if (in_array($newStatus, $allowed)) {
-        // Ambil status lama
-        $qOld = mysqli_query($conn, "SELECT status, jenis_transaksi FROM transaksi WHERE id = $id LIMIT 1");
-        $oldData = $qOld ? mysqli_fetch_assoc($qOld) : null;
-        $oldStatus = $oldData['status'] ?? '';
+    if (!csrf_ok()) {
+        $errorMsg = "Sesi formulir tidak valid, muat ulang halaman.";
+    } elseif (in_array($newStatus, $allowed, true)) {
+        mysqli_begin_transaction($conn);
+        try {
+            // Kunci baris transaksi agar tidak diproses ganda
+            $qOld = mysqli_query($conn, "SELECT status, jenis_transaksi FROM transaksi WHERE id = $id LIMIT 1 FOR UPDATE");
+            $oldData = $qOld ? mysqli_fetch_assoc($qOld) : null;
+            if (!$oldData) throw new Exception("Transaksi tidak ditemukan.");
 
-        // Kalau status berubah ke Batal, kembalikan stok
-        $perluRestoreStok = ($newStatus === 'Batal' && $oldStatus !== 'Batal' && $oldData['jenis_transaksi'] === 'penjualan');
+            $oldStatus = $oldData['status'] ?? '';
+            $jenis     = $oldData['jenis_transaksi'];
+            $pesan     = "Status transaksi berhasil diperbarui.";
 
-        if ($perluRestoreStok) {
-            mysqli_begin_transaction($conn);
-            try {
-                // Ambil detail
+            $jadiBatal  = ($newStatus === 'Batal' && $oldStatus !== 'Batal');
+            $bukaBatal  = ($oldStatus === 'Batal' && $newStatus !== 'Batal');
+
+            if ($jadiBatal || $bukaBatal) {
                 $details = [];
                 $qDet = mysqli_query($conn, "SELECT produk_id, jumlah FROM transaksi_detail WHERE transaksi_id = $id");
                 while ($r = mysqli_fetch_assoc($qDet)) $details[] = $r;
 
-                // Restore stok
                 foreach ($details as $d) {
                     $pid = (int)$d['produk_id'];
                     $qty = (int)$d['jumlah'];
-                    if ($pid > 0 && $qty > 0) {
-                        mysqli_query($conn, "UPDATE produk SET stok = stok + $qty WHERE id = $pid");
+                    if ($pid <= 0 || $qty <= 0) continue;
+
+                    // penjualan: batal -> stok kembali (+), dibuka lagi -> stok keluar (-)
+                    // pembelian: batal -> stok ditarik (-), dibuka lagi -> stok masuk (+)
+                    $delta = ($jenis === 'penjualan') ? ($jadiBatal ? $qty : -$qty) : ($jadiBatal ? -$qty : $qty);
+
+                    if ($delta < 0) {
+                        $ok = mysqli_query($conn, "UPDATE produk SET stok = stok + ($delta) WHERE id = $pid AND stok >= " . abs($delta));
+                        if (!$ok || mysqli_affected_rows($conn) === 0) {
+                            throw new Exception("Stok produk ID $pid tidak cukup untuk perubahan status ini.");
+                        }
+                    } else {
+                        mysqli_query($conn, "UPDATE produk SET stok = stok + $delta WHERE id = $pid");
                     }
                 }
-
-                // Update status
-                $esc = mysqli_real_escape_string($conn, $newStatus);
-                mysqli_query($conn, "UPDATE transaksi SET status = '$esc' WHERE id = $id");
-
-                mysqli_commit($conn);
-                $suksesMsg = "Status diubah ke Batal. Stok produk telah dikembalikan.";
-            } catch (Exception $e) {
-                mysqli_rollback($conn);
-                $errorMsg = "Gagal membatalkan: " . $e->getMessage();
+                $pesan = $jadiBatal
+                    ? ($jenis === 'penjualan' ? "Status diubah ke Batal. Stok produk telah dikembalikan." : "Pembelian dibatalkan. Stok produk telah dikurangi kembali.")
+                    : "Transaksi diaktifkan kembali. Stok produk telah disesuaikan.";
             }
-        } else {
+
             $esc = mysqli_real_escape_string($conn, $newStatus);
-            if (mysqli_query($conn, "UPDATE transaksi SET status = '$esc' WHERE id = $id")) {
-                $suksesMsg = "Status transaksi berhasil diperbarui.";
-            } else {
-                $errorMsg = "Gagal update status: " . mysqli_error($conn);
-            }
+            mysqli_query($conn, "UPDATE transaksi SET status = '$esc' WHERE id = $id");
+
+            mysqli_commit($conn);
+            $suksesMsg = $pesan;
+        } catch (Throwable $e) {
+            mysqli_rollback($conn);
+            $errorMsg = "Gagal memperbarui status: " . $e->getMessage();
         }
     } else {
         $errorMsg = "Status tidak valid.";
@@ -108,7 +112,8 @@ if ($qDet) while ($r = mysqli_fetch_assoc($qDet)) $details[] = $r;
 // Hitung
 $subtotal = 0;
 foreach ($details as $d) $subtotal += (float)$d['subtotal'];
-$ppn  = $subtotal * 0.11;
+$isPembelian = ($tx['jenis_transaksi'] === 'pembelian');
+$ppn   = $isPembelian ? 0 : round($subtotal * 0.11);   // pembelian dari supplier tidak dikenai PPN di sistem ini
 $total = $subtotal + $ppn;
 
 function badgeStatus($status) {
@@ -156,7 +161,7 @@ function waktuRelatif($datetime) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Detail Transaksi <?= htmlspecialchars($tx['kode_transaksi']) ?> - PlantHub</title>
+    <title>Detail Transaksi <?= htmlspecialchars($tx['kode_transaksi']) ?> - <?= e($nama_toko) ?></title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -191,22 +196,23 @@ function waktuRelatif($datetime) {
                     <i data-lucide="menu" class="w-5 h-5"></i>
                 </button>
                 <a href="dashboard.php" class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
-                        <i data-lucide="sprout" class="w-5 h-5"></i>
-                    </div>
-                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
+                    <?= brand_icon_html() ?>
+                    <span class="text-xl font-bold tracking-tight text-stone-800"><?= brand_html() ?></span>
                 </a>
             </div>
             <div class="hidden md:flex flex-1 max-w-md">
                 <span class="text-xs text-stone-500 self-center">Detail Transaksi</span>
             </div>
-            <a href="dashboard.php" class="flex items-center gap-3 pl-1">
-                <img src="https://ui-avatars.com/api/?name=<?= urlencode($admin_nama) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
+            <div class="flex items-center gap-1">
+                <a href="dashboard.php" class="flex items-center gap-3 pl-1">
+                <img src="<?= e($avatar_url) ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
                 <div class="hidden sm:block text-left">
                     <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
                     <p class="text-xs text-stone-500">Administrator</p>
                 </div>
             </a>
+                <?= logout_btn_html() ?>
+            </div>
         </div>
     </header>
 
@@ -254,7 +260,7 @@ function waktuRelatif($datetime) {
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">PlantHub Admin</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?> Admin</p>
                     <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>
@@ -394,8 +400,8 @@ function waktuRelatif($datetime) {
 
                 <div class="p-6 grid grid-cols-1 sm:grid-cols-2 gap-6 bg-stone-50/40">
                     <div>
-                        <p class="text-[10px] font-bold uppercase tracking-widest text-stone-400 mb-2">Pemesan</p>
-                        <p class="text-sm font-bold text-stone-800"><?= htmlspecialchars($tx['pelanggan']) ?></p>
+                        <p class="text-[10px] font-bold uppercase tracking-widest text-stone-400 mb-2"><?= $isPembelian ? 'Supplier' : 'Pemesan' ?></p>
+                        <p class="text-sm font-bold text-stone-800"><?= htmlspecialchars($isPembelian ? ($tx['nama_supplier'] ?? 'Tanpa Supplier') : $tx['pelanggan']) ?></p>
                         <?php if (!empty($tx['pelanggan_email'])): ?>
                             <p class="text-xs text-stone-500 mt-0.5"><?= htmlspecialchars($tx['pelanggan_email']) ?></p>
                         <?php endif; ?>
@@ -469,10 +475,12 @@ function waktuRelatif($datetime) {
                             <span>Subtotal</span>
                             <span class="font-semibold">Rp <?= number_format($subtotal, 0, ',', '.') ?></span>
                         </div>
+                        <?php if (!$isPembelian): ?>
                         <div class="flex justify-between text-stone-600">
                             <span>PPN 11%</span>
                             <span class="font-semibold">Rp <?= number_format($ppn, 0, ',', '.') ?></span>
                         </div>
+                        <?php endif; ?>
                         <div class="pt-3 border-t border-stone-200 flex justify-between items-baseline">
                             <span class="text-sm font-bold text-stone-800">Total Bayar</span>
                             <span class="text-xl font-bold text-[#2E7D32]">Rp <?= number_format($tx['total_harga'], 0, ',', '.') ?></span>
@@ -500,7 +508,8 @@ function waktuRelatif($datetime) {
                             <span>Pesanan ini sudah dibatalkan. Status tidak bisa diubah lagi.</span>
                         </div>
                     <?php else: ?>
-                        <form method="POST" class="flex flex-col sm:flex-row gap-3">
+                        <form method="POST" class="flex flex-col sm:flex-row gap-3" onsubmit="return this.new_status.value !== 'Batal' || confirm('Batalkan transaksi ini? Status Batal tidak bisa diubah lagi dan stok akan dikembalikan.');">
+                            <?= csrf_field() ?>
                             <select name="new_status" class="flex-1 px-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
                                 <?php foreach (['Diproses','Dikirim','Selesai','Batal'] as $s): ?>
                                     <option value="<?= $s ?>" <?= $tx['status'] === $s ? 'selected' : '' ?>><?= $s ?></option>
@@ -535,14 +544,16 @@ function waktuRelatif($datetime) {
                 <div id="areaCetak">
                     <div style="font-family:'Courier New',monospace;font-size:11px;color:#000;line-height:1.4;">
                         <div style="text-align:center;border-bottom:1px dashed #000;padding-bottom:8px;margin-bottom:8px;">
-                            <div style="font-weight:bold;font-size:14px;">PLANTHUB</div>
-                            <div style="font-size:10px;">Sistem Manajemen Toko Tanaman</div>
+                            <div style="font-weight:bold;font-size:14px;"><?= e(strtoupper($nama_toko)) ?></div>
+                            <div style="font-size:10px;"><?= e($nama_cabang) ?></div>
+                            <?php if ($alamat_toko): ?><div style="font-size:9px;"><?= e($alamat_toko) ?></div><?php endif; ?>
+                            <?php if ($no_telepon): ?><div style="font-size:9px;">Telp: <?= e($no_telepon) ?></div><?php endif; ?>
                         </div>
                         <div style="font-size:10px;margin-bottom:8px;">
                             <div style="display:flex;justify-content:space-between;"><span>Kode</span><span><?= htmlspecialchars($tx['kode_transaksi']) ?></span></div>
                             <div style="display:flex;justify-content:space-between;"><span>Tanggal</span><span><?= date('d/m/Y H:i', strtotime($tx['created_at'])) ?></span></div>
                             <div style="display:flex;justify-content:space-between;"><span>Kasir</span><span><?= htmlspecialchars($admin_nama) ?></span></div>
-                            <div style="display:flex;justify-content:space-between;"><span>Pelanggan</span><span><?= htmlspecialchars($tx['nama_penerima'] ?? $tx['pelanggan']) ?></span></div>
+                            <div style="display:flex;justify-content:space-between;"><span><?= $isPembelian ? 'Supplier' : 'Pelanggan' ?></span><span><?= htmlspecialchars($isPembelian ? ($tx['nama_supplier'] ?? '-') : ($tx['nama_penerima'] ?? $tx['pelanggan'])) ?></span></div>
                         </div>
                         <div style="border-top:1px dashed #000;border-bottom:1px dashed #000;padding:6px 0;margin-bottom:6px;">
                             <?php foreach ($details as $d): ?>
@@ -557,7 +568,7 @@ function waktuRelatif($datetime) {
                         </div>
                         <div style="font-size:10px;">
                             <div style="display:flex;justify-content:space-between;"><span>Subtotal</span><span>Rp <?= number_format($subtotal, 0, ',', '.') ?></span></div>
-                            <div style="display:flex;justify-content:space-between;"><span>PPN 11%</span><span>Rp <?= number_format($ppn, 0, ',', '.') ?></span></div>
+                            <?php if (!$isPembelian): ?><div style="display:flex;justify-content:space-between;"><span>PPN 11%</span><span>Rp <?= number_format($ppn, 0, ',', '.') ?></span></div><?php endif; ?>
                             <div style="display:flex;justify-content:space-between;font-weight:bold;font-size:12px;border-top:1px solid #000;padding-top:4px;margin-top:4px;"><span>TOTAL</span><span>Rp <?= number_format($tx['total_harga'], 0, ',', '.') ?></span></div>
                         </div>
                         <div style="font-size:10px;border-top:1px dashed #000;margin-top:6px;padding-top:6px;">
@@ -565,8 +576,8 @@ function waktuRelatif($datetime) {
                             <div style="display:flex;justify-content:space-between;"><span>Status</span><span><?= htmlspecialchars($tx['status']) ?></span></div>
                         </div>
                         <div style="text-align:center;font-size:10px;margin-top:12px;padding-top:8px;border-top:1px dashed #000;">
-                            <div>Terima kasih telah berbelanja!</div>
-                            <div style="margin-top:2px;">~ PlantHub ~</div>
+                            <div style="white-space:pre-line;"><?= e($catatan_nota ?: 'Terima kasih telah berbelanja!') ?></div>
+                            <div style="margin-top:2px;">~ <?= e($nama_toko) ?> ~</div>
                         </div>
                     </div>
                 </div>

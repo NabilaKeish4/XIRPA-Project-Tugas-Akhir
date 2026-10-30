@@ -1,22 +1,47 @@
 <?php
-session_start();
-require_once '../Config/database.php';
+require_once __DIR__ . '/includes/init.php';
 
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
-    header("Location: ../Auth/login.php");
+// =========================================================
+// FEEDBACK FAQ (disimpan di database, per admin)
+// =========================================================
+mysqli_query($conn, "CREATE TABLE IF NOT EXISTS bantuan_feedback (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    faq_id VARCHAR(100) NOT NULL,
+    vote ENUM('up','down') NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_user_faq (user_id, faq_id)
+)");
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'feedback') {
+    header('Content-Type: application/json');
+    if (!csrf_ok()) { echo json_encode(['success' => false, 'message' => 'Sesi tidak valid.']); exit; }
+    $faq  = preg_replace('/[^a-zA-Z0-9_\-]/', '', $_POST['faq_id'] ?? '');
+    $vote = $_POST['vote'] ?? '';
+    if ($faq === '') { echo json_encode(['success' => false, 'message' => 'FAQ tidak valid.']); exit; }
+    if ($vote === 'none') {
+        mysqli_query($conn, "DELETE FROM bantuan_feedback WHERE user_id = $admin_id AND faq_id = '$faq'");
+    } elseif ($vote === 'up' || $vote === 'down') {
+        mysqli_query($conn, "INSERT INTO bantuan_feedback (user_id, faq_id, vote) VALUES ($admin_id, '$faq', '$vote')
+                             ON DUPLICATE KEY UPDATE vote = '$vote'");
+    } else {
+        echo json_encode(['success' => false, 'message' => 'Vote tidak valid.']); exit;
+    }
+    echo json_encode(['success' => true]);
     exit;
 }
 
-$admin_nama = $_SESSION['nama_user'] ?? 'Admin';
+$votesMine = [];
+$qV = mysqli_query($conn, "SELECT faq_id, vote FROM bantuan_feedback WHERE user_id = $admin_id");
+if ($qV) while ($r = mysqli_fetch_assoc($qV)) $votesMine[$r['faq_id']] = $r['vote'];
+$totUp = $totDown = 0;
+$qT = mysqli_query($conn, "SELECT vote, COUNT(*) AS n FROM bantuan_feedback GROUP BY vote");
+if ($qT) while ($r = mysqli_fetch_assoc($qT)) { if ($r['vote'] === 'up') $totUp = (int)$r['n']; else $totDown = (int)$r['n']; }
 
-// Ambil data toko
-$data_toko = null;
-$qToko = mysqli_query($conn, "SELECT * FROM pengaturan WHERE id = 1 LIMIT 1");
-if ($qToko && mysqli_num_rows($qToko) > 0) $data_toko = mysqli_fetch_assoc($qToko);
-
-$nama_toko   = $data_toko['nama_toko']   ?? 'PlantHub';
-$no_telepon  = $data_toko['no_telepon']  ?? '081234567890';
-$email_toko  = $data_toko['email_toko']  ?? 'admin@planthub.com';
+// Data toko ($nama_toko, $no_telepon, $email_toko) sudah dimuat oleh includes/init.php
+$no_telepon = $no_telepon ?: '081234567890';
+$email_toko = $email_toko ?: 'admin@planthub.com';
 
 // FAQ Data (dengan ID unik untuk feedback)
 $faqs = [
@@ -56,6 +81,21 @@ $faqs = [
         'a' => 'Sistem akan otomatis menandai produk sebagai <b>Stok Habis</b> (badge merah). Produk dengan stok 0 tidak akan bisa dibeli pelanggan di katalog. Segera lakukan restock via menu <b>Pembelian</b> untuk mengisi ulang stok.'
     ],
     [
+        'id' => 'faq_batal',
+        'q' => 'Apa yang terjadi saat transaksi dibatalkan?',
+        'a' => 'Di <b>Detail Transaksi</b>, ubah status ke <b>Batal</b>. Stok produk otomatis dikembalikan dan transaksi tersebut <b>tidak dihitung</b> di omzet, laba, maupun total laporan. Status Batal tidak bisa diubah lagi.'
+    ],
+    [
+        'id' => 'faq_pdf',
+        'q' => 'Bagaimana cara mengunduh laporan atau rekap transaksi dalam PDF?',
+        'a' => 'Di menu <b>Laporan</b> atau <b>Riwayat Transaksi</b>, atur filter tanggal lalu klik <b>Export PDF</b>. Kop PDF memakai nama toko, alamat, dan logo dari Pengaturan Toko.'
+    ],
+    [
+        'id' => 'faq_reset_pw',
+        'q' => 'Pelanggan lupa password, apa yang harus dilakukan?',
+        'a' => 'Buka menu <b>Pelanggan</b>, klik ikon kunci pada pelanggan tersebut, lalu <b>Ya, Reset</b>. Sistem membuat password sementara yang bisa Anda salin dan berikan ke pelanggan. Untuk password akun Anda sendiri, gunakan <b>Ganti Password Saya</b> di Pengaturan Toko.'
+    ],
+    [
         'id' => 'faq_ubah_toko',
         'q' => 'Bagaimana cara mengubah logo atau nama toko?',
         'a' => 'Buka menu <b>Pengaturan Toko</b> di bagian PENGATURAN. Ubah nama toko, cabang, kontak, alamat, dan upload logo/foto profil. Klik <b>Simpan Pengaturan</b>. Perubahan akan otomatis tampil di seluruh halaman termasuk struk nota pelanggan.'
@@ -82,25 +122,26 @@ $faqs = [
                     <i data-lucide="menu" class="w-5 h-5"></i>
                 </button>
                 <a href="dashboard.php" class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
-                        <i data-lucide="sprout" class="w-5 h-5"></i>
-                    </div>
-                    <span class="text-xl font-bold tracking-tight text-stone-800"><?= htmlspecialchars($nama_toko) ?></span>
+                    <?= brand_icon_html() ?>
+                    <span class="text-xl font-bold tracking-tight text-stone-800"><?= brand_html() ?></span>
                 </a>
             </div>
 
-            <form method="GET" action="stok.php" class="hidden md:flex flex-1 max-w-md relative">
+            <form onsubmit="event.preventDefault(); document.getElementById('faqSearch').value = this.search.value; filterFAQ(); document.getElementById('faqList').scrollIntoView({behavior:'smooth'});" class="hidden md:flex flex-1 max-w-md relative">
                 <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
-                <input type="text" name="search" placeholder="Cari tanaman, pot, media tanam..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] placeholder:text-stone-400">
+                <input type="text" name="search" placeholder="Cari panduan bantuan..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] placeholder:text-stone-400">
             </form>
 
-            <a href="dashboard.php" class="flex items-center gap-3 pl-1">
-                <img src="https://ui-avatars.com/api/?name=<?= urlencode($admin_nama) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
+            <div class="flex items-center gap-1">
+                <a href="dashboard.php" class="flex items-center gap-3 pl-1">
+                <img src="<?= e($avatar_url) ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
                 <div class="hidden sm:block text-left">
                     <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
                     <p class="text-xs text-stone-500">Administrator</p>
                 </div>
             </a>
+                <?= logout_btn_html() ?>
+            </div>
         </div>
     </header>
 
@@ -164,31 +205,52 @@ $faqs = [
                 <p class="text-sm text-stone-500 mt-0.5">Panduan penggunaan sistem <?= htmlspecialchars($nama_toko) ?> dan solusi masalah umum.</p>
             </div>
 
-            <!-- QUICK GUIDE CARDS -->
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <a href="pos.php" class="bg-white p-5 rounded-2xl border border-stone-200/80 shadow-sm hover:shadow-md hover:border-[#2E7D32]/30 transition group">
-                    <div class="w-10 h-10 rounded-xl bg-emerald-50 text-[#2E7D32] flex items-center justify-center mb-3 group-hover:bg-[#2E7D32] group-hover:text-white transition">
-                        <i data-lucide="shopping-cart" class="w-5 h-5"></i>
-                    </div>
-                    <h3 class="text-sm font-bold text-stone-800">Transaksi Kasir</h3>
-                    <p class="text-xs text-stone-500 mt-1 leading-relaxed">Proses penjualan langsung ke pelanggan walk-in.</p>
-                </a>
+            <!-- PERLU PERHATIAN (data langsung dari sistem) -->
+            <?php
+            $q1 = mysqli_query($conn, "SELECT COUNT(*) AS n FROM transaksi WHERE jenis_transaksi='penjualan' AND status IN ('Diproses','Dikirim')");
+            $pesananAktif = $q1 ? (int)mysqli_fetch_assoc($q1)['n'] : 0;
+            $q2 = mysqli_query($conn, "SELECT COUNT(*) AS n FROM produk WHERE stok <= stok_minimal");
+            $stokPerhatian = $q2 ? (int)mysqli_fetch_assoc($q2)['n'] : 0;
+            $q3 = mysqli_query($conn, "SELECT COUNT(*) AS n FROM chats WHERE sender_type='customer' AND is_read=0 AND is_deleted=0");
+            $chatBaru = $q3 ? (int)mysqli_fetch_assoc($q3)['n'] : 0;
+            $q4 = mysqli_query($conn, "SELECT COUNT(*) AS n, COALESCE(SUM(total_harga),0) AS t FROM transaksi WHERE jenis_transaksi='penjualan' AND status <> 'Batal' AND DATE(created_at)=CURDATE()");
+            $hariIni = $q4 ? mysqli_fetch_assoc($q4) : ['n' => 0, 't' => 0];
+            $tugas = [
+                ['url' => 'transaksi.php?status=Diproses', 'icon' => 'clock',          'angka' => $pesananAktif, 'judul' => 'Pesanan perlu diproses', 'ket' => $pesananAktif > 0 ? 'Buka riwayat, ubah status ke Dikirim / Selesai.' : 'Tidak ada pesanan yang menunggu.', 'warn' => $pesananAktif > 0],
+                ['url' => 'stok.php?status_filter=critical', 'icon' => 'alert-triangle', 'angka' => $stokPerhatian, 'judul' => 'Produk stok menipis / habis', 'ket' => $stokPerhatian > 0 ? 'Segera restock lewat menu Pembelian.' : 'Semua stok aman.', 'warn' => $stokPerhatian > 0],
+                ['url' => 'chat.php?filter=unread', 'icon' => 'message-square', 'angka' => $chatBaru, 'judul' => 'Chat belum dibalas', 'ket' => $chatBaru > 0 ? 'Pelanggan menunggu balasan konsultasi.' : 'Tidak ada chat baru.', 'warn' => $chatBaru > 0],
+                ['url' => 'laporan.php?range=today', 'icon' => 'wallet', 'angka' => (int)$hariIni['n'], 'judul' => 'Transaksi hari ini', 'ket' => 'Omzet ' . rupiah($hariIni['t']) . ' (tanpa Batal).', 'warn' => false],
+            ];
+            ?>
+            <div>
+                <h2 class="text-sm font-bold text-stone-800 mb-3 flex items-center gap-2">
+                    <i data-lucide="list-checks" class="w-4 h-4 text-[#2E7D32]"></i> Perlu perhatian hari ini
+                </h2>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <?php foreach ($tugas as $t): ?>
+                        <a href="<?= e($t['url']) ?>" class="bg-white p-4 rounded-2xl border <?= $t['warn'] ? 'border-amber-200' : 'border-stone-200/80' ?> shadow-sm hover:shadow-md hover:border-[#2E7D32]/30 transition group flex items-start gap-3">
+                            <div class="w-10 h-10 rounded-xl <?= $t['warn'] ? 'bg-amber-50 text-amber-600' : 'bg-emerald-50 text-[#2E7D32]' ?> flex items-center justify-center shrink-0">
+                                <i data-lucide="<?= e($t['icon']) ?>" class="w-5 h-5"></i>
+                            </div>
+                            <div class="min-w-0">
+                                <p class="text-xl font-bold text-stone-800 leading-none"><?= (int)$t['angka'] ?></p>
+                                <h3 class="text-sm font-bold text-stone-800 mt-1"><?= e($t['judul']) ?></h3>
+                                <p class="text-xs text-stone-500 mt-0.5 leading-relaxed"><?= e($t['ket']) ?></p>
+                            </div>
+                        </a>
+                    <?php endforeach; ?>
+                </div>
+            </div>
 
-                <a href="stok.php" class="bg-white p-5 rounded-2xl border border-stone-200/80 shadow-sm hover:shadow-md hover:border-[#2E7D32]/30 transition group">
-                    <div class="w-10 h-10 rounded-xl bg-emerald-50 text-[#2E7D32] flex items-center justify-center mb-3 group-hover:bg-[#2E7D32] group-hover:text-white transition">
-                        <i data-lucide="box" class="w-5 h-5"></i>
-                    </div>
-                    <h3 class="text-sm font-bold text-stone-800">Kelola Stok</h3>
-                    <p class="text-xs text-stone-500 mt-1 leading-relaxed">Tambah, edit, dan atur stok produk tanaman.</p>
-                </a>
-
-                <a href="laporan.php" class="bg-white p-5 rounded-2xl border border-stone-200/80 shadow-sm hover:shadow-md hover:border-[#2E7D32]/30 transition group">
-                    <div class="w-10 h-10 rounded-xl bg-emerald-50 text-[#2E7D32] flex items-center justify-center mb-3 group-hover:bg-[#2E7D32] group-hover:text-white transition">
-                        <i data-lucide="bar-chart-2" class="w-5 h-5"></i>
-                    </div>
-                    <h3 class="text-sm font-bold text-stone-800">Laporan Penjualan</h3>
-                    <p class="text-xs text-stone-500 mt-1 leading-relaxed">Pantau omset, laba, dan performa produk.</p>
-                </a>
+            <!-- ALUR KERJA HARIAN -->
+            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6">
+                <h2 class="text-base font-bold text-stone-800 mb-4">Alur kerja harian yang disarankan</h2>
+                <ol class="space-y-3 text-xs text-stone-600">
+                    <li class="flex gap-3"><span class="w-6 h-6 rounded-full bg-[#E8F5E9] text-[#2E7D32] font-bold flex items-center justify-center shrink-0">1</span><span><b class="text-stone-800">Pagi:</b> cek <a href="stok.php?status_filter=critical" class="text-[#2E7D32] font-bold hover:underline">stok menipis</a> dan <a href="transaksi.php?status=Diproses" class="text-[#2E7D32] font-bold hover:underline">pesanan yang diproses</a>.</span></li>
+                    <li class="flex gap-3"><span class="w-6 h-6 rounded-full bg-[#E8F5E9] text-[#2E7D32] font-bold flex items-center justify-center shrink-0">2</span><span><b class="text-stone-800">Siang:</b> layani pembeli di <a href="pos.php" class="text-[#2E7D32] font-bold hover:underline">Kasir (POS)</a> dan balas <a href="chat.php" class="text-[#2E7D32] font-bold hover:underline">chat konsultasi</a>.</span></li>
+                    <li class="flex gap-3"><span class="w-6 h-6 rounded-full bg-[#E8F5E9] text-[#2E7D32] font-bold flex items-center justify-center shrink-0">3</span><span><b class="text-stone-800">Barang datang:</b> catat lewat <a href="restock.php" class="text-[#2E7D32] font-bold hover:underline">Pembelian</a> agar stok dan harga beli ikut terbarui.</span></li>
+                    <li class="flex gap-3"><span class="w-6 h-6 rounded-full bg-[#E8F5E9] text-[#2E7D32] font-bold flex items-center justify-center shrink-0">4</span><span><b class="text-stone-800">Sore:</b> lihat <a href="laporan.php?range=today" class="text-[#2E7D32] font-bold hover:underline">laporan hari ini</a> dan unduh PDF bila perlu.</span></li>
+                </ol>
             </div>
 
             <!-- FAQ -->
@@ -271,18 +333,21 @@ $faqs = [
         // STORAGE: feedback disimpan di localStorage
         // Format: { "faq_tambah_produk": "up", "faq_pos": "down", ... }
         // ========================================================
-        const STORAGE_KEY = 'planthub_faq_feedback';
+        // Data feedback berasal dari database (bukan localStorage lagi)
+        let votes = <?= json_encode((object)$votesMine) ?>;
+        let totalUp = <?= (int)$totUp ?>;
+        let totalDown = <?= (int)$totDown ?>;
+        const CSRF = <?= json_encode(csrf_token()) ?>;
 
-        function getFeedbackData() {
-            try {
-                return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
-            } catch (e) {
-                return {};
-            }
-        }
+        function getFeedbackData() { return votes; }
 
-        function saveFeedbackData(data) {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        function kirimKeServer(faqId, vote) {
+            const fd = new FormData();
+            fd.append('action', 'feedback');
+            fd.append('csrf', CSRF);
+            fd.append('faq_id', faqId);
+            fd.append('vote', vote);
+            fetch('bantuan.php', { method: 'POST', body: fd }).catch(() => {});
         }
 
         // ========================================================
@@ -300,17 +365,20 @@ $faqs = [
                 // Update vote (ganti)
                 if (data[faqId] === type) {
                     // Klik vote yang sama → hapus vote
+                    if (type === 'up') totalUp--; else totalDown--;
                     delete data[faqId];
-                    saveFeedbackData(data);
+                    kirimKeServer(faqId, 'none');
                     resetFeedbackUI(section);
                     updateStatistik();
                     return;
                 }
             }
 
-            // Simpan vote baru
+            // Simpan vote baru (ganti vote lama bila ada)
+            if (data[faqId] === 'up') totalUp--; else if (data[faqId] === 'down') totalDown--;
+            if (type === 'up') totalUp++; else totalDown++;
             data[faqId] = type;
-            saveFeedbackData(data);
+            kirimKeServer(faqId, type);
 
             // Update UI
             resetFeedbackUI(section);
@@ -367,12 +435,10 @@ $faqs = [
         }
 
         // ========================================================
-        // STATISTIK: dari localStorage
+        // STATISTIK: gabungan feedback seluruh admin (dari database)
         // ========================================================
         function updateStatistik() {
-            const data = getFeedbackData();
-            const totalVote = Object.keys(data).length;
-            const totalUp   = Object.values(data).filter(v => v === 'up').length;
+            const totalVote = Math.max(0, totalUp) + Math.max(0, totalDown);
             const persen    = totalVote > 0 ? Math.round((totalUp / totalVote) * 100) : 0;
 
             const el = document.getElementById('statistikFeedback');
@@ -412,7 +478,7 @@ $faqs = [
             let visibleCount = 0;
 
             document.querySelectorAll('.faq-item').forEach(item => {
-                const text = item.innerText.toLowerCase();
+                const text = item.textContent.toLowerCase();
                 const show = text.includes(input);
                 item.style.display = show ? '' : 'none';
                 if (show) visibleCount++;

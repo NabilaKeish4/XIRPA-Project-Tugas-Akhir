@@ -1,19 +1,12 @@
 <?php
-session_start();
-require_once '../Config/database.php';
-
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
-    header("Location: ../Auth/login.php");
-    exit;
-}
-
-$admin_nama = $_SESSION['nama_user'] ?? 'Admin';
+require_once __DIR__ . '/includes/init.php';
 
 // =========================================================
 // HANDLE HAPUS GAMBAR PRODUK (AJAX / POST biasa)
 // =========================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'hapus_gambar') {
     header('Content-Type: application/json');
+    if (!csrf_ok()) { echo json_encode(['success' => false, 'message' => 'Sesi tidak valid, muat ulang halaman.']); exit; }
     $id = (int)($_POST['id'] ?? 0);
     if ($id <= 0) {
         echo json_encode(['success' => false, 'message' => 'ID tidak valid.']);
@@ -42,30 +35,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'hapus
 $pesan_sukses = '';
 $pesan_error  = '';
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $action = $_POST['action'] ?? '';
+/** Upload gambar produk. Bila gagal, alasan disimpan di $GLOBALS['upload_error'] dan file lama dipertahankan. */
+function uploadGambar($file, $oldFile = '') {
+    $GLOBALS['upload_error'] = '';
+    if (!isset($file) || !is_array($file) || $file['error'] === UPLOAD_ERR_NO_FILE) return $oldFile;
+    if ($file['error'] !== UPLOAD_ERR_OK) { $GLOBALS['upload_error'] = 'Upload gambar gagal (kode ' . $file['error'] . ').'; return $oldFile; }
 
-    function uploadGambar($file, $oldFile = '') {
-        if (!isset($file) || $file['error'] !== UPLOAD_ERR_OK) return $oldFile;
+    $allowed = ['jpg', 'jpeg', 'png', 'webp'];
+    $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
 
-        $allowed = ['jpg', 'jpeg', 'png', 'webp'];
-        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+    if (!in_array($ext, $allowed, true) || @getimagesize($file['tmp_name']) === false) {
+        $GLOBALS['upload_error'] = 'Format gambar harus JPG, PNG, atau WEBP.'; return $oldFile;
+    }
+    if ($file['size'] > 2 * 1024 * 1024) { $GLOBALS['upload_error'] = 'Ukuran gambar maksimal 2 MB.'; return $oldFile; }
 
-        if (!in_array($ext, $allowed)) return $oldFile;
-        if ($file['size'] > 2 * 1024 * 1024) return $oldFile;
-
+    {
         $dir = '../assets/img/';
         if (!is_dir($dir)) mkdir($dir, 0755, true);
 
-        $newName = 'produk_' . time() . '_' . rand(1000, 9999) . '.' . $ext;
+        $newName = 'produk_' . time() . '_' . bin2hex(random_bytes(2)) . '.' . $ext;
         if (move_uploaded_file($file['tmp_name'], $dir . $newName)) {
             if ($oldFile && $oldFile !== 'default.jpg' && file_exists($dir . $oldFile)) {
                 @unlink($dir . $oldFile);
             }
             return $newName;
         }
+        $GLOBALS['upload_error'] = 'Gagal menyimpan gambar ke folder assets/img.';
         return $oldFile;
     }
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !csrf_ok()) {
+    $pesan_error = "Sesi formulir tidak valid, muat ulang halaman lalu coba lagi.";
+} elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    $action = $_POST['action'] ?? '';
 
     // ----- TAMBAH PRODUK -----
     if ($action === 'tambah') {
@@ -78,15 +81,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $deskripsi    = mysqli_real_escape_string($conn, trim($_POST['deskripsi'] ?? ''));
         $perawatan    = mysqli_real_escape_string($conn, trim($_POST['cara_perawatan'] ?? ''));
 
-        $gambar = 'default.jpg';
-        if (isset($_FILES['gambar']) && $_FILES['gambar']['error'] === UPLOAD_ERR_OK) {
-            $gambar = uploadGambar($_FILES['gambar'], '');
-        }
+        $gambar = uploadGambar($_FILES['gambar'] ?? null, 'default.jpg');
 
-        if ($nama === '') {
+        if (!empty($GLOBALS['upload_error'])) {
+            $pesan_error = $GLOBALS['upload_error'];
+        } elseif ($nama === '') {
             $pesan_error = "Nama produk wajib diisi.";
         } elseif ($harga_jual <= 0) {
             $pesan_error = "Harga jual harus lebih dari 0.";
+        } elseif ($harga_beli < 0 || $stok < 0 || $stok_minimal < 0) {
+            $pesan_error = "Harga beli, stok, dan stok minimal tidak boleh negatif.";
         } else {
             $sql = "INSERT INTO produk 
                     (kategori_id, nama_tanaman, deskripsi, cara_perawatan, harga_jual, harga_beli, stok, stok_minimal, gambar, created_at) 
@@ -118,9 +122,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($qOld && $r = mysqli_fetch_assoc($qOld)) $oldGambar = $r['gambar'];
 
         $gambar = uploadGambar($_FILES['gambar'] ?? null, $oldGambar);
+        $gambar = mysqli_real_escape_string($conn, $gambar);
 
-        if ($id <= 0 || $nama === '') {
+        if (!empty($GLOBALS['upload_error'])) {
+            $pesan_error = $GLOBALS['upload_error'];
+        } elseif ($id <= 0 || $nama === '') {
             $pesan_error = "Data tidak lengkap.";
+        } elseif ($harga_jual <= 0) {
+            $pesan_error = "Harga jual harus lebih dari 0.";
+        } elseif ($harga_beli < 0 || $stok < 0 || $stok_minimal < 0) {
+            $pesan_error = "Harga beli, stok, dan stok minimal tidak boleh negatif.";
         } else {
             $sql = "UPDATE produk SET 
                         kategori_id = " . ($kategori_id > 0 ? $kategori_id : 'NULL') . ",
@@ -178,7 +189,8 @@ if (isset($_GET['status'])) {
 // =========================================================
 // FILTER, SEARCH, SORTING
 // =========================================================
-$search        = isset($_GET['search']) ? mysqli_real_escape_string($conn, trim($_GET['search'])) : '';
+$search        = isset($_GET['search']) ? trim($_GET['search']) : '';
+$searchSql     = mysqli_real_escape_string($conn, str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $search));
 $kategori_id   = isset($_GET['kategori']) ? (int)$_GET['kategori'] : 0;
 $statusFilter  = $_GET['status_filter'] ?? 'semua';
 
@@ -201,7 +213,7 @@ $allowedSort = [
 $orderBy = $allowedSort[$sortBy] ?? 'p.id DESC';
 
 $where = "WHERE 1=1";
-if ($search !== '')      $where .= " AND p.nama_tanaman LIKE '%$search%'";
+if ($search !== '')      $where .= " AND p.nama_tanaman LIKE '%$searchSql%'";
 if ($kategori_id > 0)    $where .= " AND p.kategori_id = $kategori_id";
 if ($statusFilter === 'safe')     $where .= " AND p.stok > p.stok_minimal";
 if ($statusFilter === 'critical') $where .= " AND p.stok > 0 AND p.stok <= p.stok_minimal";
@@ -253,6 +265,19 @@ function gambarProduk($nama) {
     return "https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400";
 }
 
+// Helper URL filter: pertahankan search / kategori / status_filter / sort saat berpindah filter
+function stokUrl(array $override = []): string {
+    $p = array_merge([
+        'search'        => $_GET['search'] ?? '',
+        'kategori'      => $_GET['kategori'] ?? '',
+        'status_filter' => $_GET['status_filter'] ?? '',
+        'sort'          => $_GET['sort'] ?? '',
+        'order'         => $_GET['order'] ?? '',
+    ], $override);
+    $p = array_filter($p, fn($v) => $v !== '' && $v !== null && $v !== 0 && $v !== '0' && $v !== 'semua');
+    return 'stok.php' . ($p ? '?' . http_build_query($p) : '');
+}
+
 // Helper sort URL
 function sortUrl($col) {
     $params = $_GET;
@@ -282,7 +307,7 @@ function sortIcon($col, $currentSort, $currentOrder) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlantHub - Stok & Produk</title>
+    <title><?= e($nama_toko) ?> - Stok & Produk</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -297,10 +322,8 @@ function sortIcon($col, $currentSort, $currentOrder) {
                     <i data-lucide="menu" class="w-5 h-5"></i>
                 </button>
                 <a href="dashboard.php" class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
-                        <i data-lucide="sprout" class="w-5 h-5"></i>
-                    </div>
-                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
+                    <?= brand_icon_html() ?>
+                    <span class="text-xl font-bold tracking-tight text-stone-800"><?= brand_html() ?></span>
                 </a>
             </div>
 
@@ -309,13 +332,16 @@ function sortIcon($col, $currentSort, $currentOrder) {
                 <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari produk..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] placeholder:text-stone-400">
             </form>
 
-            <a href="dashboard.php" class="flex items-center gap-3 pl-1">
-                <img src="https://ui-avatars.com/api/?name=<?= urlencode($admin_nama) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
+            <div class="flex items-center gap-1">
+                <a href="dashboard.php" class="flex items-center gap-3 pl-1">
+                <img src="<?= e($avatar_url) ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
                 <div class="hidden sm:block text-left">
                     <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
                     <p class="text-xs text-stone-500">Administrator</p>
                 </div>
             </a>
+                <?= logout_btn_html() ?>
+            </div>
         </div>
     </header>
 
@@ -363,7 +389,7 @@ function sortIcon($col, $currentSort, $currentOrder) {
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">PlantHub Admin</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?> Admin</p>
                     <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>
@@ -397,7 +423,7 @@ function sortIcon($col, $currentSort, $currentOrder) {
 
             <!-- 4 STATISTIK -->
             <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                <a href="stok.php" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32] hover:shadow-md transition-shadow">
+                <a href="<?= e(stokUrl(['status_filter' => ''])) ?>" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#2E7D32] hover:shadow-md transition-shadow">
                     <div class="flex items-center justify-between mb-2">
                         <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Total Produk</p>
                         <i data-lucide="package" class="w-4 h-4 text-[#2E7D32]"></i>
@@ -405,7 +431,7 @@ function sortIcon($col, $currentSort, $currentOrder) {
                     <p class="text-2xl font-bold text-stone-800"><?= $statTotal ?></p>
                     <p class="text-[11px] text-stone-400 mt-1">Produk di katalog</p>
                 </a>
-                <a href="stok.php?status_filter=safe" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-emerald-500 hover:shadow-md transition-shadow">
+                <a href="<?= e(stokUrl(['status_filter' => 'safe'])) ?>" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-emerald-500 hover:shadow-md transition-shadow">
                     <div class="flex items-center justify-between mb-2">
                         <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Stok Aman</p>
                         <i data-lucide="check-circle" class="w-4 h-4 text-emerald-600"></i>
@@ -413,7 +439,7 @@ function sortIcon($col, $currentSort, $currentOrder) {
                     <p class="text-2xl font-bold text-stone-800"><?= $statSafe ?></p>
                     <p class="text-[11px] text-stone-400 mt-1">Di atas minimal</p>
                 </a>
-                <a href="stok.php?status_filter=critical" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#D97706] hover:shadow-md transition-shadow">
+                <a href="<?= e(stokUrl(['status_filter' => 'critical'])) ?>" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-[#D97706] hover:shadow-md transition-shadow">
                     <div class="flex items-center justify-between mb-2">
                         <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Stok Kritis</p>
                         <i data-lucide="alert-triangle" class="w-4 h-4 text-[#D97706]"></i>
@@ -421,7 +447,7 @@ function sortIcon($col, $currentSort, $currentOrder) {
                     <p class="text-2xl font-bold text-stone-800"><?= $statCritical ?></p>
                     <p class="text-[11px] text-stone-400 mt-1">Perlu restock</p>
                 </a>
-                <a href="stok.php?status_filter=empty" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-rose-600 hover:shadow-md transition-shadow">
+                <a href="<?= e(stokUrl(['status_filter' => 'empty'])) ?>" class="bg-white rounded-2xl p-5 border border-stone-200/80 shadow-sm border-t-4 border-t-rose-600 hover:shadow-md transition-shadow">
                     <div class="flex items-center justify-between mb-2">
                         <p class="text-xs font-semibold uppercase tracking-wider text-stone-500">Stok Habis</p>
                         <i data-lucide="x-circle" class="w-4 h-4 text-rose-600"></i>
@@ -434,9 +460,9 @@ function sortIcon($col, $currentSort, $currentOrder) {
             <!-- FILTER + SORTING -->
             <div class="bg-white p-4 rounded-2xl border border-stone-200/80 shadow-sm space-y-3">
                 <div class="flex items-center gap-2 overflow-x-auto pb-1">
-                    <a href="stok.php<?= $search ? '?search=' . urlencode($search) : '' ?>" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $kategori_id === 0 ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">Semua Kategori</a>
+                    <a href="<?= e(stokUrl(['kategori' => ''])) ?>" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $kategori_id === 0 ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">Semua Kategori</a>
                     <?php foreach ($kategoriList as $k): ?>
-                        <a href="stok.php?kategori=<?= (int)$k['id'] ?><?= $search ? '&search=' . urlencode($search) : '' ?>" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $kategori_id === (int)$k['id'] ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">
+                        <a href="<?= e(stokUrl(['kategori' => (int)$k['id']])) ?>" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition <?= $kategori_id === (int)$k['id'] ? 'bg-[#2E7D32] text-white' : 'bg-stone-100 text-stone-600 hover:bg-stone-200' ?>">
                             <?= htmlspecialchars($k['nama_kategori']) ?>
                         </a>
                     <?php endforeach; ?>
@@ -514,16 +540,16 @@ function sortIcon($col, $currentSort, $currentOrder) {
                                 </div>
 
                                 <div class="mt-3 pt-3 border-t border-stone-100 grid grid-cols-2 gap-2">
-                                    <button onclick='openModalEdit(<?= json_encode([
+                                    <button onclick="openModalEdit(<?= js_attr([
                                         "id" => $p['id'], "nama" => $p['nama_tanaman'], "kategori_id" => $p['kategori_id'],
                                         "harga_jual" => $p['harga_jual'], "harga_beli" => $p['harga_beli'],
                                         "stok" => $p['stok'], "stok_minimal" => $p['stok_minimal'],
                                         "deskripsi" => $p['deskripsi'], "perawatan" => $p['cara_perawatan'],
                                         "gambar" => $imgSrc
-                                    ]) ?>)' class="text-xs font-semibold text-stone-700 bg-stone-100 hover:bg-stone-200 py-2 rounded-lg transition inline-flex items-center justify-center gap-1">
+                                    ]) ?>)" class="text-xs font-semibold text-stone-700 bg-stone-100 hover:bg-stone-200 py-2 rounded-lg transition inline-flex items-center justify-center gap-1">
                                         <i data-lucide="edit-3" class="w-3.5 h-3.5"></i> Edit
                                     </button>
-                                    <button onclick='konfirmasiHapus(<?= (int)$p['id'] ?>, <?= json_encode($p['nama_tanaman']) ?>)' class="text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 py-2 rounded-lg transition inline-flex items-center justify-center gap-1">
+                                    <button onclick="konfirmasiHapus(<?= (int)$p['id'] ?>, <?= js_attr($p['nama_tanaman']) ?>)" class="text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 py-2 rounded-lg transition inline-flex items-center justify-center gap-1">
                                         <i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Hapus
                                     </button>
                                 </div>
@@ -550,6 +576,7 @@ function sortIcon($col, $currentSort, $currentOrder) {
             </div>
 
             <form id="formProduk" method="POST" action="stok.php" enctype="multipart/form-data" class="p-5 space-y-4">
+                <?= csrf_field() ?>
                 <input type="hidden" name="action" id="formAction" value="tambah">
                 <input type="hidden" name="id" id="formId" value="">
 
@@ -637,6 +664,7 @@ function sortIcon($col, $currentSort, $currentOrder) {
 
     <!-- MODAL HAPUS -->
     <form id="formHapus" method="POST" action="stok.php" class="fixed inset-0 bg-stone-900/50 backdrop-blur-sm z-50 hidden items-center justify-center p-4">
+        <?= csrf_field() ?>
         <input type="hidden" name="action" value="hapus">
         <input type="hidden" name="id" id="hapusId" value="">
         <div class="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 space-y-4">
@@ -756,6 +784,7 @@ function sortIcon($col, $currentSort, $currentOrder) {
 
             const fd = new FormData();
             fd.append('action', 'hapus_gambar');
+            fd.append('csrf', <?= json_encode(csrf_token()) ?>);
             fd.append('id', currentEditId);
 
             fetch('stok.php', { method: 'POST', body: fd })

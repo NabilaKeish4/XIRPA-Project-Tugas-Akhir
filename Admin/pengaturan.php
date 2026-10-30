@@ -1,14 +1,5 @@
 <?php
-session_start();
-require_once '../Config/database.php';
-
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
-    header("Location: ../Auth/login.php");
-    exit;
-}
-
-$admin_id   = (int)$_SESSION['user_id'];
-$admin_nama = $_SESSION['nama_user'] ?? 'Admin';
+require_once __DIR__ . '/includes/init.php';
 
 // =========================================================
 // PASTIKAN TABEL pengaturan ADA
@@ -47,7 +38,7 @@ function uploadFile($file, $prefix, $oldFile = '', &$errors = []) {
     $allowed = ['jpg', 'jpeg', 'png', 'webp'];
     $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
 
-    if (!in_array($ext, $allowed)) {
+    if (!in_array($ext, $allowed, true) || @getimagesize($file['tmp_name']) === false) {
         $errors[] = "Format file $prefix tidak didukung. Gunakan JPG, PNG, atau WEBP.";
         return $oldFile;
     }
@@ -59,7 +50,7 @@ function uploadFile($file, $prefix, $oldFile = '', &$errors = []) {
     $dir = '../uploads/';
     if (!is_dir($dir)) mkdir($dir, 0755, true);
 
-    $newName = $prefix . '_' . time() . '_' . rand(1000, 9999) . '.' . $ext;
+    $newName = $prefix . '_' . time() . '_' . bin2hex(random_bytes(2)) . '.' . $ext;
     if (move_uploaded_file($file['tmp_name'], $dir . $newName)) {
         if ($oldFile && !in_array($oldFile, ['default.jpg', 'default_logo.png', 'default_avatar.jpg']) && file_exists($dir . $oldFile)) {
             @unlink($dir . $oldFile);
@@ -68,6 +59,17 @@ function uploadFile($file, $prefix, $oldFile = '', &$errors = []) {
     }
     $errors[] = "Gagal memindahkan file $prefix ke folder uploads.";
     return $oldFile;
+}
+
+// =========================================================
+// CSRF: semua aksi POST di halaman ini wajib membawa token sesi
+// =========================================================
+$pesan_sukses = '';
+$pesan_error  = '';
+$upload_errors = [];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !csrf_ok()) {
+    $_POST = [];   // abaikan semua aksi
+    $pesan_error = "Sesi formulir tidak valid, muat ulang halaman lalu coba lagi.";
 }
 
 // =========================================================
@@ -99,10 +101,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['hapus_gambar'])) {
 // =========================================================
 // HANDLE TAMBAH ADMIN BARU
 // =========================================================
-$pesan_sukses = '';
-$pesan_error  = '';
-$upload_errors = [];
-
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['tambah_admin'])) {
     $nama_admin = trim($_POST['nama_admin'] ?? '');
     $username   = trim($_POST['username'] ?? '');
@@ -141,6 +139,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['tambah_admin'])) {
 }
 
 // =========================================================
+// HANDLE GANTI PASSWORD SAYA SENDIRI
+// =========================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ganti_password'])) {
+    $lama  = $_POST['password_lama'] ?? '';
+    $baru  = $_POST['password_baru'] ?? '';
+    $konf  = $_POST['konfirmasi_baru'] ?? '';
+
+    $qMe = mysqli_query($conn, "SELECT password FROM users WHERE id = $admin_id AND role = 'admin' LIMIT 1");
+    $me  = $qMe ? mysqli_fetch_assoc($qMe) : null;
+
+    if (!$me || !password_verify($lama, $me['password'])) {
+        $pesan_error = "Password lama salah.";
+    } elseif (strlen($baru) < 6) {
+        $pesan_error = "Password baru minimal 6 karakter.";
+    } elseif ($baru !== $konf) {
+        $pesan_error = "Konfirmasi password baru tidak cocok.";
+    } else {
+        $hashBaru = mysqli_real_escape_string($conn, password_hash($baru, PASSWORD_DEFAULT));
+        mysqli_query($conn, "UPDATE users SET password = '$hashBaru' WHERE id = $admin_id");
+        header("Location: pengaturan.php?status=pw_changed");
+        exit;
+    }
+}
+
+// =========================================================
 // HANDLE HAPUS ADMIN
 // =========================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['hapus_admin'])) {
@@ -158,7 +181,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['hapus_admin'])) {
         exit;
     }
 
-    mysqli_query($conn, "DELETE FROM users WHERE id = $hapus_id AND role = 'admin'");
+    try {
+        mysqli_query($conn, "DELETE FROM users WHERE id = $hapus_id AND role = 'admin'");
+    } catch (Throwable $e) {
+        header("Location: pengaturan.php?status=error_min_admin");
+        exit;
+    }
     header("Location: pengaturan.php?status=admin_deleted");
     exit;
 }
@@ -227,6 +255,7 @@ if (isset($_GET['status'])) {
     if ($_GET['status'] === 'logo_reset')        $pesan_sukses = "Logo toko dikembalikan ke default.";
     if ($_GET['status'] === 'profil_reset')      $pesan_sukses = "Foto profil dikembalikan ke default.";
     if ($_GET['status'] === 'admin_added')       $pesan_sukses = "Admin baru berhasil ditambahkan.";
+    if ($_GET['status'] === 'pw_changed')        $pesan_sukses = "Password Anda berhasil diubah.";
     if ($_GET['status'] === 'admin_deleted')     $pesan_sukses = "Akun admin berhasil dihapus.";
     if ($_GET['status'] === 'error_self_delete') $pesan_error  = "Anda tidak bisa menghapus akun Anda sendiri.";
     if ($_GET['status'] === 'error_min_admin')   $pesan_error  = "Minimal harus ada 1 admin di sistem.";
@@ -258,7 +287,7 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlantHub - Pengaturan Toko</title>
+    <title><?= e($nama_toko) ?> - Pengaturan Toko</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -273,10 +302,8 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
                     <i data-lucide="menu" class="w-5 h-5"></i>
                 </button>
                 <a href="dashboard.php" class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
-                        <i data-lucide="sprout" class="w-5 h-5"></i>
-                    </div>
-                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
+                    <?= brand_icon_html() ?>
+                    <span class="text-xl font-bold tracking-tight text-stone-800"><?= brand_html() ?></span>
                 </a>
             </div>
 
@@ -284,13 +311,16 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
                 <span class="text-xs text-stone-500 self-center">Pengaturan Toko</span>
             </div>
 
-            <a href="dashboard.php" class="flex items-center gap-3 pl-1">
+            <div class="flex items-center gap-1">
+                <a href="dashboard.php" class="flex items-center gap-3 pl-1">
                 <img src="<?= $avatar_src ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
                 <div class="hidden sm:block text-left">
                     <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
                     <p class="text-xs text-stone-500">Administrator</p>
                 </div>
             </a>
+                <?= logout_btn_html() ?>
+            </div>
         </div>
     </header>
 
@@ -348,7 +378,7 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">PlantHub Admin</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?> Admin</p>
                     <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>
@@ -376,6 +406,7 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
             <?php endif; ?>
 
             <form method="POST" action="pengaturan.php" enctype="multipart/form-data" class="space-y-6" onsubmit="return konfirmasiSimpan(event)">
+                <?= csrf_field() ?>
 
                 <!-- KARTU 1: LOGO + FOTO PROFIL -->
                 <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-5">
@@ -564,7 +595,8 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
                                             </span>
                                         <?php else: ?>
                                             <form method="POST" class="inline" onsubmit="return confirm('Yakin ingin menghapus admin ini?')">
-                                                <input type="hidden" name="hapus_admin" value="<?= $adm['id'] ?>">
+                                                <?= csrf_field() ?>
+                                                <input type="hidden" name="hapus_admin" value="<?= (int)$adm['id'] ?>">
                                                 <button type="submit" class="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition" title="Hapus Admin">
                                                     <i data-lucide="trash-2" class="w-4 h-4"></i>
                                                 </button>
@@ -577,12 +609,40 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
                     </table>
                 </div>
 
+                <!-- FORM GANTI PASSWORD SAYA -->
+                <div class="pt-4 border-t border-stone-100">
+                    <h3 class="text-sm font-bold text-stone-800 mb-3 flex items-center gap-2">
+                        <i data-lucide="key-round" class="w-4 h-4 text-[#2E7D32]"></i> Ganti Password Saya
+                    </h3>
+                    <form method="POST" action="pengaturan.php" class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <?= csrf_field() ?>
+                        <div>
+                            <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Password Lama</label>
+                            <input type="password" name="password_lama" required autocomplete="current-password" placeholder="••••••" class="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Password Baru</label>
+                            <input type="password" name="password_baru" required minlength="6" autocomplete="new-password" placeholder="min. 6 karakter" class="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Konfirmasi</label>
+                            <input type="password" name="konfirmasi_baru" required autocomplete="new-password" placeholder="••••••" class="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                        </div>
+                        <div class="sm:col-span-3 flex justify-end">
+                            <button type="submit" name="ganti_password" class="bg-[#2E7D32] hover:bg-emerald-800 text-white px-5 py-2 rounded-xl text-xs font-bold transition inline-flex items-center gap-2">
+                                <i data-lucide="save" class="w-4 h-4"></i> Ubah Password
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
                 <!-- FORM TAMBAH ADMIN BARU -->
                 <div class="pt-4 border-t border-stone-100">
                     <h3 class="text-sm font-bold text-stone-800 mb-3 flex items-center gap-2">
                         <i data-lucide="user-plus" class="w-4 h-4 text-[#2E7D32]"></i> Tambah Admin Baru
                     </h3>
                     <form method="POST" action="pengaturan.php" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <?= csrf_field() ?>
                         <div>
                             <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Nama Lengkap</label>
                             <input type="text" name="nama_admin" required placeholder="Nama Admin Baru" class="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
@@ -632,6 +692,7 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
 
     <!-- FORM HAPUS GAMBAR (hidden, submit via JS) -->
     <form id="formHapusGambar" method="POST" action="pengaturan.php" class="hidden">
+        <?= csrf_field() ?>
         <input type="hidden" name="hapus_gambar" id="hapusTarget" value="">
     </form>
 

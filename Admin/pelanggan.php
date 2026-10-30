@@ -1,19 +1,15 @@
 <?php
-session_start();
-require_once '../Config/database.php';
-
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
-    header("Location: ../Auth/login.php");
-    exit;
-}
-
-$admin_nama = $_SESSION['nama_user'] ?? 'Admin';
+require_once __DIR__ . '/includes/init.php';
 
 // =========================================================
 // HANDLE RESET PASSWORD
 // =========================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reset_password') {
     header('Content-Type: application/json');
+    if (!csrf_ok()) {
+        echo json_encode(['success' => false, 'message' => 'Sesi tidak valid, muat ulang halaman.']);
+        exit;
+    }
     $user_id = (int)($_POST['user_id'] ?? 0);
 
     if ($user_id <= 0) {
@@ -56,7 +52,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reset
 // =========================================================
 // FILTER & SORTING
 // =========================================================
-$search = isset($_GET['search']) ? mysqli_real_escape_string($conn, trim($_GET['search'])) : '';
+$search = isset($_GET['search']) ? trim($_GET['search']) : '';
+$searchSql = mysqli_real_escape_string($conn, str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $search));
 $tab    = $_GET['tab'] ?? 'semua';   // semua | aktif | baru | belum
 $sortBy = $_GET['sort'] ?? 'terbaru'; // terbaru | nama | belanja | transaksi
 
@@ -67,7 +64,7 @@ if (!in_array($sortBy, $allowedSort)) $sortBy = 'terbaru';
 
 $where = "WHERE u.role = 'customer'";
 if ($search !== '') {
-    $where .= " AND (u.nama_lengkap LIKE '%$search%' OR u.email LIKE '%$search%' OR u.username LIKE '%$search%' OR u.no_hp LIKE '%$search%')";
+    $where .= " AND (u.nama_lengkap LIKE '%$searchSql%' OR u.email LIKE '%$searchSql%' OR u.username LIKE '%$searchSql%' OR u.no_hp LIKE '%$searchSql%')";
 }
 
 // Filter tab
@@ -164,7 +161,7 @@ function buildUrl($overrides = []) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlantHub - Data Pelanggan</title>
+    <title><?= e($nama_toko) ?> - Data Pelanggan</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -179,10 +176,8 @@ function buildUrl($overrides = []) {
                     <i data-lucide="menu" class="w-5 h-5"></i>
                 </button>
                 <a href="dashboard.php" class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
-                        <i data-lucide="sprout" class="w-5 h-5"></i>
-                    </div>
-                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
+                    <?= brand_icon_html() ?>
+                    <span class="text-xl font-bold tracking-tight text-stone-800"><?= brand_html() ?></span>
                 </a>
             </div>
 
@@ -193,13 +188,16 @@ function buildUrl($overrides = []) {
                 <input type="hidden" name="sort" value="<?= htmlspecialchars($sortBy) ?>">
             </form>
 
-            <a href="dashboard.php" class="flex items-center gap-3 pl-1">
-                <img src="https://ui-avatars.com/api/?name=<?= urlencode($admin_nama) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
+            <div class="flex items-center gap-1">
+                <a href="dashboard.php" class="flex items-center gap-3 pl-1">
+                <img src="<?= e($avatar_url) ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
                 <div class="hidden sm:block text-left">
                     <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
                     <p class="text-xs text-stone-500">Administrator</p>
                 </div>
             </a>
+                <?= logout_btn_html() ?>
+            </div>
         </div>
     </header>
 
@@ -247,7 +245,7 @@ function buildUrl($overrides = []) {
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">PlantHub Admin</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?> Admin</p>
                     <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>
@@ -394,16 +392,16 @@ function buildUrl($overrides = []) {
                                         </td>
                                         <td class="py-3.5 px-6 text-center">
                                             <div class="flex items-center justify-center gap-1">
-                                                <button onclick='openDetail(<?= json_encode([
+                                                <button onclick="openDetail(<?= js_attr([
                                                     "id" => $p['id'], "nama" => $p["nama_lengkap"], "username" => $p["username"],
                                                     "email" => $p["email"], "no_hp" => $p["no_hp"], "alamat" => $p["alamat"],
                                                     "created_at" => $p["created_at"], "total_order" => $p["total_order"],
                                                     "total_belanja" => $p["total_belanja"],
                                                     "transaksi" => $dataTransaksi[$p["id"]] ?? []
-                                                ]) ?>)' class="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-[#2E7D32] hover:bg-emerald-50 rounded-lg transition">
+                                                ]) ?>)" class="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-[#2E7D32] hover:bg-emerald-50 rounded-lg transition">
                                                     <i data-lucide="eye" class="w-3.5 h-3.5"></i> Detail
                                                 </button>
-                                                <button onclick='openResetPassword(<?= (int)$p["id"] ?>, <?= json_encode($p["nama_lengkap"]) ?>)' class="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-amber-600 hover:bg-amber-50 rounded-lg transition" title="Reset Password">
+                                                <button onclick="openResetPassword(<?= (int)$p['id'] ?>, <?= js_attr($p['nama_lengkap']) ?>)" class="inline-flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-semibold text-amber-600 hover:bg-amber-50 rounded-lg transition" title="Reset Password">
                                                     <i data-lucide="key-round" class="w-3.5 h-3.5"></i>
                                                 </button>
                                             </div>
@@ -566,6 +564,7 @@ function buildUrl($overrides = []) {
             s?.classList.toggle('z-40');
         }
 
+        const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
         function formatRp(v) { return 'Rp ' + Number(v).toLocaleString('id-ID'); }
 
         function badgeStatus(status) {
@@ -591,7 +590,7 @@ function buildUrl($overrides = []) {
             document.getElementById('dTotalOrder').innerText = data.total_order || 0;
             document.getElementById('dTotalBelanja').innerText = formatRp(data.total_belanja || 0);
 
-            const join = data.created_at ? new Date(data.created_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
+            const join = data.created_at ? new Date(String(data.created_at).replace(' ', 'T')).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' }) : '-';
             document.getElementById('dJoin').innerText = join;
 
             const riwayat = data.transaksi || [];
@@ -602,12 +601,12 @@ function buildUrl($overrides = []) {
                 container.innerHTML = riwayat.map(t => `
                     <div class="bg-white border border-stone-200 rounded-xl p-3 flex items-center justify-between gap-3">
                         <div class="min-w-0">
-                            <p class="text-xs font-bold font-mono text-stone-800 truncate">${t.kode_transaksi}</p>
-                            <p class="text-[10px] text-stone-400 mt-0.5">${new Date(t.created_at).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
+                            <p class="text-xs font-bold font-mono text-stone-800 truncate">${esc(t.kode_transaksi)}</p>
+                            <p class="text-[10px] text-stone-400 mt-0.5">${new Date(String(t.created_at).replace(' ', 'T')).toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</p>
                         </div>
                         <div class="text-right shrink-0">
                             <p class="text-xs font-bold text-[#2E7D32]">${formatRp(t.total_harga)}</p>
-                            <span class="inline-block text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border mt-0.5 ${badgeStatus(t.status)}">${t.status}</span>
+                            <span class="inline-block text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border mt-0.5 ${badgeStatus(t.status)}">${esc(t.status)}</span>
                         </div>
                     </div>
                 `).join('');
@@ -668,6 +667,7 @@ function buildUrl($overrides = []) {
 
             const fd = new FormData();
             fd.append('action', 'reset_password');
+            fd.append('csrf', <?= json_encode(csrf_token()) ?>);
             fd.append('user_id', resetUserId);
 
             fetch('pelanggan.php', { method: 'POST', body: fd })

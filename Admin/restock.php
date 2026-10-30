@@ -1,14 +1,5 @@
 <?php
-session_start();
-require_once '../Config/database.php';
-
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
-    header("Location: ../Auth/login.php");
-    exit;
-}
-
-$admin_id   = (int)$_SESSION['user_id'];
-$admin_nama = $_SESSION['nama_user'] ?? 'Admin';
+require_once __DIR__ . '/includes/init.php';
 
 // =========================================================
 // PROSES SIMPAN RESTOCK (AJAX POST)
@@ -30,14 +21,40 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'simpa
         exit;
     }
 
-    $total = 0;
+    // Gabungkan item dengan produk yang sama; validasi qty & harga di server
+    $clean = [];
     foreach ($items as $it) {
-        $total += (int)$it['qty'] * (float)$it['harga'];
+        $pid   = (int)($it['id'] ?? 0);
+        $qty   = (int)($it['qty'] ?? 0);
+        $harga = (float)($it['harga'] ?? 0);
+        if ($pid <= 0 || $qty <= 0 || $harga < 0) continue;
+        if (isset($clean[$pid])) { $clean[$pid]['qty'] += $qty; $clean[$pid]['harga'] = $harga; }
+        else $clean[$pid] = ['id' => $pid, 'qty' => $qty, 'harga' => $harga];
     }
+    if (empty($clean)) {
+        echo json_encode(['success' => false, 'message' => 'Item tidak valid.']);
+        exit;
+    }
+
+    $total = 0;
+    foreach ($clean as $it) $total += $it['qty'] * $it['harga'];
 
     mysqli_begin_transaction($conn);
     try {
-        $kode = 'RST-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -5));
+        // Supplier & produk harus benar-benar ada
+        $cekSup = mysqli_query($conn, "SELECT id FROM supplier WHERE id = $supplier_id LIMIT 1");
+        if (!$cekSup || mysqli_num_rows($cekSup) === 0) throw new Exception('Supplier tidak ditemukan.');
+
+        $ids   = implode(',', array_keys($clean));
+        $cekP  = mysqli_query($conn, "SELECT id FROM produk WHERE id IN ($ids) FOR UPDATE");
+        if (!$cekP || mysqli_num_rows($cekP) !== count($clean)) throw new Exception('Ada produk yang tidak ditemukan.');
+
+        $kode = '';
+        for ($i = 0; $i < 5; $i++) {
+            $kode = 'RST-' . date('Ymd') . '-' . strtoupper(substr(bin2hex(random_bytes(3)), 0, 5));
+            $cek = mysqli_query($conn, "SELECT id FROM transaksi WHERE kode_transaksi = '$kode' LIMIT 1");
+            if (!$cek || mysqli_num_rows($cek) === 0) break;
+        }
         $catatanEsc = mysqli_real_escape_string($conn, $catatan);
 
         $sqlTx = "INSERT INTO transaksi 
@@ -48,10 +65,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'simpa
 
         $transaksi_id = mysqli_insert_id($conn);
 
-        foreach ($items as $it) {
-            $pid   = (int)$it['id'];
-            $qty   = (int)$it['qty'];
-            $harga = (float)$it['harga'];
+        foreach ($clean as $it) {
+            $pid   = $it['id'];
+            $qty   = $it['qty'];
+            $harga = $it['harga'];
             $sub   = $qty * $harga;
 
             $sqlDet = "INSERT INTO transaksi_detail (transaksi_id, produk_id, jumlah, harga_satuan, subtotal) 
@@ -73,7 +90,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'simpa
         ]);
         exit;
 
-    } catch (Exception $e) {
+    } catch (Throwable $e) {
         mysqli_rollback($conn);
         echo json_encode(['success' => false, 'message' => $e->getMessage()]);
         exit;
@@ -159,7 +176,7 @@ $statRestock = 0;
 $statTotal   = 0;
 $qStat = mysqli_query($conn, "
     SELECT COUNT(*) AS total, COALESCE(SUM(total_harga), 0) AS nilai
-    FROM transaksi WHERE jenis_transaksi = 'pembelian'
+    FROM transaksi WHERE jenis_transaksi = 'pembelian' AND status <> 'Batal'
 ");
 if ($qStat) {
     $r = mysqli_fetch_assoc($qStat);
@@ -174,7 +191,7 @@ $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PlantHub - Pembelian Supplier</title>
+    <title><?= e($nama_toko) ?> - Pembelian Supplier</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -211,10 +228,8 @@ $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
                     <i data-lucide="menu" class="w-5 h-5"></i>
                 </button>
                 <a href="dashboard.php" class="flex items-center gap-2.5">
-                    <div class="w-9 h-9 rounded-xl bg-[#2E7D32] flex items-center justify-center text-white shadow-sm">
-                        <i data-lucide="sprout" class="w-5 h-5"></i>
-                    </div>
-                    <span class="text-xl font-bold tracking-tight text-stone-800">Plant<span class="text-[#2E7D32]">Hub</span></span>
+                    <?= brand_icon_html() ?>
+                    <span class="text-xl font-bold tracking-tight text-stone-800"><?= brand_html() ?></span>
                 </a>
             </div>
 
@@ -222,13 +237,16 @@ $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
                 <span class="text-xs text-stone-500 self-center">Pembelian Supplier (Restock)</span>
             </div>
 
-            <a href="dashboard.php" class="flex items-center gap-3 pl-1">
-                <img src="https://ui-avatars.com/api/?name=<?= urlencode($admin_nama) ?>&background=2E7D32&color=fff" class="w-9 h-9 rounded-full ring-2 ring-[#2E7D32]/20">
+            <div class="flex items-center gap-1">
+                <a href="dashboard.php" class="flex items-center gap-3 pl-1">
+                <img src="<?= e($avatar_url) ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
                 <div class="hidden sm:block text-left">
                     <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
                     <p class="text-xs text-stone-500">Administrator</p>
                 </div>
             </a>
+                <?= logout_btn_html() ?>
+            </div>
         </div>
     </header>
 
@@ -276,7 +294,7 @@ $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight">PlantHub Admin</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?> Admin</p>
                     <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>
@@ -625,6 +643,7 @@ $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
             s?.classList.toggle('z-40');
         }
 
+        const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
         function formatRp(v) { return 'Rp ' + Number(v).toLocaleString('id-ID'); }
 
         function autoIsiHarga() {
@@ -693,7 +712,7 @@ $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
                 tr.className = 'hover:bg-stone-50/60';
                 tr.innerHTML = `
                     <td class="py-3 px-3 font-mono text-stone-400">${idx + 1}</td>
-                    <td class="py-3 px-3 font-semibold text-stone-800">${it.nama}</td>
+                    <td class="py-3 px-3 font-semibold text-stone-800">${esc(it.nama)}</td>
                     <td class="py-3 px-3">
                         <div class="flex items-center justify-center gap-1">
                             <button onclick="ubahQty(${idx}, -1)" class="w-6 h-6 rounded bg-stone-100 hover:bg-stone-200 text-stone-700 font-bold text-xs">−</button>
@@ -790,7 +809,7 @@ $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
 
                     document.getElementById('dKode').innerText = tx.kode_transaksi;
                     document.getElementById('invKode').innerText = tx.kode_transaksi;
-                    document.getElementById('invTanggal').innerText = new Date(tx.created_at).toLocaleString('id-ID', {
+                    document.getElementById('invTanggal').innerText = new Date(String(tx.created_at).replace(' ', 'T')).toLocaleString('id-ID', {
                         day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit'
                     });
 
@@ -807,8 +826,8 @@ $invoicePreview = 'RST-' . date('Ymd') . '-XXXXX';
                         tr.className = 'hover:bg-stone-50/60';
                         tr.innerHTML = `
                             <td class="py-2.5 px-3">
-                                <p class="font-semibold text-stone-800">${it.nama_tanaman || 'Produk'}</p>
-                                <p class="text-[10px] text-stone-400">${it.nama_kategori || '-'}</p>
+                                <p class="font-semibold text-stone-800">${esc(it.nama_tanaman || 'Produk')}</p>
+                                <p class="text-[10px] text-stone-400">${esc(it.nama_kategori || '-')}</p>
                             </td>
                             <td class="py-2.5 px-3 text-center font-semibold">${it.jumlah}</td>
                             <td class="py-2.5 px-3 text-right">${formatRp(it.harga_satuan)}</td>
