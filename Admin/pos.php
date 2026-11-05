@@ -185,6 +185,11 @@ function gambarPOS($nama) {
         .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 9999px; }
 
+        /* Sembunyikan spinner bawaan input number */
+        input[type=number].qty-input::-webkit-outer-spin-button,
+        input[type=number].qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type=number].qty-input { -moz-appearance: textfield; appearance: textfield; }
+
         /* PRINT THERMAL 58mm */
         @media print {
             body * { visibility: hidden !important; }
@@ -497,6 +502,7 @@ function gambarPOS($nama) {
             renderCart();
         }
 
+        // Ubah qty via tombol + / -
         function ubahQty(id, delta) {
             const item = cart.find(i => i.id === id);
             if (!item) return;
@@ -510,6 +516,26 @@ function gambarPOS($nama) {
                 return;
             }
             item.qty = newQty;
+            renderCart();
+        }
+
+        // Ubah qty via input angka (edit langsung)
+        function setQtyManual(id, value) {
+            const item = cart.find(i => i.id === id);
+            if (!item) return;
+
+            // Bersihkan input: hanya angka
+            let qty = parseInt(String(value).replace(/[^0-9]/g, ''), 10);
+
+            if (isNaN(qty) || qty <= 0) {
+                qty = 1;
+                alert('Jumlah minimal 1. Qty direset ke 1.');
+            } else if (qty > item.stok) {
+                qty = item.stok;
+                alert('Stok maksimal: ' + item.stok + '. Qty disesuaikan.');
+            }
+
+            item.qty = qty;
             renderCart();
         }
 
@@ -565,9 +591,18 @@ function gambarPOS($nama) {
                             <div class="flex flex-col items-end gap-1 shrink-0 ml-2">
                                 <div class="flex items-center border border-stone-200 rounded-lg overflow-hidden bg-stone-50">
                                     <button onclick="ubahQty(${item.id}, -1)" class="px-2.5 py-1 text-stone-600 hover:bg-stone-200 font-bold text-sm">−</button>
-                                    <span class="w-8 text-center text-sm font-bold text-stone-800">${item.qty}</span>
+                                    <input type="number"
+                                           class="qty-input w-12 text-center text-sm font-bold text-stone-800 bg-white border-x border-stone-200 py-1 focus:outline-none focus:ring-2 focus:ring-[#2E7D32]/30"
+                                           value="${item.qty}"
+                                           min="1"
+                                           max="${item.stok}"
+                                           step="1"
+                                           inputmode="numeric"
+                                           onchange="setQtyManual(${item.id}, this.value)"
+                                           onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}">
                                     <button onclick="ubahQty(${item.id}, 1)" class="px-2.5 py-1 text-stone-600 hover:bg-stone-200 font-bold text-sm">+</button>
                                 </div>
+                                <p class="text-[10px] text-stone-400 font-medium">Maks: ${item.stok}</p>
                                 <p class="text-xs font-bold text-stone-800 mt-1">${formatRp(item.harga * item.qty)}</p>
                                 <button onclick="hapusItem(${item.id})" class="text-[10px] text-rose-500 hover:text-rose-700 font-bold mt-1 bg-rose-50 px-2 py-1 rounded">Hapus</button>
                             </div>

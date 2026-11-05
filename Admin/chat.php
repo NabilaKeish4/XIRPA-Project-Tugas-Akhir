@@ -59,7 +59,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selected_id > 0 && !csrf_ok()) {
         $msg = trim($_POST['message'] ?? '');
         $namaFile = '';
 
-        // Lampiran gambar dari admin (opsional)
         if (!empty($_FILES['lampiran']['name']) && $_FILES['lampiran']['error'] !== UPLOAD_ERR_NO_FILE) {
             $fl = $_FILES['lampiran'];
             $extOk = ['jpg' => 'image/jpeg', 'jpeg' => 'image/jpeg', 'png' => 'image/png', 'webp' => 'image/webp'];
@@ -118,14 +117,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $selected_id > 0 && !csrf_ok()) {
     if ($action === 'hapus') {
         $id = (int)($_POST['id'] ?? 0);
         if ($id > 0) {
-            // Hapus attachment juga kalau ada
             $qOld = mysqli_query($conn, "SELECT attachment FROM chats WHERE id = $id AND user_id = $selected_id AND sender_type = 'admin' LIMIT 1");
             if ($qOld && $r = mysqli_fetch_assoc($qOld)) {
                 if (!empty($r['attachment']) && is_file('../uploads/chats/' . basename($r['attachment']))) {
                     @unlink('../uploads/chats/' . basename($r['attachment']));
                 }
             }
-
             $sql = "UPDATE chats SET is_deleted = 1 WHERE id = $id AND user_id = $selected_id AND sender_type = 'admin'";
             if (mysqli_query($conn, $sql)) {
                 header("Location: chat.php?user_id=$selected_id&status=deleted");
@@ -143,10 +140,8 @@ if (isset($_GET['status'])) {
     if ($_GET['status'] === 'deleted') $pesan_sukses = "Pesan berhasil dihapus.";
 }
 
-// Tandai dibaca
 if ($selected_id > 0) {
     mysqli_query($conn, "UPDATE chats SET is_read = 1 WHERE user_id = $selected_id AND sender_type = 'customer' AND is_read = 0");
-    // muat ulang daftar supaya badge "belum dibaca" langsung hilang
     $customers = $loadCustomers();
     $displayCustomers = ($filterMode === 'unread')
         ? array_values(array_filter($customers, fn($c) => (int)$c['unread_count'] > 0 || (int)$c['id'] === $selected_id))
@@ -165,6 +160,28 @@ if ($selected_id > 0) {
 }
 
 $editId = (int)($_GET['edit'] ?? 0);
+
+// =========================================================
+// HELPER STATUS ONLINE / OFFLINE (BERDASARKAN WAKTU CHAT)
+// =========================================================
+function getCustomerStatus(?string $lastTimeStr): array {
+    if (empty($lastTimeStr)) {
+        return ['online' => false, 'label' => 'Offline', 'detail' => 'Belum ada aktivitas'];
+    }
+
+    $lastTime = strtotime($lastTimeStr);
+    $diff = time() - $lastTime;
+
+    // Online jika beraktivitas (chat) <= 5 menit yang lalu
+    if ($diff <= 300) {
+        return ['online' => true, 'label' => 'Online', 'detail' => 'Sedang di website', 'time' => $lastTime];
+    }
+
+    $isToday = date('Y-m-d', $lastTime) === date('Y-m-d');
+    $jam = $isToday ? 'pukul ' . date('H:i', $lastTime) : date('d M', $lastTime) . ' pukul ' . date('H:i', $lastTime);
+
+    return ['online' => false, 'label' => 'Offline', 'detail' => 'Terakhir online ' . $jam, 'time' => $lastTime];
+}
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -180,23 +197,9 @@ $editId = (int)($_GET['edit'] ?? 0);
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 9999px; }
-
-        @keyframes pulse-dot {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.4; }
-        }
+        @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
-
-        /* Lightbox */
-        .lightbox {
-            position: fixed; inset: 0;
-            background: rgba(0,0,0,0.9);
-            z-index: 100;
-            display: none;
-            align-items: center;
-            justify-content: center;
-            padding: 1rem;
-        }
+        .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 100; display: none; align-items: center; justify-content: center; padding: 1rem; }
         .lightbox.active { display: flex; }
         .lightbox img { max-width: 100%; max-height: 90vh; border-radius: 0.5rem; }
     </style>
@@ -329,12 +332,18 @@ $editId = (int)($_GET['edit'] ?? 0);
                                     $initial = strtoupper(substr($c['nama_lengkap'] ?? 'P', 0, 1));
                                     $unread = (int)$c['unread_count'];
                                     $hasLastAttach = !empty($c['last_attachment']);
+                                    
+                                    // Panggil fungsi status berdasarkan last_time chat
+                                    $statusSidebar = getCustomerStatus($c['last_time'] ?? null);
                                 ?>
                                     <a href="chat.php?user_id=<?= (int)$c['id'] ?><?= $filterMode !== 'semua' ? '&filter=' . $filterMode : '' ?>"
                                        class="block p-4 transition-colors <?= $isActive ? 'bg-[#E8F5E9]' : 'hover:bg-stone-50' ?>">
                                         <div class="flex items-start gap-3">
-                                            <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs shrink-0 <?= $isActive ? 'bg-[#2E7D32] text-white' : 'bg-stone-200 text-stone-600' ?>">
-                                                <?= htmlspecialchars($initial) ?>
+                                            <div class="relative shrink-0">
+                                                <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs <?= $isActive ? 'bg-[#2E7D32] text-white' : 'bg-stone-200 text-stone-600' ?>">
+                                                    <?= htmlspecialchars($initial) ?>
+                                                </div>
+                                                <span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ring-2 ring-white <?= $statusSidebar['online'] ? 'bg-emerald-500' : 'bg-stone-400' ?>"></span>
                                             </div>
                                             <div class="flex-1 min-w-0">
                                                 <div class="flex items-center justify-between gap-2">
@@ -345,6 +354,13 @@ $editId = (int)($_GET['edit'] ?? 0);
                                                         <span class="bg-[#D97706] text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0"><?= $unread ?></span>
                                                     <?php endif; ?>
                                                 </div>
+                                                <p class="text-[10px] font-semibold mt-0.5 <?= $statusSidebar['online'] ? 'text-emerald-600' : 'text-stone-400' ?>">
+                                                    <?php if ($statusSidebar['online']): ?>
+                                                        Online
+                                                    <?php else: ?>
+                                                        Offline · <?= htmlspecialchars($statusSidebar['time'] ? date('H:i', $statusSidebar['time']) : '-') ?>
+                                                    <?php endif; ?>
+                                                </p>
                                                 <p class="text-[11px] text-stone-500 truncate mt-0.5 flex items-center gap-1">
                                                     <?php if ($hasLastAttach): ?>
                                                         <i data-lucide="image" class="w-3 h-3 shrink-0 text-stone-400"></i>
@@ -373,18 +389,32 @@ $editId = (int)($_GET['edit'] ?? 0);
                                 <p class="text-sm font-bold text-stone-700">Pilih percakapan</p>
                                 <p class="text-xs text-stone-500 mt-1">Pilih pelanggan dari daftar di sebelah kiri untuk mulai membalas.</p>
                             </div>
-                        <?php else: ?>
+                        <?php else:
+                            // Panggil fungsi status untuk header chat
+                            $statusHeader = getCustomerStatus($selectedCustomer['last_time'] ?? null);
+                        ?>
 
                             <div class="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between">
                                 <div class="flex items-center gap-3">
-                                    <div class="w-10 h-10 rounded-full bg-[#2E7D32] flex items-center justify-center text-white font-bold text-xs">
-                                        <?= htmlspecialchars(strtoupper(substr($selectedCustomer['nama_lengkap'] ?? 'P', 0, 1))) ?>
+                                    <div class="relative">
+                                        <div class="w-10 h-10 rounded-full bg-[#2E7D32] flex items-center justify-center text-white font-bold text-xs">
+                                            <?= htmlspecialchars(strtoupper(substr($selectedCustomer['nama_lengkap'] ?? 'P', 0, 1))) ?>
+                                        </div>
+                                        <span class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full ring-2 ring-white <?= $statusHeader['online'] ? 'bg-emerald-500 pulse-dot' : 'bg-stone-400' ?>"></span>
                                     </div>
                                     <div>
                                         <p class="text-sm font-bold text-stone-800"><?= htmlspecialchars($selectedCustomer['nama_lengkap'] ?? $selectedCustomer['username']) ?></p>
-                                        <p class="text-[11px] text-emerald-600 font-medium flex items-center gap-1.5">
-                                            <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full inline-block"></span> Pelanggan Aktif
-                                        </p>
+                                        <?php if ($statusHeader['online']): ?>
+                                            <p class="text-[11px] text-emerald-600 font-semibold flex items-center gap-1.5">
+                                                <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full inline-block pulse-dot"></span>
+                                                Online · Sedang di website
+                                            </p>
+                                        <?php else: ?>
+                                            <p class="text-[11px] text-stone-500 font-medium flex items-center gap-1.5">
+                                                <span class="w-1.5 h-1.5 bg-stone-400 rounded-full inline-block"></span>
+                                                <?= htmlspecialchars($statusHeader['detail']) ?>
+                                            </p>
+                                        <?php endif; ?>
                                     </div>
                                 </div>
                                 <div class="hidden sm:block text-right">
@@ -425,7 +455,6 @@ $editId = (int)($_GET['edit'] ?? 0);
                                                         ? 'bg-[#2E7D32] text-white rounded-tr-none shadow-sm' 
                                                         : 'bg-white text-stone-800 rounded-tl-none border border-stone-200/80 shadow-sm' ?>">
 
-                                                        <!-- GAMBAR ATTACHMENT -->
                                                         <?php if ($hasAttachment): ?>
                                                             <div class="mb-2 rounded-lg overflow-hidden">
                                                                 <img src="../uploads/chats/<?= rawurlencode(basename($msg['attachment'])) ?>" 
@@ -498,17 +527,12 @@ $editId = (int)($_GET['edit'] ?? 0);
         </main>
     </div>
 
-    <!-- LIGHTBOX -->
     <div id="lightbox" class="lightbox" onclick="closeLightbox()">
         <img id="lightboxImg" src="" alt="Preview">
     </div>
 
     <script>
         lucide.createIcons();
-
-        // ========================================================
-        // AUTO-REFRESH 10 DETIK
-        // ========================================================
         const REFRESH_INTERVAL = 10000;
         let autoRefreshTimer = null;
         let isAutoRefreshOn = true;
@@ -566,14 +590,12 @@ $editId = (int)($_GET['edit'] ?? 0);
                     const parser = new DOMParser();
                     const doc = parser.parseFromString(html, 'text/html');
 
-                    // Update daftar pelanggan
                     const newCustomerList = doc.querySelector('aside .divide-y');
                     const oldCustomerList = document.querySelector('aside .divide-y');
                     if (newCustomerList && oldCustomerList) {
                         oldCustomerList.innerHTML = newCustomerList.innerHTML;
                     }
 
-                    // Update chat messages (lewati jika admin sedang mengedit pesan)
                     const newChatBox = doc.getElementById('chat-box');
                     const sedangEdit = !!chatBox.querySelector('.edit-form');
                     if (newChatBox && chatBox && !sedangEdit) {
@@ -605,9 +627,6 @@ $editId = (int)($_GET['edit'] ?? 0);
             }
         });
 
-        // ========================================================
-        // LIGHTBOX
-        // ========================================================
         function openLightbox(src) {
             document.getElementById('lightboxImg').src = src;
             document.getElementById('lightbox').classList.add('active');
@@ -621,9 +640,6 @@ $editId = (int)($_GET['edit'] ?? 0);
             if (e.key === 'Escape') closeLightbox();
         });
 
-        // ========================================================
-        // SIDEBAR MOBILE
-        // ========================================================
         function toggleMobileSidebar() {
             const s = document.getElementById('sidebar');
             s?.classList.toggle('hidden');

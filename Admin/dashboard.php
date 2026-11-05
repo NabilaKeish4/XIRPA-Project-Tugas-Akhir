@@ -174,11 +174,6 @@ function badgeStatus($status) {
                 </a>
             </div>
 
-            <form action="stok.php" method="GET" class="hidden md:flex flex-1 max-w-md relative">
-                <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
-                <input type="text" name="search" placeholder="Cari tanaman, pot, media tanam..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] placeholder:text-stone-400">
-            </form>
-
             <div class="flex items-center gap-3 relative">
                 <!-- Notifikasi -->
                 <div class="relative">

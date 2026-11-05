@@ -114,6 +114,13 @@ if ($qStat) {
     $statTotal = (int)$s['total'];
     $statAktif = (int)$s['aktif'];
 }
+
+// Helper URL untuk hapus search
+function supplierResetSearchUrl(): string {
+    $params = $_GET;
+    unset($params['search']);
+    return 'supplier.php' . ($params ? '?' . http_build_query($params) : '');
+}
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -142,7 +149,12 @@ if ($qStat) {
 
             <form method="GET" action="supplier.php" class="hidden md:flex flex-1 max-w-md relative">
                 <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
-                <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari supplier, kontak, alamat..." class="w-full pl-10 pr-4 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] placeholder:text-stone-400">
+                <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari supplier, kontak, alamat..." class="w-full pl-10 pr-10 py-2 text-sm bg-stone-100/70 border border-transparent rounded-full focus:outline-none focus:bg-white focus:border-[#2E7D32] placeholder:text-stone-400">
+                <?php if ($search !== ''): ?>
+                    <a href="<?= e(supplierResetSearchUrl()) ?>" class="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-rose-600 p-0.5 rounded-full hover:bg-stone-200 transition" title="Hapus pencarian">
+                        <i data-lucide="x" class="w-4 h-4"></i>
+                    </a>
+                <?php endif; ?>
             </form>
 
             <div class="flex items-center gap-1">
@@ -254,7 +266,12 @@ if ($qStat) {
             <form method="GET" action="supplier.php" class="md:hidden bg-white p-3 rounded-2xl border border-stone-200/80 shadow-sm">
                 <div class="relative">
                     <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
-                    <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari supplier, kontak, alamat..." class="w-full pl-10 pr-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                    <input type="text" name="search" value="<?= htmlspecialchars($search) ?>" placeholder="Cari supplier, kontak, alamat..." class="w-full pl-10 pr-10 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                    <?php if ($search !== ''): ?>
+                        <a href="<?= e(supplierResetSearchUrl()) ?>" class="absolute right-3 top-1/2 -translate-y-1/2 text-stone-400 hover:text-rose-600 p-0.5 rounded-full hover:bg-stone-200 transition" title="Hapus pencarian">
+                            <i data-lucide="x" class="w-4 h-4"></i>
+                        </a>
+                    <?php endif; ?>
                 </div>
             </form>
 
@@ -283,7 +300,7 @@ if ($qStat) {
                                         </p>
                                         <p class="text-xs text-stone-500 mt-1">
                                             <?php if ($search): ?>
-                                                Coba kata kunci lain atau <a href="supplier.php" class="text-[#2E7D32] font-bold hover:underline">reset pencarian</a>.
+                                                Coba kata kunci lain atau <a href="<?= e(supplierResetSearchUrl()) ?>" class="text-[#2E7D32] font-bold hover:underline">reset pencarian</a>.
                                             <?php else: ?>
                                                 Klik "Tambah Supplier" untuk mulai.
                                             <?php endif; ?>
@@ -330,7 +347,7 @@ if ($qStat) {
                 <?php if ($search && !empty($supplierList)): ?>
                     <div class="p-4 bg-stone-50/60 border-t border-stone-100 flex items-center justify-between text-xs text-stone-500">
                         <span>Hasil pencarian: <b class="text-stone-700"><?= count($supplierList) ?></b> supplier</span>
-                        <a href="supplier.php" class="text-[#2E7D32] font-semibold hover:underline">Reset pencarian</a>
+                        <a href="<?= e(supplierResetSearchUrl()) ?>" class="text-[#2E7D32] font-semibold hover:underline">Reset pencarian</a>
                     </div>
                 <?php endif; ?>
             </div>
