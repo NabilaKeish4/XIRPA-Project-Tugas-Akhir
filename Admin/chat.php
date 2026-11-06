@@ -1,29 +1,30 @@
 <?php
 require_once __DIR__ . '/includes/init.php';
+wajibAkses('chat');
 
 // =========================================================
 // AMBIL DAFTAR PELANGGAN YANG PERNAH CHAT
 // =========================================================
 $loadCustomers = function () use ($conn) {
-$customers = [];
-$qCust = mysqli_query($conn, "
-    SELECT 
-        u.id, 
-        u.nama_lengkap, 
-        u.email, 
-        u.username,
-        (SELECT message FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0 ORDER BY c.created_at DESC LIMIT 1) AS last_message,
-        (SELECT attachment FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0 ORDER BY c.created_at DESC LIMIT 1) AS last_attachment,
-        (SELECT created_at FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0 ORDER BY c.created_at DESC LIMIT 1) AS last_time,
-        (SELECT COUNT(*) FROM chats c WHERE c.user_id = u.id AND c.sender_type = 'customer' AND c.is_read = 0 AND c.is_deleted = 0) AS unread_count,
-        (SELECT COUNT(*) FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0) AS total_messages
-    FROM users u
-    WHERE u.role = 'customer'
-      AND EXISTS (SELECT 1 FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0)
-    ORDER BY last_time DESC
-");
-if ($qCust) while ($r = mysqli_fetch_assoc($qCust)) $customers[] = $r;
-return $customers;
+    $customers = [];
+    $qCust = mysqli_query($conn, "
+        SELECT 
+            u.id, 
+            u.nama_lengkap, 
+            u.email, 
+            u.username,
+            (SELECT message FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0 ORDER BY c.created_at DESC LIMIT 1) AS last_message,
+            (SELECT attachment FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0 ORDER BY c.created_at DESC LIMIT 1) AS last_attachment,
+            (SELECT created_at FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0 ORDER BY c.created_at DESC LIMIT 1) AS last_time,
+            (SELECT COUNT(*) FROM chats c WHERE c.user_id = u.id AND c.sender_type = 'customer' AND c.is_read = 0 AND c.is_deleted = 0) AS unread_count,
+            (SELECT COUNT(*) FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0) AS total_messages
+        FROM users u
+        WHERE u.role = 'customer'
+          AND EXISTS (SELECT 1 FROM chats c WHERE c.user_id = u.id AND c.is_deleted = 0)
+        ORDER BY last_time DESC
+    ");
+    if ($qCust) while ($r = mysqli_fetch_assoc($qCust)) $customers[] = $r;
+    return $customers;
 };
 $customers = $loadCustomers();
 
@@ -161,9 +162,6 @@ if ($selected_id > 0) {
 
 $editId = (int)($_GET['edit'] ?? 0);
 
-// =========================================================
-// HELPER STATUS ONLINE / OFFLINE (BERDASARKAN WAKTU CHAT)
-// =========================================================
 function getCustomerStatus(?string $lastTimeStr): array {
     if (empty($lastTimeStr)) {
         return ['online' => false, 'label' => 'Offline', 'detail' => 'Belum ada aktivitas'];
@@ -172,7 +170,6 @@ function getCustomerStatus(?string $lastTimeStr): array {
     $lastTime = strtotime($lastTimeStr);
     $diff = time() - $lastTime;
 
-    // Online jika beraktivitas (chat) <= 5 menit yang lalu
     if ($diff <= 300) {
         return ['online' => true, 'label' => 'Online', 'detail' => 'Sedang di website', 'time' => $lastTime];
     }
@@ -194,9 +191,13 @@ function getCustomerStatus(?string $lastTimeStr): array {
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; }
+        
+        /* CSS SCROLLBAR YANG BENAR */
         .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 9999px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); border-radius: 9999px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.3); }
+        
         @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         .pulse-dot { animation: pulse-dot 2s ease-in-out infinite; }
         .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,0.9); z-index: 100; display: none; align-items: center; justify-content: center; padding: 1rem; }
@@ -204,9 +205,9 @@ function getCustomerStatus(?string $lastTimeStr): array {
         .lightbox img { max-width: 100%; max-height: 90vh; border-radius: 0.5rem; }
     </style>
 </head>
-<body class="antialiased min-h-screen flex flex-col">
+<body class="antialiased h-screen flex flex-col overflow-hidden">
 
-    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
+    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm shrink-0">
         <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
             <div class="flex items-center gap-3">
                 <button onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
@@ -231,7 +232,7 @@ function getCustomerStatus(?string $lastTimeStr): array {
                 <img src="<?= e($avatar_url) ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
                 <div class="hidden sm:block text-left">
                     <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
-                    <p class="text-xs text-stone-500">Administrator</p>
+                    <p class="text-xs text-stone-500"><?= labelRole($_SESSION['role'] ?? 'Staf') ?></p>
                 </div>
             </a>
                 <?= logout_btn_html() ?>
@@ -239,58 +240,29 @@ function getCustomerStatus(?string $lastTimeStr): array {
         </div>
     </header>
 
-    <div class="flex flex-1">
-        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
+    <!-- KUNCI 1: flex-1 overflow-hidden -->
+    <div class="flex flex-1 overflow-hidden">
+        
+        <!-- KUNCI 2: h-full overflow-y-auto -->
+        <aside id="sidebar" class="w-64 h-full bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4 overflow-y-auto custom-scrollbar">
             <div class="space-y-6">
-                <nav class="space-y-1">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
-                    <?php
-                    $menu = [
-                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
-                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
-                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
-                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
-                        ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],
-                        ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],
-                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
-                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => true],
-                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
-                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
-                    ];
-                    foreach ($menu as $m):
-                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
-                    ?>
-                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
-                            <div class="flex items-center gap-3">
-                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                                <span><?= $m['label'] ?></span>
-                            </div>
-                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
-                        </a>
-                    <?php endforeach; ?>
-                    <hr class="border-stone-100 my-3">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">PENGATURAN</p>
-                    <a href="pengaturan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-bold rounded-xl text-stone-700 hover:bg-stone-100">
-                        <i data-lucide="settings" class="w-5 h-5 text-stone-500"></i> Pengaturan Toko
-                    </a>
-                    <a href="bantuan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-bold rounded-xl text-stone-700 hover:bg-stone-100">
-                        <i data-lucide="help-circle" class="w-5 h-5 text-stone-500"></i> Bantuan
-                    </a>
-                </nav>
+                <!-- SIDEBAR DINAMIS -->
+                <?php require __DIR__ . '/sidebar.php'; ?>
             </div>
             <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3 mt-auto">
                 <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?> Admin</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?></p>
                     <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>
         </aside>
 
-        <main class="flex-1 p-4 sm:p-6 lg:p-8 w-full">
-            <div class="flex flex-col h-[calc(100vh-8rem)] space-y-4">
+        <!-- KUNCI 3: h-full overflow-y-auto -->
+        <main class="flex-1 h-full overflow-y-auto custom-scrollbar p-4 sm:p-6 lg:p-8 space-y-6">
+            <div class="flex flex-col h-full space-y-4">
 
                 <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
                     <div>
@@ -313,7 +285,7 @@ function getCustomerStatus(?string $lastTimeStr): array {
                 <div class="flex-1 grid grid-cols-1 lg:grid-cols-3 gap-4 overflow-hidden">
 
                     <aside class="lg:col-span-1 bg-white rounded-2xl border border-stone-200/80 shadow-sm flex flex-col overflow-hidden">
-                        <div class="px-5 py-4 border-b border-stone-100">
+                        <div class="px-5 py-4 border-b border-stone-100 shrink-0">
                             <h2 class="text-sm font-bold text-stone-800">Daftar Percakapan</h2>
                             <p class="text-[11px] text-stone-500 mt-0.5"><?= count($displayCustomers) ?> pelanggan</p>
                         </div>
@@ -333,7 +305,6 @@ function getCustomerStatus(?string $lastTimeStr): array {
                                     $unread = (int)$c['unread_count'];
                                     $hasLastAttach = !empty($c['last_attachment']);
                                     
-                                    // Panggil fungsi status berdasarkan last_time chat
                                     $statusSidebar = getCustomerStatus($c['last_time'] ?? null);
                                 ?>
                                     <a href="chat.php?user_id=<?= (int)$c['id'] ?><?= $filterMode !== 'semua' ? '&filter=' . $filterMode : '' ?>"
@@ -390,11 +361,10 @@ function getCustomerStatus(?string $lastTimeStr): array {
                                 <p class="text-xs text-stone-500 mt-1">Pilih pelanggan dari daftar di sebelah kiri untuk mulai membalas.</p>
                             </div>
                         <?php else:
-                            // Panggil fungsi status untuk header chat
                             $statusHeader = getCustomerStatus($selectedCustomer['last_time'] ?? null);
                         ?>
 
-                            <div class="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between">
+                            <div class="px-5 py-3.5 border-b border-stone-100 flex items-center justify-between shrink-0">
                                 <div class="flex items-center gap-3">
                                     <div class="relative">
                                         <div class="w-10 h-10 rounded-full bg-[#2E7D32] flex items-center justify-center text-white font-bold text-xs">

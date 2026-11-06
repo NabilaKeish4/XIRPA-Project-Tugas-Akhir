@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/includes/init.php';
+wajibAkses('laporan');
 
 // =========================================================
 // FILTER TANGGAL
@@ -136,7 +137,7 @@ function badgeStatusLaporan($status) {
 }
 
 // =========================================================
-// LOGIKA EXPORT PDF (Jika tombol Export PDF diklik)
+// LOGIKA EXPORT PDF
 // =========================================================
 if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
     $fpdfPath = __DIR__ . '/../fpdf/fpdf.php';
@@ -146,17 +147,14 @@ if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
     }
     require_once $fpdfPath;
 
-    // Info toko ($nama_toko, $nama_cabang, $alamat_toko) sudah dimuat dari includes/init.php
     $alamat_pdf = $alamat_toko ?: '-';
     $logo_path  = $logo_url !== '' ? __DIR__ . '/../uploads/' . $logo_toko : '';
     $logo_ada   = ($logo_path !== '' && is_file($logo_path) && preg_match('/\.(png|jpe?g)$/i', $logo_path)
                    && (preg_match('/\.jpe?g$/i', $logo_path) || extension_loaded('gd')));
 
-    // Teks FPDF harus ISO-8859-1 (agar karakter non-ASCII tidak rusak)
-    ob_start(); // tahan semua output liar (warning/notice) agar file PDF tidak rusak
+    ob_start();
     $T = function ($v) { return mb_convert_encoding((string)$v, 'ISO-8859-1', 'UTF-8'); };
 
-    // Untuk PDF: SEMUA transaksi periode (bukan hanya 50 teratas)
     $trxList = [];
     $qAll = mysqli_query($conn, "
         SELECT t.*, COALESCE(u.nama_lengkap, s.nama_supplier, t.nama_penerima, 'Walk-in') AS pelanggan
@@ -168,15 +166,11 @@ if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
     ");
     if ($qAll) while ($r = mysqli_fetch_assoc($qAll)) $trxList[] = $r;
 
-    // Mulai FPDF
-    $pdf = new FPDF('P', 'mm', 'A4'); // Pakai Portrait biar lebih rapi
+    $pdf = new FPDF('P', 'mm', 'A4');
     $pdf->SetAutoPageBreak(true, 20);
     $pdf->SetMargins(15, 15, 15);
     $pdf->AddPage();
 
-    // -----------------------------------------
-    // HEADER PDF
-    // -----------------------------------------
     if ($logo_ada) {
         $pdf->Image($logo_path, 15, 15, 18, 18);
         $text_x = 37;
@@ -186,7 +180,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
 
     $pdf->SetXY($text_x, 15);
     $pdf->SetFont('Arial', 'B', 16);
-    $pdf->SetTextColor(46, 125, 50); // Hijau
+    $pdf->SetTextColor(46, 125, 50);
     $pdf->Cell(100, 7, $T(strtoupper($nama_toko)), 0, 2, 'L');
     
     $pdf->SetFont('Arial', '', 9);
@@ -194,7 +188,6 @@ if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
     $pdf->SetX($text_x);
     $pdf->Cell(100, 4, $T($nama_cabang . ' | ' . $alamat_pdf), 0, 2, 'L');
 
-    // Judul Kanan
     $pdf->SetXY(-85, 15);
     $pdf->SetFont('Arial', 'B', 14);
     $pdf->SetTextColor(0, 0, 0);
@@ -207,23 +200,18 @@ if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
     $pdf->SetX(-85);
     $pdf->Cell(70, 4, 'Dicetak: ' . date('d/m/Y H:i') . ' WIB', 0, 2, 'R');
 
-    // Garis Hijau
     $pdf->SetY(35);
     $pdf->SetDrawColor(46, 125, 50);
     $pdf->SetLineWidth(1);
     $pdf->Line(15, $pdf->GetY(), 195, $pdf->GetY());
     $pdf->Ln(8);
 
-    // -----------------------------------------
-    // RINGKASAN KEUANGAN
-    // -----------------------------------------
     $pdf->SetFont('Arial', 'B', 11);
     $pdf->SetTextColor(0, 0, 0);
     $pdf->Cell(0, 6, 'RINGKASAN KEUANGAN', 0, 1, 'L');
     $pdf->Ln(2);
 
-    // Kotak Omset
-    $pdf->SetFillColor(240, 248, 240); // Hijau sangat muda
+    $pdf->SetFillColor(240, 248, 240);
     $pdf->SetDrawColor(200, 220, 200);
     $pdf->SetFont('Arial', 'B', 10);
     $pdf->Cell(55, 8, 'TOTAL PENDAPATAN', 1, 0, 'C', true);
@@ -231,11 +219,11 @@ if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
     $pdf->Cell(55, 8, 'ESTIMASI LABA KOTOR', 1, 1, 'C', true);
     
     $pdf->SetFont('Arial', 'B', 12);
-    $pdf->SetTextColor(46, 125, 50); // Teks hijau
+    $pdf->SetTextColor(46, 125, 50);
     $pdf->Cell(55, 10, 'Rp ' . number_format($omset, 0, ',', '.'), 1, 0, 'C', true);
-    $pdf->SetTextColor(217, 119, 6); // Teks oranye (pengeluaran)
+    $pdf->SetTextColor(217, 119, 6);
     $pdf->Cell(55, 10, 'Rp ' . number_format($pengeluaran, 0, ',', '.'), 1, 0, 'C', true);
-    $pdf->SetTextColor(46, 125, 50); // Teks hijau
+    $pdf->SetTextColor(46, 125, 50);
     $pdf->Cell(55, 10, 'Rp ' . number_format($estimasiLaba, 0, ',', '.'), 1, 1, 'C', true);
     
     $pdf->SetTextColor(100, 100, 100);
@@ -246,9 +234,6 @@ if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
 
     $pdf->Ln(10);
 
-    // -----------------------------------------
-    // TOP PRODUK
-    // -----------------------------------------
     if (!empty($topProduk)) {
         $pdf->SetFont('Arial', 'B', 11);
         $pdf->SetTextColor(0, 0, 0);
@@ -279,9 +264,6 @@ if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
         $pdf->Ln(10);
     }
 
-    // -----------------------------------------
-    // TABEL TRANSAKSI
-    // -----------------------------------------
     $pdf->SetFont('Arial', 'B', 11);
     $pdf->SetTextColor(0, 0, 0);
     $pdf->Cell(0, 6, 'RINCIAN TRANSAKSI', 0, 1, 'L');
@@ -336,7 +318,6 @@ if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
             $pdf->Cell(22, 6, number_format($t['total_harga'], 0, ',', '.'), 1, 1, 'R', $fill);
         }
         
-        // Footer total (transaksi Batal tidak dihitung; penjualan & pembelian dipisah)
         $pdf->SetFont('Arial', 'B', 9);
         $pdf->SetFillColor(240, 248, 240);
         $pdf->SetTextColor(46, 125, 50);
@@ -347,7 +328,6 @@ if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
         $pdf->Cell(22, 8, number_format($totBeli, 0, ',', '.'), 1, 1, 'R', true);
     }
 
-    // Tanda Tangan (Opsional, biar keren)
     $pdf->Ln(15);
     $pdf->SetFont('Arial', '', 9);
     $pdf->SetTextColor(0, 0, 0);
@@ -376,11 +356,17 @@ if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; }
+        
+        /* CSS SCROLLBAR YANG BENAR */
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); border-radius: 9999px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.3); }
     </style>
 </head>
-<body class="antialiased min-h-screen flex flex-col">
+<body class="antialiased h-screen flex flex-col overflow-hidden">
 
-    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
+    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm shrink-0">
         <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
             <div class="flex items-center gap-3">
                 <button onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
@@ -401,7 +387,7 @@ if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
                 <img src="<?= e($avatar_url) ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
                 <div class="hidden sm:block text-left">
                     <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
-                    <p class="text-xs text-stone-500">Administrator</p>
+                    <p class="text-xs text-stone-500"><?= labelRole($_SESSION['role'] ?? 'Staf') ?></p>
                 </div>
             </a>
                 <?= logout_btn_html() ?>
@@ -409,57 +395,27 @@ if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
         </div>
     </header>
 
-    <div class="flex flex-1">
-        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
+    <!-- KUNCI 1: flex-1 overflow-hidden -->
+    <div class="flex flex-1 overflow-hidden">
+        
+        <!-- KUNCI 2: h-full overflow-y-auto -->
+        <aside id="sidebar" class="w-64 h-full bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4 overflow-y-auto custom-scrollbar">
             <div class="space-y-6">
-                <nav class="space-y-1">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
-                    <?php
-                   $menu = [
-                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
-                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
-                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
-                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
-                        ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],
-                        ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],
-                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
-                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
-                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
-                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => true],
-                    ];
-                    foreach ($menu as $m):
-                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
-                    ?>
-                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
-                            <div class="flex items-center gap-3">
-                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                                <span><?= $m['label'] ?></span>
-                            </div>
-                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
-                        </a>
-                    <?php endforeach; ?>
-                    <hr class="border-stone-100 my-3">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">PENGATURAN</p>
-                    <a href="pengaturan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-bold rounded-xl text-stone-700 hover:bg-stone-100">
-                        <i data-lucide="settings" class="w-5 h-5 text-stone-500"></i> Pengaturan Toko
-                    </a>
-                    <a href="bantuan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-bold rounded-xl text-stone-700 hover:bg-stone-100">
-                        <i data-lucide="help-circle" class="w-5 h-5 text-stone-500"></i> Bantuan
-                    </a>
-                </nav>
+                <?php require __DIR__ . '/sidebar.php'; ?>
             </div>
             <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3 mt-auto">
                 <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?> Admin</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?></p>
                     <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>
         </aside>
 
-        <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
+        <!-- KUNCI 3: h-full overflow-y-auto -->
+        <main class="flex-1 h-full overflow-y-auto custom-scrollbar p-4 sm:p-6 lg:p-8 space-y-6">
 
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
@@ -467,7 +423,6 @@ if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
                     <p class="text-sm text-stone-500 mt-0.5">Analisis arus kas, omzet, dan performa penjualan.</p>
                 </div>
                 <div class="flex items-center gap-2">
-                    <!-- TOMBOL EXPORT PDF (TANPA TOMBOL CETAK) -->
                     <a href="laporan.php?export=pdf&<?= http_build_query($_GET) ?>" target="_blank" class="inline-flex items-center gap-2 bg-[#2E7D32] text-white px-4 py-2.5 rounded-xl text-sm font-semibold hover:bg-emerald-800 shadow-sm transition">
                         <i data-lucide="download" class="w-4 h-4"></i> Export PDF
                     </a>
@@ -744,4 +699,4 @@ if (isset($_GET['export']) && $_GET['export'] === 'pdf') {
         });
     </script>
 </body>
-</html> 
+</html>

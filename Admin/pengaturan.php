@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/includes/init.php';
+wajibAkses('pengaturan');
 
 // =========================================================
 // PASTIKAN TABEL pengaturan ADA
@@ -17,7 +18,6 @@ mysqli_query($conn, "CREATE TABLE IF NOT EXISTS pengaturan (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 )");
 
-// Pastikan ada 1 baris id=1
 $qCek = mysqli_query($conn, "SELECT * FROM pengaturan WHERE id = 1");
 if (!$qCek || mysqli_num_rows($qCek) === 0) {
     mysqli_query($conn, "INSERT INTO pengaturan (id, nama_toko, nama_cabang, no_telepon, email_toko, alamat_toko, catatan_nota) 
@@ -62,13 +62,13 @@ function uploadFile($file, $prefix, $oldFile = '', &$errors = []) {
 }
 
 // =========================================================
-// CSRF: semua aksi POST di halaman ini wajib membawa token sesi
+// CSRF
 // =========================================================
 $pesan_sukses = '';
 $pesan_error  = '';
 $upload_errors = [];
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && !csrf_ok()) {
-    $_POST = [];   // abaikan semua aksi
+    $_POST = [];
     $pesan_error = "Sesi formulir tidak valid, muat ulang halaman lalu coba lagi.";
 }
 
@@ -96,99 +96,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['hapus_gambar'])) {
         header("Location: pengaturan.php?status=profil_reset");
         exit;
     }
-}
-
-// =========================================================
-// HANDLE TAMBAH ADMIN BARU
-// =========================================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['tambah_admin'])) {
-    $nama_admin = trim($_POST['nama_admin'] ?? '');
-    $username   = trim($_POST['username'] ?? '');
-    $email      = trim($_POST['email_admin'] ?? '');
-    $password   = $_POST['password_admin'] ?? '';
-    $konfirmasi = $_POST['konfirmasi_password'] ?? '';
-
-    if ($nama_admin === '' || $username === '' || $email === '' || $password === '') {
-        $pesan_error = "Semua field admin wajib diisi.";
-    } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        $pesan_error = "Format email admin tidak valid.";
-    } elseif (strlen($password) < 6) {
-        $pesan_error = "Password minimal 6 karakter.";
-    } elseif ($password !== $konfirmasi) {
-        $pesan_error = "Konfirmasi password tidak cocok.";
-    } else {
-        $usernameEsc = mysqli_real_escape_string($conn, $username);
-        $emailEsc    = mysqli_real_escape_string($conn, $email);
-        
-        $cek = mysqli_query($conn, "SELECT id FROM users WHERE username = '$usernameEsc' OR email = '$emailEsc'");
-        if (mysqli_num_rows($cek) > 0) {
-            $pesan_error = "Username atau Email sudah digunakan.";
-        } else {
-            $hash = password_hash($password, PASSWORD_BCRYPT);
-            $namaEsc = mysqli_real_escape_string($conn, $nama_admin);
-            $sql = "INSERT INTO users (nama_lengkap, username, email, password, role) 
-                    VALUES ('$namaEsc', '$usernameEsc', '$emailEsc', '$hash', 'admin')";
-            if (mysqli_query($conn, $sql)) {
-                header("Location: pengaturan.php?status=admin_added");
-                exit;
-            } else {
-                $pesan_error = "Gagal menambah admin: " . mysqli_error($conn);
-            }
-        }
-    }
-}
-
-// =========================================================
-// HANDLE GANTI PASSWORD SAYA SENDIRI
-// =========================================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['ganti_password'])) {
-    $lama  = $_POST['password_lama'] ?? '';
-    $baru  = $_POST['password_baru'] ?? '';
-    $konf  = $_POST['konfirmasi_baru'] ?? '';
-
-    $qMe = mysqli_query($conn, "SELECT password FROM users WHERE id = $admin_id AND role = 'admin' LIMIT 1");
-    $me  = $qMe ? mysqli_fetch_assoc($qMe) : null;
-
-    if (!$me || !password_verify($lama, $me['password'])) {
-        $pesan_error = "Password lama salah.";
-    } elseif (strlen($baru) < 6) {
-        $pesan_error = "Password baru minimal 6 karakter.";
-    } elseif ($baru !== $konf) {
-        $pesan_error = "Konfirmasi password baru tidak cocok.";
-    } else {
-        $hashBaru = mysqli_real_escape_string($conn, password_hash($baru, PASSWORD_DEFAULT));
-        mysqli_query($conn, "UPDATE users SET password = '$hashBaru' WHERE id = $admin_id");
-        header("Location: pengaturan.php?status=pw_changed");
-        exit;
-    }
-}
-
-// =========================================================
-// HANDLE HAPUS ADMIN
-// =========================================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['hapus_admin'])) {
-    $hapus_id = (int)$_POST['hapus_admin'];
-    if ($hapus_id === $admin_id) {
-        header("Location: pengaturan.php?status=error_self_delete");
-        exit;
-    }
-    // Cek minimal 1 admin
-    $qCekAdmin = mysqli_query($conn, "SELECT COUNT(*) AS total FROM users WHERE role = 'admin'");
-    $jmlAdmin = (int)mysqli_fetch_assoc($qCekAdmin)['total'];
-    
-    if ($jmlAdmin <= 1) {
-        header("Location: pengaturan.php?status=error_min_admin");
-        exit;
-    }
-
-    try {
-        mysqli_query($conn, "DELETE FROM users WHERE id = $hapus_id AND role = 'admin'");
-    } catch (Throwable $e) {
-        header("Location: pengaturan.php?status=error_min_admin");
-        exit;
-    }
-    header("Location: pengaturan.php?status=admin_deleted");
-    exit;
 }
 
 // =========================================================
@@ -249,16 +156,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['simpan_pengaturan']))
     }
 }
 
-// Status message dari redirect
+// Status message
 if (isset($_GET['status'])) {
-    if ($_GET['status'] === 'saved')             $pesan_sukses = "Pengaturan toko berhasil diperbarui.";
-    if ($_GET['status'] === 'logo_reset')        $pesan_sukses = "Logo toko dikembalikan ke default.";
-    if ($_GET['status'] === 'profil_reset')      $pesan_sukses = "Foto profil dikembalikan ke default.";
-    if ($_GET['status'] === 'admin_added')       $pesan_sukses = "Admin baru berhasil ditambahkan.";
-    if ($_GET['status'] === 'pw_changed')        $pesan_sukses = "Password Anda berhasil diubah.";
-    if ($_GET['status'] === 'admin_deleted')     $pesan_sukses = "Akun admin berhasil dihapus.";
-    if ($_GET['status'] === 'error_self_delete') $pesan_error  = "Anda tidak bisa menghapus akun Anda sendiri.";
-    if ($_GET['status'] === 'error_min_admin')   $pesan_error  = "Minimal harus ada 1 admin di sistem.";
+    if ($_GET['status'] === 'saved')        $pesan_sukses = "Pengaturan toko berhasil diperbarui.";
+    if ($_GET['status'] === 'logo_reset')   $pesan_sukses = "Logo toko dikembalikan ke default.";
+    if ($_GET['status'] === 'profil_reset') $pesan_sukses = "Foto profil dikembalikan ke default.";
 }
 
 // =========================================================
@@ -277,10 +179,10 @@ $avatar_src = (!empty($data_toko['foto_profil']) && $data_toko['foto_profil'] !=
 $is_logo_custom   = !empty($data_toko['logo_toko']) && $data_toko['logo_toko'] !== 'default_logo.png';
 $is_avatar_custom = !empty($data_toko['foto_profil']) && $data_toko['foto_profil'] !== 'default_avatar.jpg';
 
-// Ambil list admin
-$listAdmin = [];
-$qAdmin = mysqli_query($conn, "SELECT id, nama_lengkap, username, email, created_at FROM users WHERE role = 'admin' ORDER BY id ASC");
-if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
+$countRole = [];
+$qCnt = mysqli_query($conn, "SELECT role, COUNT(*) AS jml FROM users GROUP BY role");
+if ($qCnt) while ($r = mysqli_fetch_assoc($qCnt)) $countRole[$r['role']] = (int)$r['jml'];
+$totalAkun = array_sum($countRole);
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -291,7 +193,10 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style> body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; } </style>
+    <style> 
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; }
+        /* CSS overflow dihapus agar bisa scroll */
+    </style>
 </head>
 <body class="antialiased min-h-screen flex flex-col">
 
@@ -316,7 +221,7 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
                 <img src="<?= $avatar_src ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
                 <div class="hidden sm:block text-left">
                     <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
-                    <p class="text-xs text-stone-500">Administrator</p>
+                    <p class="text-xs text-stone-500"><?= labelRole($_SESSION['role'] ?? 'Staf') ?></p>
                 </div>
             </a>
                 <?= logout_btn_html() ?>
@@ -324,71 +229,27 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
         </div>
     </header>
 
-    <div class="flex flex-1">
-        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
+    <div class="flex flex-1 overflow-visible"> 
+        <aside id="sidebar" class="w-64 h-[calc(100vh-0px)] sticky top-0 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4 overflow-y-auto overscroll-contain custom-scrollbar">
             <div class="space-y-6">
-                <nav class="space-y-1">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
-                    <?php
-                    $menu = [
-                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
-                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
-                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
-                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
-                        ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],
-                        ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],
-                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
-                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
-                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
-                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
-                    ];
-                    foreach ($menu as $m):
-                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
-                    ?>
-                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
-                            <div class="flex items-center gap-3">
-                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                                <span><?= $m['label'] ?></span>
-                            </div>
-                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
-                        </a>
-                    <?php endforeach; ?>
-                    <hr class="border-stone-100 my-3">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">PENGATURAN</p>
-                    <?php
-                    $menu2 = [
-                        ['url' => 'pengaturan.php', 'icon' => 'settings',    'label' => 'Pengaturan Toko', 'active' => true],
-                        ['url' => 'bantuan.php',    'icon' => 'help-circle', 'label' => 'Bantuan',         'active' => false],
-                    ];
-                    foreach ($menu2 as $m):
-                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
-                    ?>
-                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
-                            <div class="flex items-center gap-3">
-                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                                <span><?= $m['label'] ?></span>
-                            </div>
-                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
-                        </a>
-                    <?php endforeach; ?>
-                </nav>
+                <!-- SIDEBAR DINAMIS -->
+                <?php require __DIR__ . '/sidebar.php'; ?>
             </div>
             <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3 mt-auto">
                 <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?> Admin</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?></p>
                     <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>
         </aside>
 
-        <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-4xl mx-auto w-full space-y-6">
-
+        <main class="flex-1 p-4 sm:p-6 lg:p-8 space-y-6">
             <div>
                 <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Pengaturan Toko</h1>
-                <p class="text-sm text-stone-500 mt-0.5">Atur identitas toko, kontak, preferensi struk, dan akses admin.</p>
+                <p class="text-sm text-stone-500 mt-0.5">Atur identitas toko, kontak, preferensi struk, dan akses pengguna.</p>
             </div>
 
             <!-- ALERT -->
@@ -405,6 +266,32 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
                 </div>
             <?php endif; ?>
 
+            <!-- ============ TOMBOL KELOLA AKSES ============ -->
+            <a href="kelola_akses.php" class="block bg-gradient-to-br from-[#2E7D32] to-emerald-700 rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all group relative overflow-hidden">
+                <div class="absolute -right-8 -top-8 w-40 h-40 bg-white/10 rounded-full"></div>
+                <div class="absolute -right-16 -bottom-16 w-56 h-56 bg-white/5 rounded-full"></div>
+                <div class="relative flex items-center gap-5">
+                    <div class="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-sm flex items-center justify-center text-white shrink-0">
+                        <i data-lucide="shield-check" class="w-7 h-7"></i>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <h2 class="text-lg font-bold text-white">Kelola Akses</h2>
+                        <p class="text-xs text-emerald-100 mt-0.5">Kelola akun admin, kasir, gudang, penjualan, manajer. Tambah akun, ganti password, atur hak akses.</p>
+                        <div class="flex flex-wrap gap-1.5 mt-3">
+                            <?php foreach (daftarRole() as $r): ?>
+                                <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white/15 backdrop-blur-sm text-white text-[10px] font-bold">
+                                    <?= labelRole($r) ?> <span class="bg-white/25 px-1.5 rounded"><?= $countRole[$r] ?? 0 ?></span>
+                                </span>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                    <div class="hidden sm:flex flex-col items-center gap-1 text-white shrink-0">
+                        <i data-lucide="arrow-right" class="w-6 h-6 group-hover:translate-x-1 transition"></i>
+                        <span class="text-[10px] font-bold"><?= $totalAkun ?> Akun</span>
+                    </div>
+                </div>
+            </a>
+
             <form method="POST" action="pengaturan.php" enctype="multipart/form-data" class="space-y-6" onsubmit="return konfirmasiSimpan(event)">
                 <?= csrf_field() ?>
 
@@ -416,7 +303,6 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
                     </div>
 
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <!-- Logo Toko -->
                         <div>
                             <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Logo Toko</label>
                             <div class="flex items-start gap-4">
@@ -445,7 +331,6 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
                             </div>
                         </div>
 
-                        <!-- Foto Profil -->
                         <div>
                             <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Foto Profil Admin</label>
                             <div class="flex items-start gap-4">
@@ -526,7 +411,6 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
                             </div>
                         </div>
 
-                        <!-- Preview Struk -->
                         <div>
                             <label class="block text-xs font-bold text-stone-600 uppercase mb-2">Preview Struk</label>
                             <div class="bg-stone-50 border border-stone-200 rounded-xl p-4">
@@ -552,141 +436,13 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
                 </div>
 
                 <!-- TOMBOL AKSI PENGATURAN -->
-                <div class="flex items-center justify-end gap-3">
+                <div class="flex items-center justify-end gap-3 pb-8">
                     <a href="pengaturan.php" class="px-5 py-2.5 text-sm font-semibold text-stone-600 hover:bg-stone-100 rounded-xl">Batal</a>
                     <button type="submit" name="simpan_pengaturan" class="inline-flex items-center gap-2 bg-[#2E7D32] text-white px-6 py-2.5 rounded-xl text-sm font-bold hover:bg-emerald-800 shadow-sm transition">
                         <i data-lucide="save" class="w-4 h-4"></i> Simpan Pengaturan
                     </button>
                 </div>
             </form>
-
-            <!-- KARTU 4: KELOLA ADMIN -->
-            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-6 space-y-5">
-                <div class="border-b border-stone-100 pb-3 flex items-center justify-between">
-                    <div>
-                        <h2 class="text-base font-bold text-stone-800">Kelola Akses Admin</h2>
-                        <p class="text-xs text-stone-500 mt-0.5">Daftar admin yang memiliki akses ke sistem. (Register publik hanya untuk pelanggan).</p>
-                    </div>
-                </div>
-
-                <!-- TABEL ADMIN -->
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left border-collapse text-xs">
-                        <thead>
-                            <tr class="bg-stone-50/60 text-[10px] font-bold text-stone-500 uppercase tracking-wider border-b border-stone-100">
-                                <th class="py-3 px-4">Nama Lengkap</th>
-                                <th class="py-3 px-4">Username</th>
-                                <th class="py-3 px-4">Email</th>
-                                <th class="py-3 px-4">Dibuat</th>
-                                <th class="py-3 px-4 text-center">Aksi</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-stone-100">
-                            <?php foreach ($listAdmin as $adm): ?>
-                                <tr class="hover:bg-stone-50/60">
-                                    <td class="py-3 px-4 font-semibold text-stone-800"><?= htmlspecialchars($adm['nama_lengkap']) ?></td>
-                                    <td class="py-3 px-4 text-stone-600 font-mono"><?= htmlspecialchars($adm['username']) ?></td>
-                                    <td class="py-3 px-4 text-stone-600"><?= htmlspecialchars($adm['email']) ?></td>
-                                    <td class="py-3 px-4 text-stone-500"><?= date('d M Y', strtotime($adm['created_at'])) ?></td>
-                                    <td class="py-3 px-4 text-center">
-                                        <?php if ((int)$adm['id'] === $admin_id): ?>
-                                            <span class="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold bg-emerald-50 text-emerald-700 rounded-md border border-emerald-200">
-                                                <i data-lucide="shield-check" class="w-3 h-3"></i> Anda
-                                            </span>
-                                        <?php else: ?>
-                                            <form method="POST" class="inline" onsubmit="return confirm('Yakin ingin menghapus admin ini?')">
-                                                <?= csrf_field() ?>
-                                                <input type="hidden" name="hapus_admin" value="<?= (int)$adm['id'] ?>">
-                                                <button type="submit" class="p-1.5 text-rose-500 hover:bg-rose-50 rounded-lg transition" title="Hapus Admin">
-                                                    <i data-lucide="trash-2" class="w-4 h-4"></i>
-                                                </button>
-                                            </form>
-                                        <?php endif; ?>
-                                    </td>
-                                </tr>
-                            <?php endforeach; ?>
-                        </tbody>
-                    </table>
-                </div>
-
-                <!-- FORM GANTI PASSWORD SAYA -->
-                <div class="pt-4 border-t border-stone-100">
-                    <h3 class="text-sm font-bold text-stone-800 mb-3 flex items-center gap-2">
-                        <i data-lucide="key-round" class="w-4 h-4 text-[#2E7D32]"></i> Ganti Password Saya
-                    </h3>
-                    <form method="POST" action="pengaturan.php" class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                        <?= csrf_field() ?>
-                        <div>
-                            <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Password Lama</label>
-                            <input type="password" name="password_lama" required autocomplete="current-password" placeholder="••••••" class="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                        </div>
-                        <div>
-                            <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Password Baru</label>
-                            <input type="password" name="password_baru" required minlength="6" autocomplete="new-password" placeholder="min. 6 karakter" class="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                        </div>
-                        <div>
-                            <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Konfirmasi</label>
-                            <input type="password" name="konfirmasi_baru" required autocomplete="new-password" placeholder="••••••" class="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                        </div>
-                        <div class="sm:col-span-3 flex justify-end">
-                            <button type="submit" name="ganti_password" class="bg-[#2E7D32] hover:bg-emerald-800 text-white px-5 py-2 rounded-xl text-xs font-bold transition inline-flex items-center gap-2">
-                                <i data-lucide="save" class="w-4 h-4"></i> Ubah Password
-                            </button>
-                        </div>
-                    </form>
-                </div>
-
-                <!-- FORM TAMBAH ADMIN BARU -->
-                <div class="pt-4 border-t border-stone-100">
-                    <h3 class="text-sm font-bold text-stone-800 mb-3 flex items-center gap-2">
-                        <i data-lucide="user-plus" class="w-4 h-4 text-[#2E7D32]"></i> Tambah Admin Baru
-                    </h3>
-                    <form method="POST" action="pengaturan.php" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <?= csrf_field() ?>
-                        <div>
-                            <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Nama Lengkap</label>
-                            <input type="text" name="nama_admin" required placeholder="Nama Admin Baru" class="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                        </div>
-                        <div>
-                            <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Username</label>
-                            <input type="text" name="username" required placeholder="username" class="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                        </div>
-                        <div>
-                            <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Email</label>
-                            <input type="email" name="email_admin" required placeholder="admin@email.com" class="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                        </div>
-                        <div class="grid grid-cols-2 gap-2">
-                            <div>
-                                <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Password</label>
-                                <input type="password" name="password_admin" required placeholder="••••••" class="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                            </div>
-                            <div>
-                                <label class="block text-[10px] font-bold text-stone-500 uppercase mb-1">Konfirmasi</label>
-                                <input type="password" name="konfirmasi_password" required placeholder="••••••" class="w-full px-3 py-2 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
-                            </div>
-                        </div>
-                        <div class="sm:col-span-2 flex justify-end mt-2">
-                            <button type="submit" name="tambah_admin" class="bg-[#2E7D32] hover:bg-emerald-800 text-white px-5 py-2 rounded-xl text-xs font-bold transition inline-flex items-center gap-2">
-                                <i data-lucide="plus" class="w-4 h-4"></i> Simpan Admin
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-
-            <!-- ZONA INFO -->
-            <div class="bg-white rounded-2xl border border-stone-200/80 shadow-sm p-5">
-                <div class="flex items-start gap-3">
-                    <div class="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 flex items-center justify-center shrink-0">
-                        <i data-lucide="info" class="w-5 h-5"></i>
-                    </div>
-                    <div class="text-xs text-stone-500 leading-relaxed">
-                        <p class="font-bold text-stone-700 mb-1">Info</p>
-                        <p>Semua perubahan akan langsung diterapkan ke seluruh halaman admin, katalog pelanggan, dan struk pembelian. Upload gambar maksimal 2MB.</p>
-                    </div>
-                </div>
-            </div>
-
         </main>
     </div>
 
@@ -712,7 +468,6 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
             const file = event.target.files[0];
             if (!file) return;
 
-            // Validasi ukuran
             if (file.size > 2 * 1024 * 1024) {
                 alert('Ukuran file melebihi 2MB.');
                 event.target.value = '';
@@ -760,7 +515,6 @@ if ($qAdmin) while ($r = mysqli_fetch_assoc($qAdmin)) $listAdmin[] = $r;
             document.getElementById('pvCatatan').innerText = catatan || 'Terima kasih!';
         }
 
-        // Auto-hide alert sukses
         const alertSukses = document.getElementById('alertSukses');
         if (alertSukses) {
             setTimeout(() => {

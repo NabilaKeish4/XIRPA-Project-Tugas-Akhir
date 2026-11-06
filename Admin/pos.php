@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/includes/init.php';
+wajibAkses('pos');
 
 // =========================================================
 // PROSES CHECKOUT POS (AJAX POST)
@@ -26,8 +27,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
     $metodeValid = ['tunai', 'qris', 'debit', 'transfer', 'ewallet', 'cod'];
     if (!in_array($metode, $metodeValid, true)) $metode = 'tunai';
 
-    // Gabungkan item dengan produk_id yang sama & ambil qty saja dari browser.
-    // Harga, nama, dan stok SELALU diambil dari database (bukan dipercaya dari browser).
     $qtyById = [];
     foreach ($cartIn as $item) {
         $pid = (int)($item['id'] ?? 0);
@@ -45,7 +44,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         $cart     = [];
         $subtotal = 0;
 
-        // Kunci baris produk agar stok tidak bisa dijual ganda oleh kasir lain secara bersamaan
         $ids = implode(',', array_keys($qtyById));
         $qP  = mysqli_query($conn, "SELECT p.id, p.nama_tanaman, p.harga_jual, p.stok, k.nama_kategori
                                     FROM produk p LEFT JOIN kategori k ON p.kategori_id = k.id
@@ -73,10 +71,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'check
         if ($metode === 'tunai') {
             if ($bayar < $total) throw new Exception('Jumlah bayar kurang dari total.');
         } else {
-            $bayar = $total; // non-tunai: dianggap dibayar pas
+            $bayar = $total;
         }
 
-        // Kode unik (ulang bila bentrok)
         $kode = '';
         for ($i = 0; $i < 5; $i++) {
             $kode = 'POS-' . date('Ymd') . '-' . strtoupper(substr(bin2hex(random_bytes(3)), 0, 5));
@@ -169,6 +166,48 @@ function gambarPOS($nama) {
     if (file_exists("../assets/img/" . $nama)) return "../assets/img/" . $nama;
     return "https://images.unsplash.com/photo-1614594975525-e45190c55d0b?auto=format&fit=crop&q=80&w=400";
 }
+
+function buatKodeProduk($nama, $usedCodes = []) {
+    $nama = trim($nama);
+    if ($nama === '') return 'XXX';
+
+    $clean = preg_replace('/[^A-Za-z\s]/', '', $nama);
+    $clean = preg_replace('/\s+/', ' ', $clean);
+    $kata  = array_values(array_filter(explode(' ', $clean)));
+
+    if (count($kata) === 0) return 'XXX';
+
+    if (count($kata) === 1) {
+        $base = strtoupper(substr($kata[0], 0, 3));
+    } else {
+        $base = '';
+        foreach ($kata as $k) {
+            if (mb_strlen($base) >= 4) break;
+            $base .= mb_strtoupper(mb_substr($k, 0, 1));
+        }
+        if (mb_strlen($base) < 2) {
+            $base = mb_strtoupper(mb_substr($kata[0], 0, 3));
+        }
+    }
+
+    $base = mb_substr($base, 0, 4);
+    if (mb_strlen($base) < 2) $base = str_pad($base, 2, 'X');
+
+    $kode = $base;
+    $n = 2;
+    while (in_array($kode, $usedCodes, true)) {
+        $kode = $base . $n;
+        $n++;
+    }
+    return $kode;
+}
+
+$usedCodes = [];
+foreach ($produkList as $idx => $p) {
+    $kode = buatKodeProduk($p['nama_tanaman'], $usedCodes);
+    $usedCodes[] = $kode;
+    $produkList[$idx]['kode_produk'] = $kode;
+}
 ?>
 <!DOCTYPE html>
 <html lang="id">
@@ -185,12 +224,15 @@ function gambarPOS($nama) {
         .custom-scrollbar::-webkit-scrollbar-track { background: rgba(0,0,0,0.02); }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 9999px; }
 
-        /* Sembunyikan spinner bawaan input number */
         input[type=number].qty-input::-webkit-outer-spin-button,
         input[type=number].qty-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
         input[type=number].qty-input { -moz-appearance: textfield; appearance: textfield; }
 
-        /* PRINT THERMAL 58mm */
+        .kode-badge {
+            font-family: 'Courier New', monospace;
+            letter-spacing: 0.5px;
+        }
+
         @media print {
             body * { visibility: hidden !important; }
             #areaCetak, #areaCetak * { visibility: visible !important; }
@@ -255,7 +297,7 @@ function gambarPOS($nama) {
             <div class="p-4 bg-white border-b border-stone-200/80 space-y-3 shrink-0">
                 <div class="relative">
                     <i data-lucide="search" class="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-stone-400"></i>
-                    <input type="text" id="searchInput" oninput="renderProduk()" placeholder="Cari produk..." class="w-full pl-10 pr-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
+                    <input type="text" id="searchInput" oninput="renderProduk()" placeholder="Cari produk / kode (mis: AGP)..." class="w-full pl-10 pr-4 py-2.5 text-sm bg-stone-50 border border-stone-200 rounded-xl focus:outline-none focus:bg-white focus:border-[#2E7D32]">
                 </div>
 
                 <div class="flex items-center gap-2 overflow-x-auto pb-1">
@@ -276,6 +318,7 @@ function gambarPOS($nama) {
                         <div class="produk-card bg-white rounded-xl border border-stone-200/80 shadow-sm hover:shadow-md transition overflow-hidden cursor-pointer group"
                              data-id="<?= (int)$p['id'] ?>"
                              data-nama="<?= htmlspecialchars($p['nama_tanaman']) ?>"
+                             data-kode="<?= htmlspecialchars($p['kode_produk']) ?>"
                              data-harga="<?= (float)$p['harga_jual'] ?>"
                              data-stok="<?= (int)$p['stok'] ?>"
                              data-kategori="<?= (int)$p['kategori_id'] ?>"
@@ -286,6 +329,9 @@ function gambarPOS($nama) {
                                 <img src="<?= htmlspecialchars($imgSrc) ?>" class="w-full h-full object-cover group-hover:scale-105 transition" alt="<?= htmlspecialchars($p['nama_tanaman']) ?>">
                                 <span class="absolute top-2 left-2 bg-white/90 backdrop-blur-sm text-stone-700 text-[10px] font-bold px-2 py-0.5 rounded-md border border-stone-200">
                                     Stok: <?= (int)$p['stok'] ?>
+                                </span>
+                                <span class="kode-badge absolute top-2 right-2 bg-[#2E7D32]/95 text-white text-[9px] font-bold px-1.5 py-0.5 rounded">
+                                    <?= htmlspecialchars($p['kode_produk']) ?>
                                 </span>
                             </div>
                             <div class="p-2.5">
@@ -309,7 +355,7 @@ function gambarPOS($nama) {
             </div>
         </section>
 
-        <!-- KANAN: KERANJANG & PEMBAYARAN (Bisa di-scroll utuh) -->
+        <!-- KANAN: KERANJANG & PEMBAYARAN -->
         <section id="panelKeranjang" class="hidden lg:flex w-[40%] flex-col bg-white border-l border-stone-200 shadow-xl z-10">
             
             <div class="flex-1 overflow-y-auto custom-scrollbar flex flex-col">
@@ -325,7 +371,7 @@ function gambarPOS($nama) {
                         </div>
                         <span class="text-[10px] font-bold text-[#2E7D32] bg-emerald-50 border border-emerald-100 px-2 py-1 rounded-md">POS</span>
                     </div>
-                    <input type="text" id="inNamaPelanggan" value="Pelanggan Walk-in" placeholder="Nama pelanggan..." class="w-full px-3.5 py-2 text-sm bg-white border border-stone-200 rounded-xl focus:outline-none focus:border-[#2E7D32] font-semibold text-stone-800">
+                    <input type="text" id="inNamaPelanggan" placeholder="Nama pelanggan (opsional)..." class="w-full px-3.5 py-2 text-sm bg-white border border-stone-200 rounded-xl focus:outline-none focus:border-[#2E7D32] font-semibold text-stone-800">
                     <p class="text-[10px] text-stone-400 mt-1.5">Kosongkan untuk pelanggan walk-in.</p>
                 </div>
 
@@ -382,15 +428,18 @@ function gambarPOS($nama) {
                         <label class="block text-[10px] font-bold text-stone-400 uppercase tracking-wider">Jumlah Bayar</label>
                         <div class="relative">
                             <span class="absolute left-3 top-1/2 -translate-y-1/2 text-xs font-bold text-stone-400">Rp</span>
-                            <input type="number" id="inputBayar" min="0" step="1000" placeholder="0" oninput="hitungKembalian()" class="w-full pl-9 pr-3 py-2 text-base font-bold bg-white border border-stone-200 rounded-xl focus:outline-none focus:border-[#2E7D32]">
+                            <input type="number" id="inputBayar" min="0" step="1000" placeholder="0" oninput="hitungKembalian()" class="w-full pl-9 pr-10 py-2 text-base font-bold bg-white border border-stone-200 rounded-xl focus:outline-none focus:border-[#2E7D32]">
+                            <button type="button" onclick="clearBayar()" class="absolute right-2 top-1/2 -translate-y-1/2 p-1 rounded-md text-stone-400 hover:text-rose-600 hover:bg-rose-50 transition" title="Hapus jumlah bayar">
+                                <i data-lucide="x" class="w-3.5 h-3.5"></i>
+                            </button>
                         </div>
                         <div class="flex items-center justify-between bg-white px-3 py-2 rounded-xl border border-stone-200">
                             <span class="text-xs font-semibold text-stone-500">Kembalian</span>
                             <span id="kembalianText" class="text-sm font-bold text-emerald-700">Rp 0</span>
                         </div>
                         <div class="flex gap-1 flex-wrap">
-                            <button type="button" onclick="setBayar(50000)" class="px-2.5 py-1 text-[10px] font-semibold bg-white border border-stone-200 rounded-md hover:bg-stone-100">50rb</button>
-                            <button type="button" onclick="setBayar(100000)" class="px-2.5 py-1 text-[10px] font-semibold bg-white border border-stone-200 rounded-md hover:bg-stone-100">100rb</button>
+                            <button type="button" onclick="tambahBayar(50000)" class="px-2.5 py-1 text-[10px] font-semibold bg-white border border-stone-200 rounded-md hover:bg-stone-100">+50rb</button>
+                            <button type="button" onclick="tambahBayar(100000)" class="px-2.5 py-1 text-[10px] font-semibold bg-white border border-stone-200 rounded-md hover:bg-stone-100">+100rb</button>
                             <button type="button" onclick="setBayar('pas')" class="px-2.5 py-1 text-[10px] font-semibold bg-white border border-stone-200 rounded-md hover:bg-stone-100">Uang Pas</button>
                         </div>
                     </div>
@@ -454,11 +503,12 @@ function gambarPOS($nama) {
         }
 
         function renderProduk() {
-            const search = document.getElementById('searchInput').value.toLowerCase();
+            const search = document.getElementById('searchInput').value.toLowerCase().trim();
             document.querySelectorAll('.produk-card').forEach(card => {
                 const nama = card.dataset.nama.toLowerCase();
+                const kode = (card.dataset.kode || '').toLowerCase();
                 const kategori = parseInt(card.dataset.kategori);
-                const matchSearch = nama.includes(search);
+                const matchSearch = search === '' || nama.includes(search) || kode.includes(search);
                 const matchKategori = currentKategori === 0 || kategori === currentKategori;
                 card.style.display = (matchSearch && matchKategori) ? '' : 'none';
             });
@@ -476,6 +526,7 @@ function gambarPOS($nama) {
         function tambahKeKeranjang(el) {
             const id    = parseInt(el.dataset.id);
             const nama  = el.dataset.nama;
+            const kode  = el.dataset.kode;
             const harga = parseFloat(el.dataset.harga);
             const stok  = parseInt(el.dataset.stok);
             const kategori = el.dataset.namaKategori; 
@@ -492,6 +543,7 @@ function gambarPOS($nama) {
                 cart.push({ 
                     id: id, 
                     nama: nama, 
+                    kode: kode,
                     harga: harga, 
                     qty: 1, 
                     stok: stok, 
@@ -502,7 +554,6 @@ function gambarPOS($nama) {
             renderCart();
         }
 
-        // Ubah qty via tombol + / -
         function ubahQty(id, delta) {
             const item = cart.find(i => i.id === id);
             if (!item) return;
@@ -519,12 +570,10 @@ function gambarPOS($nama) {
             renderCart();
         }
 
-        // Ubah qty via input angka (edit langsung)
         function setQtyManual(id, value) {
             const item = cart.find(i => i.id === id);
             if (!item) return;
 
-            // Bersihkan input: hanya angka
             let qty = parseInt(String(value).replace(/[^0-9]/g, ''), 10);
 
             if (isNaN(qty) || qty <= 0) {
@@ -560,7 +609,7 @@ function gambarPOS($nama) {
                 renderCart();
                 document.getElementById('inputBayar').value = '';
                 document.getElementById('kembalianText').innerText = 'Rp 0';
-                document.getElementById('inNamaPelanggan').value = 'Pelanggan Walk-in';
+                document.getElementById('inNamaPelanggan').value = '';
             }
         }
 
@@ -584,7 +633,10 @@ function gambarPOS($nama) {
                         <div class="py-3 flex items-center gap-3">
                             <img src="${esc(item.gambar)}" class="w-12 h-12 rounded-lg object-cover bg-stone-100 shrink-0 border border-stone-200">
                             <div class="flex-1 min-w-0">
-                                <p class="text-sm font-bold text-stone-800 leading-tight">${esc(item.nama)}</p>
+                                <div class="flex items-center gap-1.5 flex-wrap">
+                                    <span class="kode-badge inline-block px-1.5 py-0.5 rounded text-[9px] font-bold bg-[#2E7D32]/10 text-[#2E7D32]">${esc(item.kode || '-')}</span>
+                                    <p class="text-sm font-bold text-stone-800 leading-tight truncate">${esc(item.nama)}</p>
+                                </div>
                                 <span class="inline-block mt-1 px-1.5 py-0.5 rounded text-[9px] font-bold uppercase bg-stone-100 text-stone-500">${esc(item.kategori || 'Tanaman')}</span>
                                 <p class="text-[12px] text-[#2E7D32] font-bold mt-1">${formatRp(item.harga)}</p>
                             </div>
@@ -656,6 +708,20 @@ function gambarPOS($nama) {
             hitungKembalian();
         }
 
+        function tambahBayar(nominal) {
+            const input = document.getElementById('inputBayar');
+            const current = parseFloat(input.value) || 0;
+            input.value = current + nominal;
+            hitungKembalian();
+        }
+
+        function clearBayar() {
+            const input = document.getElementById('inputBayar');
+            input.value = '';
+            hitungKembalian();
+            input.focus();
+        }
+
         function prosesCheckout() {
             if (cart.length === 0) { alert('Keranjang masih kosong.'); return; }
 
@@ -689,6 +755,7 @@ function gambarPOS($nama) {
                         perbaruiStokKartu(data.items);
                         cart = [];
                         document.getElementById('inputBayar').value = '';
+                        document.getElementById('inNamaPelanggan').value = '';
                         renderCart();
                     } else {
                         alert('Gagal: ' + data.message);
@@ -764,7 +831,6 @@ function gambarPOS($nama) {
             modal.classList.add('flex');
         }
 
-        // Sinkronkan stok di katalog setelah transaksi (tanpa reload halaman)
         function perbaruiStokKartu(items) {
             (items || []).forEach(i => {
                 const card = document.querySelector('.produk-card[data-id="' + i.id + '"]');
@@ -776,7 +842,6 @@ function gambarPOS($nama) {
             });
         }
 
-        // Keranjang di layar kecil (HP/tablet): tampil sebagai panel penuh
         function toggleKeranjangMobile() {
             const sec = document.getElementById('panelKeranjang');
             const open = sec.classList.contains('fixed');

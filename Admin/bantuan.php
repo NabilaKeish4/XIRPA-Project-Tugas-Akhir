@@ -1,8 +1,9 @@
 <?php
 require_once __DIR__ . '/includes/init.php';
+wajibAkses('bantuan');
 
 // =========================================================
-// FEEDBACK FAQ (disimpan di database, per admin)
+// FEEDBACK FAQ
 // =========================================================
 mysqli_query($conn, "CREATE TABLE IF NOT EXISTS bantuan_feedback (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -39,11 +40,9 @@ $totUp = $totDown = 0;
 $qT = mysqli_query($conn, "SELECT vote, COUNT(*) AS n FROM bantuan_feedback GROUP BY vote");
 if ($qT) while ($r = mysqli_fetch_assoc($qT)) { if ($r['vote'] === 'up') $totUp = (int)$r['n']; else $totDown = (int)$r['n']; }
 
-// Data toko ($nama_toko, $no_telepon, $email_toko) sudah dimuat oleh includes/init.php
 $no_telepon = $no_telepon ?: '081234567890';
 $email_toko = $email_toko ?: 'admin@planthub.com';
 
-// FAQ Data (dengan ID unik untuk feedback)
 $faqs = [
     [
         'id' => 'faq_tambah_produk',
@@ -111,11 +110,19 @@ $faqs = [
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style> body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; } </style>
+    <style> 
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; }
+        
+        /* CSS SCROLLBAR YANG BENAR */
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); border-radius: 9999px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.3); }
+    </style>
 </head>
-<body class="antialiased min-h-screen flex flex-col">
+<body class="antialiased h-screen flex flex-col overflow-hidden">
 
-    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
+    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm shrink-0">
         <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
             <div class="flex items-center gap-3">
                 <button onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
@@ -137,7 +144,7 @@ $faqs = [
                 <img src="<?= e($avatar_url) ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
                 <div class="hidden sm:block text-left">
                     <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
-                    <p class="text-xs text-stone-500">Administrator</p>
+                    <p class="text-xs text-stone-500"><?= labelRole($_SESSION['role'] ?? 'Staf') ?></p>
                 </div>
             </a>
                 <?= logout_btn_html() ?>
@@ -145,67 +152,35 @@ $faqs = [
         </div>
     </header>
 
-    <div class="flex flex-1">
-        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
+    <!-- KUNCI 1: flex-1 overflow-hidden -->
+    <div class="flex flex-1 overflow-hidden">
+        
+        <!-- KUNCI 2: h-full overflow-y-auto -->
+        <aside id="sidebar" class="w-64 h-full bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4 overflow-y-auto custom-scrollbar">
             <div class="space-y-6">
-                <nav class="space-y-1">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
-                    <?php
-                    $menu = [
-                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
-                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
-                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
-                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
-                        ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],
-                        ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],
-                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => false],
-                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
-                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
-                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
-                    ];
-                    foreach ($menu as $m):
-                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
-                    ?>
-                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
-                            <div class="flex items-center gap-3">
-                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                                <span><?= $m['label'] ?></span>
-                            </div>
-                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
-                        </a>
-                    <?php endforeach; ?>
-                    <hr class="border-stone-100 my-3">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">PENGATURAN</p>
-                    <a href="pengaturan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-bold rounded-xl text-stone-700 hover:bg-stone-100">
-                        <i data-lucide="settings" class="w-5 h-5 text-stone-500"></i> Pengaturan Toko
-                    </a>
-                    <a href="bantuan.php" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl text-[#1E7D32] bg-[#E8F5E9]">
-                        <div class="flex items-center gap-3">
-                            <i data-lucide="help-circle" class="w-5 h-5 text-[#1E7D32]"></i> Bantuan
-                        </div>
-                        <span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span>
-                    </a>
-                </nav>
+                <!-- SIDEBAR DINAMIS -->
+                <?php require __DIR__ . '/sidebar.php'; ?>
             </div>
             <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3 mt-auto">
                 <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= htmlspecialchars($nama_toko) ?> Admin</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?></p>
                     <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>
         </aside>
 
-        <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-4xl mx-auto w-full space-y-6">
+        <!-- KUNCI 3: h-full overflow-y-auto -->
+        <main class="flex-1 h-full overflow-y-auto custom-scrollbar p-4 sm:p-6 lg:p-8 space-y-6">
 
             <div>
                 <h1 class="text-2xl font-bold text-stone-800 tracking-tight">Pusat Bantuan</h1>
                 <p class="text-sm text-stone-500 mt-0.5">Panduan penggunaan sistem <?= htmlspecialchars($nama_toko) ?> dan solusi masalah umum.</p>
             </div>
 
-            <!-- PERLU PERHATIAN (data langsung dari sistem) -->
+            <!-- PERLU PERHATIAN -->
             <?php
             $q1 = mysqli_query($conn, "SELECT COUNT(*) AS n FROM transaksi WHERE jenis_transaksi='penjualan' AND status IN ('Diproses','Dikirim')");
             $pesananAktif = $q1 ? (int)mysqli_fetch_assoc($q1)['n'] : 0;
@@ -329,11 +304,6 @@ $faqs = [
     <script>
         lucide.createIcons();
 
-        // ========================================================
-        // STORAGE: feedback disimpan di localStorage
-        // Format: { "faq_tambah_produk": "up", "faq_pos": "down", ... }
-        // ========================================================
-        // Data feedback berasal dari database (bukan localStorage lagi)
         let votes = <?= json_encode((object)$votesMine) ?>;
         let totalUp = <?= (int)$totUp ?>;
         let totalDown = <?= (int)$totDown ?>;
@@ -350,21 +320,15 @@ $faqs = [
             fetch('bantuan.php', { method: 'POST', body: fd }).catch(() => {});
         }
 
-        // ========================================================
-        // KIRIM FEEDBACK
-        // ========================================================
         function kirimFeedback(faqId, type, btn) {
             const section = btn.closest('.feedback-section');
             const upBtn = section.querySelector('.fb-btn-up');
             const downBtn = section.querySelector('.fb-btn-down');
             const result = section.querySelector('.fb-result');
 
-            // Cek apakah sudah pernah vote
             const data = getFeedbackData();
             if (data[faqId]) {
-                // Update vote (ganti)
                 if (data[faqId] === type) {
-                    // Klik vote yang sama → hapus vote
                     if (type === 'up') totalUp--; else totalDown--;
                     delete data[faqId];
                     kirimKeServer(faqId, 'none');
@@ -374,13 +338,11 @@ $faqs = [
                 }
             }
 
-            // Simpan vote baru (ganti vote lama bila ada)
             if (data[faqId] === 'up') totalUp--; else if (data[faqId] === 'down') totalDown--;
             if (type === 'up') totalUp++; else totalDown++;
             data[faqId] = type;
             kirimKeServer(faqId, type);
 
-            // Update UI
             resetFeedbackUI(section);
 
             if (type === 'up') {
@@ -408,9 +370,6 @@ $faqs = [
             result.innerText = '';
         }
 
-        // ========================================================
-        // RESTORE UI SAAT LOAD (kalau user pernah vote)
-        // ========================================================
         function restoreFeedbackUI() {
             const data = getFeedbackData();
             document.querySelectorAll('.feedback-section').forEach(section => {
@@ -434,9 +393,6 @@ $faqs = [
             });
         }
 
-        // ========================================================
-        // STATISTIK: gabungan feedback seluruh admin (dari database)
-        // ========================================================
         function updateStatistik() {
             const totalVote = Math.max(0, totalUp) + Math.max(0, totalDown);
             const persen    = totalVote > 0 ? Math.round((totalUp / totalVote) * 100) : 0;
@@ -451,9 +407,6 @@ $faqs = [
             }
         }
 
-        // ========================================================
-        // FAQ TOGGLE
-        // ========================================================
         function toggleFAQ(btn) {
             const item = btn.parentElement;
             const answer = item.querySelector('.faq-answer');
@@ -470,9 +423,6 @@ $faqs = [
             icon.classList.toggle('rotate-180');
         }
 
-        // ========================================================
-        // FILTER FAQ
-        // ========================================================
         function filterFAQ() {
             const input = document.getElementById('faqSearch').value.toLowerCase();
             let visibleCount = 0;
@@ -487,9 +437,6 @@ $faqs = [
             document.getElementById('faqEmpty').classList.toggle('hidden', visibleCount > 0);
         }
 
-        // ========================================================
-        // INIT
-        // ========================================================
         restoreFeedbackUI();
         updateStatistik();
 

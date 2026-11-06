@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/includes/init.php';
+wajibAkses('pelanggan');
 
 // =========================================================
 // HANDLE RESET PASSWORD
@@ -17,7 +18,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reset
         exit;
     }
 
-    // Cek user ada & role customer
     $qCek = mysqli_query($conn, "SELECT id, nama_lengkap, username, email FROM users WHERE id = $user_id AND role = 'customer' LIMIT 1");
     if (!$qCek || mysqli_num_rows($qCek) === 0) {
         echo json_encode(['success' => false, 'message' => 'Pelanggan tidak ditemukan.']);
@@ -25,7 +25,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reset
     }
     $user = mysqli_fetch_assoc($qCek);
 
-    // Generate password acak 8 karakter (huruf + angka, mudah dibaca)
     $chars = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789';
     $newPassword = '';
     for ($i = 0; $i < 8; $i++) {
@@ -54,8 +53,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'reset
 // =========================================================
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
 $searchSql = mysqli_real_escape_string($conn, str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $search));
-$tab    = $_GET['tab'] ?? 'semua';   // semua | aktif | baru | belum
-$sortBy = $_GET['sort'] ?? 'terbaru'; // terbaru | nama | belanja | transaksi
+$tab    = $_GET['tab'] ?? 'semua';
+$sortBy = $_GET['sort'] ?? 'terbaru';
 
 $allowedTab  = ['semua', 'aktif', 'baru', 'belum'];
 $allowedSort = ['terbaru', 'nama', 'belanja', 'transaksi'];
@@ -67,17 +66,14 @@ if ($search !== '') {
     $where .= " AND (u.nama_lengkap LIKE '%$searchSql%' OR u.email LIKE '%$searchSql%' OR u.username LIKE '%$searchSql%' OR u.no_hp LIKE '%$searchSql%')";
 }
 
-// Filter tab
 if ($tab === 'aktif') {
     $where .= " AND (SELECT COUNT(*) FROM transaksi t WHERE t.user_id = u.id AND t.jenis_transaksi='penjualan') > 0";
 } elseif ($tab === 'baru') {
-    // Daftar 30 hari terakhir
     $where .= " AND u.created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)";
 } elseif ($tab === 'belum') {
     $where .= " AND (SELECT COUNT(*) FROM transaksi t WHERE t.user_id = u.id AND t.jenis_transaksi='penjualan') = 0";
 }
 
-// Sorting
 $orderBy = match($sortBy) {
     'nama'      => 'u.nama_lengkap ASC',
     'belanja'   => 'total_belanja DESC',
@@ -131,7 +127,6 @@ $qTotalBelanja = mysqli_query($conn, "
 ");
 if ($qTotalBelanja) $stat['total_belanja'] = (float)mysqli_fetch_assoc($qTotalBelanja)['total'];
 
-// Data transaksi untuk modal (per pelanggan)
 $dataTransaksi = [];
 if (!empty($pelanggan)) {
     $ids = implode(',', array_map(fn($p) => (int)$p['id'], $pelanggan));
@@ -150,13 +145,11 @@ if (!empty($pelanggan)) {
     }
 }
 
-// Helper URL
 function buildUrl($overrides = []) {
     $params = array_merge($_GET, $overrides);
     return 'pelanggan.php?' . http_build_query($params);
 }
 
-// Helper reset search (hapus parameter search saja)
 function pelangganResetSearchUrl(): string {
     $params = $_GET;
     unset($params['search']);
@@ -172,11 +165,19 @@ function pelangganResetSearchUrl(): string {
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style> body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; } </style>
+    <style> 
+        body { font-family: 'Plus Jakarta Sans', sans-serif; background-color: #F9F8F6; color: #2D3748; }
+        
+        /* CSS SCROLLBAR YANG BENAR */
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.15); border-radius: 9999px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.3); }
+    </style>
 </head>
-<body class="antialiased min-h-screen flex flex-col">
+<body class="antialiased h-screen flex flex-col overflow-hidden">
 
-    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm">
+    <header class="sticky top-0 z-30 bg-white border-b border-stone-200/80 shadow-sm shrink-0">
         <div class="px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
             <div class="flex items-center gap-3">
                 <button onclick="toggleMobileSidebar()" class="lg:hidden p-2 rounded-lg text-stone-600 hover:bg-stone-100">
@@ -205,7 +206,7 @@ function pelangganResetSearchUrl(): string {
                 <img src="<?= e($avatar_url) ?>" class="w-9 h-9 rounded-full object-cover ring-2 ring-[#2E7D32]/20">
                 <div class="hidden sm:block text-left">
                     <p class="text-sm font-semibold text-stone-800 leading-tight"><?= htmlspecialchars($admin_nama) ?></p>
-                    <p class="text-xs text-stone-500">Administrator</p>
+                    <p class="text-xs text-stone-500"><?= labelRole($_SESSION['role'] ?? 'Staf') ?></p>
                 </div>
             </a>
                 <?= logout_btn_html() ?>
@@ -213,57 +214,28 @@ function pelangganResetSearchUrl(): string {
         </div>
     </header>
 
-    <div class="flex flex-1">
-        <aside id="sidebar" class="w-64 bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4">
+    <!-- KUNCI 1: flex-1 overflow-hidden -->
+    <div class="flex flex-1 overflow-hidden">
+        
+        <!-- KUNCI 2: h-full overflow-y-auto -->
+        <aside id="sidebar" class="w-64 h-full bg-white border-r border-stone-200/80 hidden lg:flex flex-col justify-between shrink-0 p-4 overflow-y-auto custom-scrollbar">
             <div class="space-y-6">
-                <nav class="space-y-1">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">MAIN MENU</p>
-                    <?php
-                    $menu = [
-                        ['url' => 'dashboard.php',  'icon' => 'layout-grid',    'label' => 'Dashboard',        'active' => false],
-                        ['url' => 'pos.php',        'icon' => 'shopping-bag',   'label' => 'Kasir (POS)',      'active' => false],
-                        ['url' => 'restock.php',    'icon' => 'truck',          'label' => 'Pembelian',        'active' => false],
-                        ['url' => 'stok.php',       'icon' => 'box',            'label' => 'Stok & Produk',    'active' => false],
-                        ['url' => 'kategori.php',   'icon' => 'tag',            'label' => 'Kategori',         'active' => false],
-                        ['url' => 'supplier.php',   'icon' => 'building-2',     'label' => 'Supplier',         'active' => false],
-                        ['url' => 'pelanggan.php',  'icon' => 'users',          'label' => 'Pelanggan',        'active' => true],
-                        ['url' => 'chat.php',       'icon' => 'message-square', 'label' => 'Konsultasi Chat',  'active' => false],
-                        ['url' => 'transaksi.php',  'icon' => 'receipt',        'label' => 'Riwayat Transaksi','active' => false],
-                        ['url' => 'laporan.php',    'icon' => 'bar-chart-2',    'label' => 'Laporan',          'active' => false],
-                    ];
-                    foreach ($menu as $m):
-                        $cls = $m['active'] ? 'text-[#1E7D32] bg-[#E8F5E9]' : 'text-stone-700 hover:bg-stone-100';
-                    ?>
-                        <a href="<?= $m['url'] ?>" class="flex items-center justify-between px-3 py-2.5 text-sm font-bold rounded-xl transition-colors <?= $cls ?>">
-                            <div class="flex items-center gap-3">
-                                <i data-lucide="<?= $m['icon'] ?>" class="w-5 h-5 <?= $m['active'] ? 'text-[#1E7D32]' : 'text-stone-500' ?>"></i>
-                                <span><?= $m['label'] ?></span>
-                            </div>
-                            <?php if ($m['active']): ?><span class="w-2.5 h-2.5 rounded-full bg-[#1E7D32]"></span><?php endif; ?>
-                        </a>
-                    <?php endforeach; ?>
-                    <hr class="border-stone-100 my-3">
-                    <p class="px-3 text-[11px] font-bold text-stone-400 uppercase tracking-wider mb-3">PENGATURAN</p>
-                    <a href="pengaturan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-bold rounded-xl text-stone-700 hover:bg-stone-100">
-                        <i data-lucide="settings" class="w-5 h-5 text-stone-500"></i> Pengaturan Toko
-                    </a>
-                    <a href="bantuan.php" class="flex items-center gap-3 px-3 py-2.5 text-sm font-bold rounded-xl text-stone-700 hover:bg-stone-100">
-                        <i data-lucide="help-circle" class="w-5 h-5 text-stone-500"></i> Bantuan
-                    </a>
-                </nav>
+                <!-- SIDEBAR DINAMIS -->
+                <?php require __DIR__ . '/sidebar.php'; ?>
             </div>
             <div class="p-3 bg-stone-50/80 border border-stone-200/60 rounded-2xl flex items-center gap-3 mt-auto">
                 <div class="w-10 h-10 rounded-xl bg-emerald-100/70 flex items-center justify-center text-[#2E7D32] shrink-0">
                     <i data-lucide="store" class="w-5 h-5"></i>
                 </div>
                 <div class="overflow-hidden">
-                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?> Admin</p>
+                    <p class="text-sm font-bold text-stone-800 truncate leading-tight"><?= e($nama_toko) ?></p>
                     <p class="text-[11px] font-medium text-stone-400 truncate mt-0.5">Sistem Online</p>
                 </div>
             </div>
         </aside>
 
-        <main class="flex-1 p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto w-full space-y-6">
+        <!-- KUNCI 3: h-full overflow-y-auto -->
+        <main class="flex-1 h-full overflow-y-auto custom-scrollbar p-4 sm:p-6 lg:p-8 space-y-6">
 
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
@@ -594,9 +566,6 @@ function pelangganResetSearchUrl(): string {
             return map[status] || 'bg-stone-100 text-stone-600 border-stone-200';
         }
 
-        // ========================================================
-        // DETAIL PELANGGAN
-        // ========================================================
         function openDetail(data) {
             document.getElementById('dAvatar').innerText = (data.nama || 'P').charAt(0).toUpperCase();
             document.getElementById('dNama').innerText = data.nama || '-';
@@ -644,9 +613,6 @@ function pelangganResetSearchUrl(): string {
             if (e.target.id === 'modalDetail') closeDetail();
         });
 
-        // ========================================================
-        // RESET PASSWORD
-        // ========================================================
         let resetUserId = null;
         let generatedPassword = '';
 
