@@ -18,18 +18,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $user = mysqli_fetch_assoc($query);
 
         if (password_verify($password, $user['password'])) {
-            $_SESSION['user_id']   = $user['id'];
-            $_SESSION['username']  = $user['username'];
-            $_SESSION['nama_user'] = $user['nama_lengkap'];
-            $_SESSION['nama']      = $user['nama_lengkap'];
-            $_SESSION['role']      = $user['role'];
-
-            if ($user['role'] === 'admin') {
-                header("Location: ../Admin/dashboard.php");
+            
+            // Cek apakah akun dinonaktifkan (banned) oleh admin
+            if (isset($user['aktif']) && $user['aktif'] == 0) {
+                $pesan = "Akun Anda telah dinonaktifkan. Hubungi Admin.";
             } else {
-                header("Location: ../Pelanggan/dashboard.php");
+                // Set session
+                $_SESSION['user_id']   = $user['id'];
+                $_SESSION['username']  = $user['username'];
+                $_SESSION['nama_user'] = $user['nama_lengkap'];
+                $_SESSION['nama']      = $user['nama_lengkap'];
+                $_SESSION['role']      = $user['role'];
+
+                // Redirect sesuai role
+                if ($user['role'] === 'customer') {
+                    header("Location: ../Pelanggan/dashboard.php");
+                } else {
+                    // Kasir, Gudang, Admin, dll masuk ke folder Admin
+                    header("Location: ../Admin/dashboard.php");
+                }
+                exit;
             }
-            exit;
         } else {
             $pesan = "Password salah!";
         }
